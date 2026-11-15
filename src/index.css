@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "./client/styles/tokens.css";
+
+@layer base {
+  button,
+  a,
+  select,
+  input,
+  textarea {
+    outline-color: var(--accent-primary);
+  }
+}

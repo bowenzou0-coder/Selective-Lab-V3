@@ -1,0 +1,327 @@
+import { SKILLS_TAXONOMY } from './skills.ts';
+
+const SKILL_IDS = SKILLS_TAXONOMY.map((s) => s.skillId);
+
+export const V3_MANIFEST_JSON_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  title: 'SelectiveLabBankImportManifest',
+  type: 'object',
+  required: ['manifestVersion', 'batchLabel', 'questions'],
+  properties: {
+    manifestVersion: { type: 'string', const: '1.0' },
+    batchLabel: { type: 'string', description: 'Unique batch identifier, e.g. ai_batch_2027_01' },
+    defaultPoolType: {
+      type: 'string',
+      enum: ['practice', 'diagnostic', 'official_calibration', 'benchmark_holdout'],
+      default: 'practice',
+    },
+    defaultQcStatus: {
+      type: 'string',
+      enum: ['active', 'verified', 'draft'],
+      default: 'active',
+    },
+    stimuli: {
+      type: 'array',
+      default: [],
+      items: {
+        type: 'object',
+        required: ['stimulusId', 'section', 'genreOrTextType'],
+        properties: {
+          stimulusId: { type: 'string' },
+          stimulusFamilyId: { type: 'string' },
+          version: { type: 'integer', minimum: 1, default: 1 },
+          section: { type: 'string', enum: ['READ', 'MATH', 'THINK', 'WRIT'] },
+          genreOrTextType: {
+            type: 'string',
+            description: 'e.g. narrative, informational_cloze, poem, gapped_text, multiple_match, paired_extracts',
+          },
+          title: { type: 'string' },
+          preamble: { type: 'string' },
+          mainTextMarkdown: {
+            type: 'string',
+            description: 'Use {{gap:1}}, {{gap:2}} placeholders for READ_VOCAB_CLOZE and READ_GAPPED_TEXT',
+          },
+          extracts: {
+            type: 'array',
+            description: 'Labeled extracts A-H for gapped_text (with optional decoy), multiple_match, or paired passages',
+            items: {
+              type: 'object',
+              required: ['label', 'bodyMarkdown'],
+              properties: {
+                label: { type: 'string', pattern: '^[A-H]$' },
+                title: { type: 'string' },
+                bodyMarkdown: { type: 'string' },
+                isDecoy: { type: 'boolean' },
+              },
+            },
+          },
+          visual: { $ref: '#/$defs/VisualSpec' },
+          sourceType: { type: 'string', enum: ['ai_generated', 'human_authored', 'official_doe'], default: 'ai_generated' },
+        },
+      },
+    },
+    questions: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        required: ['questionId', 'section', 'formatType', 'parts'],
+        properties: {
+          questionId: { type: 'string' },
+          questionFamilyId: { type: 'string' },
+          version: { type: 'integer', minimum: 1, default: 1 },
+          section: { type: 'string', enum: ['READ', 'MATH', 'THINK', 'WRIT'] },
+          formatType: {
+            type: 'string',
+            enum: [
+              'READ_FICTION_MCQ',
+              'READ_VOCAB_CLOZE',
+              'READ_POETRY_MCQ',
+              'READ_GAPPED_TEXT',
+              'READ_MULTIPLE_MATCH',
+              'MATH_MCQ_5',
+              'THINK_MCQ_4',
+              'WRIT_TYPED_TASK',
+            ],
+          },
+          poolType: { type: 'string', enum: ['practice', 'diagnostic', 'official_calibration', 'benchmark_holdout'] },
+          qcStatus: { type: 'string', enum: ['active', 'verified', 'draft', 'quarantined', 'retired'] },
+          stimulusId: { type: 'string', description: 'References stimuli[].stimulusId when passage-based' },
+          transferGroupId: { type: 'string' },
+          stemPrefix: { type: 'string' },
+          visual: { $ref: '#/$defs/VisualSpec' },
+          sharedPoolConfig: {
+            type: 'object',
+            required: ['reuseAllowed', 'poolKeys'],
+            properties: {
+              reuseAllowed: { type: 'boolean', description: 'false for READ_GAPPED_TEXT, true for READ_MULTIPLE_MATCH' },
+              poolKeys: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 8 },
+            },
+          },
+          writingSpec: {
+            type: 'object',
+            required: ['genre', 'audience', 'purpose', 'recommendedWordRange', 'timeLimitSec'],
+            properties: {
+              genre: { type: 'string' },
+              audience: { type: 'string' },
+              purpose: { type: 'string' },
+              mandatoryOpeningLine: { type: 'string' },
+              bulletSuggestions: { type: 'array', items: { type: 'string' } },
+              recommendedWordRange: {
+                type: 'array',
+                items: { type: 'integer' },
+                minItems: 2,
+                maxItems: 2,
+              },
+              timeLimitSec: { type: 'integer', default: 1800 },
+            },
+          },
+          parts: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'object',
+              required: ['partId', 'promptText', 'skillId', 'options', 'correctAnswerKey'],
+              properties: {
+                partId: { type: 'string' },
+                partIndex: { type: 'integer', minimum: 0 },
+                slotRef: { type: 'string', description: 'Use gap:1, gap:2 for cloze/gapped_text' },
+                promptText: { type: 'string' },
+                skillId: { type: 'string', enum: SKILL_IDS },
+                secondarySkillIds: { type: 'array', items: { type: 'string', enum: SKILL_IDS } },
+                difficultyInitial: { type: 'number', minimum: 1, maximum: 5, default: 3 },
+                targetTimeSec: { type: 'integer', minimum: 10, default: 60 },
+                cognitiveDemand: {
+                  type: 'string',
+                  enum: ['recall_locate', 'apply_procedural', 'analyze_infer', 'evaluate_transfer'],
+                  default: 'apply_procedural',
+                },
+                trapTags: { type: 'array', items: { type: 'string' } },
+                options: {
+                  type: 'array',
+                  description: 'Up to 8 options (A-H) for MCQ/cloze; empty array [] allowed for WRIT_TYPED_TASK or sharedPoolConfig formats',
+                  maxItems: 8,
+                  items: {
+                    type: 'object',
+                    required: ['key', 'text'],
+                    properties: {
+                      key: { type: 'string', pattern: '^[A-H]$' },
+                      text: { type: 'string' },
+                      visual: { $ref: '#/$defs/VisualSpec' },
+                    },
+                  },
+                },
+                correctAnswerKey: { type: 'string', description: 'Option/extract key A-H (empty string for WRIT_TYPED_TASK)' },
+                workedExplanation: { type: 'string' },
+                distractorRationales: {
+                  type: 'object',
+                  additionalProperties: { type: 'string' },
+                },
+              },
+            },
+          },
+          provenance: {
+            type: 'object',
+            properties: {
+              sourceType: { type: 'string', enum: ['ai_generated', 'human_authored', 'official_doe'] },
+              sourceReference: { type: 'string' },
+              verifierAgreed: { type: 'boolean' },
+              auditorReviewed: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+  },
+  $defs: {
+    VisualSpec: {
+      type: 'object',
+      required: ['visualType', 'altText'],
+      properties: {
+        visualType: { type: 'string', enum: ['none', 'inline_svg', 'image_asset', 'structured_table'] },
+        altText: { type: 'string' },
+        svgMarkup: { type: 'string' },
+        imageUrl: { type: 'string', description: 'Relative path under /assets/... or HTTPS URL' },
+        caption: { type: 'string' },
+        tableData: {
+          type: 'object',
+          required: ['headers', 'rows'],
+          properties: {
+            headers: { type: 'array', items: { type: 'string' } },
+            rows: { type: 'array', items: { type: 'array', items: { type: ['string', 'number'] } } },
+            caption: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+export const V3_STARTER_MANIFEST_EXAMPLE = {
+  manifestVersion: '1.0',
+  batchLabel: 'ai_generated_sample_01',
+  defaultPoolType: 'practice',
+  defaultQcStatus: 'active',
+  stimuli: [
+    {
+      stimulusId: 'stim_ai_gapped_01',
+      stimulusFamilyId: 'stim_ai_gapped_01',
+      version: 1,
+      section: 'READ',
+      genreOrTextType: 'gapped_text',
+      title: 'How Cuttlefish Vanish in Plain Sight',
+      mainTextMarkdown:
+        'Cuttlefish change skin patterns in fractions of a second. {{gap:1}} Tiny pigment sacs called chromatophores expand or contract on neural command. {{gap:2}}',
+      extracts: [
+        { label: 'A', bodyMarkdown: 'Unlike chameleons, they match surrounding sand and coral almost instantaneously.' },
+        { label: 'B', bodyMarkdown: 'Beneath those pigment sacs sit reflective cells that scatter ambient blue light.' },
+        { label: 'C', bodyMarkdown: 'Deep-sea anglerfish instead rely on bioluminescent bacteria for hunting.', isDecoy: true },
+      ],
+      sourceType: 'ai_generated',
+    },
+  ],
+  questions: [
+    {
+      questionId: 'q_ai_gapped_01_v1',
+      questionFamilyId: 'q_ai_gapped_01',
+      version: 1,
+      section: 'READ',
+      formatType: 'READ_GAPPED_TEXT',
+      stimulusId: 'stim_ai_gapped_01',
+      sharedPoolConfig: { reuseAllowed: false, poolKeys: ['A', 'B', 'C'] },
+      parts: [
+        {
+          partId: 'q_ai_gapped_01_p1',
+          partIndex: 0,
+          slotRef: 'gap:1',
+          promptText: 'Select the extract that best fits Gap 1.',
+          skillId: 'READ.GAP.COHESIVE_BRIDGE',
+          difficultyInitial: 3.0,
+          targetTimeSec: 60,
+          cognitiveDemand: 'analyze_infer',
+          options: [],
+          correctAnswerKey: 'A',
+          workedExplanation: 'Extract A directly elaborates on the speed and camouflage described in sentence 1.',
+        },
+        {
+          partId: 'q_ai_gapped_01_p2',
+          partIndex: 1,
+          slotRef: 'gap:2',
+          promptText: 'Select the extract that best fits Gap 2.',
+          skillId: 'READ.GAP.REFERENTIAL_PRONOUN_LINK',
+          difficultyInitial: 3.2,
+          targetTimeSec: 60,
+          cognitiveDemand: 'analyze_infer',
+          options: [],
+          correctAnswerKey: 'B',
+          workedExplanation: '"those pigment sacs" in Extract B refers back to chromatophores.',
+        },
+      ],
+    },
+    {
+      questionId: 'q_ai_math_svg_01_v1',
+      questionFamilyId: 'q_ai_math_svg_01',
+      version: 1,
+      section: 'MATH',
+      formatType: 'MATH_MCQ_5',
+      visual: {
+        visualType: 'inline_svg',
+        altText: 'Right triangle with legs 6 cm and 8 cm',
+        svgMarkup:
+          '<svg viewBox="0 0 220 140" xmlns="http://www.w3.org/2000/svg"><polygon points="30,110 170,110 30,30" fill="#f3ede4" stroke="#2c2520" stroke-width="2"/><text x="90" y="128" font-size="12" fill="#2c2520">8 cm</text><text x="6" y="75" font-size="12" fill="#2c2520">6 cm</text></svg>',
+      },
+      parts: [
+        {
+          partId: 'q_ai_math_svg_01_p1',
+          partIndex: 0,
+          promptText: 'What is the area of the right-angled triangle shown?',
+          skillId: 'MATH.GEO2D.COMPOSITE_AREA',
+          difficultyInitial: 2.5,
+          targetTimeSec: 50,
+          cognitiveDemand: 'apply_procedural',
+          options: [
+            { key: 'A', text: '14 cm^2' },
+            { key: 'B', text: '24 cm^2' },
+            { key: 'C', text: '28 cm^2' },
+            { key: 'D', text: '48 cm^2' },
+            { key: 'E', text: '60 cm^2' },
+            { key: 'F', text: '96 cm^2' },
+          ],
+          correctAnswerKey: 'B',
+          workedExplanation: 'Area = 1/2 x base x height = 1/2 x 8 x 6 = 24 cm^2.',
+          distractorRationales: { D: 'Forgot to halve base x height.' },
+        },
+      ],
+    },
+    {
+      questionId: 'q_ai_writ_01_v1',
+      questionFamilyId: 'q_ai_writ_01',
+      version: 1,
+      section: 'WRIT',
+      formatType: 'WRIT_TYPED_TASK',
+      writingSpec: {
+        genre: 'Narrative',
+        audience: 'Young readers',
+        purpose: 'Entertain and build suspense',
+        mandatoryOpeningLine: 'The lantern flickered out just as the tide reached the steps.',
+        bulletSuggestions: ['Establish setting vividly', 'Introduce a clear dilemma', 'Resolve with reflection'],
+        recommendedWordRange: [250, 450],
+        timeLimitSec: 1800,
+      },
+      parts: [
+        {
+          partId: 'q_ai_writ_01_p1',
+          partIndex: 0,
+          promptText: 'Write a story starting with the mandatory opening line above.',
+          skillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE',
+          difficultyInitial: 3.0,
+          targetTimeSec: 1800,
+          cognitiveDemand: 'evaluate_transfer',
+          options: [],
+          correctAnswerKey: '',
+          workedExplanation: 'Assessed on all 6 rubric dimensions.',
+        },
+      ],
+    },
+  ],
+};
