@@ -1,4 +1,3 @@
-import { ThinkingLevel, Type } from '@google/genai';
 import type {
   AlgorithmAdjustments,
   DailyFocusPlan,
@@ -18,8 +17,9 @@ import {
 } from '../shared/engine.ts';
 import { SKILLS_TAXONOMY, VALID_SKILL_IDS } from '../shared/skills.ts';
 import {
-  createGeminiClient,
+  createDecisionsClient,
   GEMINI_DECISION_MODEL,
+  GeminiServiceError,
   isGeminiConfigured,
   withGeminiRetry,
 } from './geminiClient.ts';
@@ -211,12 +211,133 @@ export function buildDeterministicDailyFocusPlan(input: {
   };
 }
 
+export type DecisionAnswer =
+  | { type: 'noul'; noul: number; confidence: number }
+  | { type: 'choice'; choice: string; probabilities: Record<string, number>; confidence: number }
+  | {
+      type: 'score';
+      score: number;
+      legend: Record<string, string>;
+      probabilities: Record<string, number>;
+      confidence: number;
+    };
+
+export type DecisionAnswerMap = Record<string, DecisionAnswer>;
+
+export type DecisionQuestionSpec =
+  | {
+      type: 'noul';
+      instructions: string;
+      criteria?: { true_description: string; false_description: string };
+    }
+  | {
+      type: 'choice';
+      instructions: string;
+      criteria: Record<string, string>;
+    }
+  | {
+      type: 'score';
+      instructions: string;
+      criteria: string[];
+    };
+
+export type DecisionsExecutor = (req: {
+  inputText: string;
+  questions: Record<string, DecisionQuestionSpec>;
+}) => Promise<DecisionAnswerMap>;
+
+const ALGORITHM_SCORE_LEVELS = [
+  'Strongly decrease emphasis (0.75x): deprioritize this factor for the current learner state.',
+  'Slightly decrease emphasis (0.90x): keep mild downward pressure on this factor.',
+  'Neutral baseline (1.05x): keep balanced default emphasis.',
+  'Increase emphasis (1.20x): boost this factor meaningfully in candidate scoring.',
+  'Maximum emphasis (1.35x): prioritize this factor strongly in candidate scoring.',
+];
+
+const ZPD_OFFSET_LEVELS = [
+  'Step down noticeably (-0.75): learner has fragile foundations or repeated errors; consolidate fundamentals.',
+  'Step down gently (-0.38): build confidence with slightly more accessible items.',
+  'Balanced zone of proximal development (0.00): match current estimated mastery difficulty.',
+  'Moderate stretch (+0.38): push slightly above comfort zone to accelerate growth.',
+  'Strong stretch (+0.75): mastery is high and fast; challenge with harder selective items.',
+];
+
+const SKILL_PRIORITY_LEVELS = [
+  'Defer: strong mastery with zero overdue reviews or repairs.',
+  'Low priority: stable skill needing only light spaced rotation.',
+  'Moderate priority: steady building or moderate uncertainty.',
+  'High priority: developing mastery, due spaced review, or time slowdown.',
+  'Critical priority: active needs-repair items, overdue confirmation reviews, or stagnant plateau.',
+];
+
+const ITEM_SELECTION_LEVELS = [
+  'Defer now: currently on cooldown or redundant with stronger candidates.',
+  'Low priority: already well-mastered or low diagnostic urgency.',
+  'Moderate priority: useful mixed practice or healthy difficulty progression.',
+  'High priority: weak/developing skill or aligned with daily focus skills.',
+  'Immediate top pick: needs-repair item, overdue 24h/7d confirmation check, or urgent review.',
+];
+
+async function runDecisionsApi(
+  inputText: string,
+  questions: Record<string, DecisionQuestionSpec>,
+  decideFn?: DecisionsExecutor
+): Promise<DecisionAnswerMap> {
+  if (decideFn) {
+    return decideFn({ inputText, questions });
+  }
+  return withGeminiRetry(async () => {
+    const decisionsAi = createDecisionsClient();
+    const response = await decisionsAi.decisions.create({
+      model: GEMINI_DECISION_MODEL,
+      input: [{ type: 'text', text: inputText }],
+      questions,
+    });
+    if (!response.answers || Object.keys(response.answers).length === 0) {
+      const feedback = (response as { prompt_feedback?: unknown }).prompt_feedback;
+      throw new GeminiServiceError(
+        400,
+        feedback
+          ? `Gemini Decisions 1 did not return answers (${JSON.stringify(feedback)}).`
+          : 'Gemini Decisions 1 returned no answers for this decision request.'
+      );
+    }
+    return response.answers as DecisionAnswerMap;
+  });
+}
+
+function mapScoreToMultiplier(score: number | undefined): number {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return 1.0;
+  // score spans [0..4] across 5 ordered rubric levels -> maps to [0.75..1.35]
+  return Number((0.75 + Math.min(4, Math.max(0, score)) / 4 * 0.6).toFixed(2));
+}
+
+function mapScoreToZpdOffset(score: number | undefined): number {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return 0;
+  // score spans [0..4] -> maps to [-0.75..+0.75]
+  return Number((-0.75 + Math.min(4, Math.max(0, score)) / 4 * 1.5).toFixed(2));
+}
+
+function extractAlgorithmAdjustmentsFromAnswers(answers: DecisionAnswerMap): AlgorithmAdjustments {
+  const rev = answers.review_emphasis?.type === 'score' ? answers.review_emphasis.score : undefined;
+  const weak = answers.weakness_emphasis?.type === 'score' ? answers.weakness_emphasis.score : undefined;
+  const nov = answers.novelty_emphasis?.type === 'score' ? answers.novelty_emphasis.score : undefined;
+  const zpd = answers.zpd_challenge_step?.type === 'score' ? answers.zpd_challenge_step.score : undefined;
+
+  return clampAlgorithmAdjustments({
+    spacedReviewWeightMultiplier: mapScoreToMultiplier(rev),
+    weakestSkillWeightMultiplier: mapScoreToMultiplier(weak),
+    noveltyCoverageWeightMultiplier: mapScoreToMultiplier(nov),
+    zpdDifficultyOffset: mapScoreToZpdOffset(zpd),
+  });
+}
+
 export async function generateGeminiFocusOverride(input: {
   basePlan: DailyFocusPlan;
   candidates: FocusPlanSummaryRow[];
-  generateTextFn?: (payloadJson: string) => Promise<string>;
+  decideFn?: DecisionsExecutor;
 }): Promise<DailyFocusPlan | null> {
-  if (!input.generateTextFn && !isGeminiConfigured()) {
+  if (!input.decideFn && !isGeminiConfigured()) {
     return null;
   }
 
@@ -242,106 +363,113 @@ export async function generateGeminiFocusOverride(input: {
     candidateSkills: topCandidates,
   });
 
-  const rawText = input.generateTextFn
-    ? await input.generateTextFn(payloadJson)
-    : await withGeminiRetry(async () => {
-        const ai = createGeminiClient();
-        const response = await ai.models.generateContent({
-          model: GEMINI_DECISION_MODEL,
-          contents: payloadJson,
-          config: {
-            systemInstruction: [
-              'You are the Gemini Decisions 1 scheduling engine for Selective Lab (NSW Selective exam training).',
-              'You NEVER generate questions, prompts, or answers — you only decide skill priorities and bounded algorithm multipliers from telemetry.',
-              'Given the candidate skill metrics, select 3 to 5 focusSkillIds, assign per-skill multiplier weights strictly between 0.85 and 1.35,',
-              'tune algorithmAdjustments (multipliers in 0.75..1.35 and zpdDifficultyOffset in -0.75..0.75), pick recommendedSection (READ, MATH, or THINK), and write one concise 1-sentence study rationale.',
-            ].join(' '),
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            abortSignal: AbortSignal.timeout(4000),
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                focusSkillIds: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                },
-                weights: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      skillId: { type: Type.STRING },
-                      weight: { type: Type.NUMBER },
-                    },
-                    required: ['skillId', 'weight'],
-                  },
-                },
-                algorithmAdjustments: {
-                  type: Type.OBJECT,
-                  properties: {
-                    spacedReviewWeightMultiplier: { type: Type.NUMBER },
-                    weakestSkillWeightMultiplier: { type: Type.NUMBER },
-                    noveltyCoverageWeightMultiplier: { type: Type.NUMBER },
-                    zpdDifficultyOffset: { type: Type.NUMBER },
-                  },
-                },
-                recommendedSection: { type: Type.STRING },
-                rationale: { type: Type.STRING },
-              },
-              required: ['focusSkillIds', 'weights', 'rationale'],
-            },
-          },
-        });
-        return (response.text ?? '').trim();
-      });
-
-  if (!rawText) return null;
-  const parsed = JSON.parse(rawText) as {
-    focusSkillIds?: string[];
-    weights?: { skillId: string; weight: number }[];
-    algorithmAdjustments?: AlgorithmAdjustments;
-    recommendedSection?: string;
-    rationale?: string;
+  const questions: Record<string, DecisionQuestionSpec> = {
+    review_emphasis: {
+      type: 'score',
+      instructions:
+        'Based on candidateSkills repairs and dueReviews counts, how strongly should today’s scheduler boost spaced-repetition & confirmation reviews?',
+      criteria: ALGORITHM_SCORE_LEVELS,
+    },
+    weakness_emphasis: {
+      type: 'score',
+      instructions:
+        'Based on candidateSkills mastery, ewmaAccuracy, and plateau flags, how strongly should today’s scheduler weight weak/stagnant skills?',
+      criteria: ALGORITHM_SCORE_LEVELS,
+    },
+    novelty_emphasis: {
+      type: 'score',
+      instructions:
+        'Based on unseen question counts and overall coverage gaps, how strongly should today’s scheduler prioritize unseen material?',
+      criteria: ALGORITHM_SCORE_LEVELS,
+    },
+    zpd_challenge_step: {
+      type: 'score',
+      instructions:
+        'Considering overall mastery, ewmaAccuracy, and avgTimeRatio (speed vs target time), what ZPD difficulty offset should guide today’s question selection?',
+      criteria: ZPD_OFFSET_LEVELS,
+    },
   };
 
-  const validFocusIds = Array.from(
-    new Set((parsed.focusSkillIds || []).filter((id) => typeof id === 'string' && VALID_SKILL_IDS.has(id)))
-  ).slice(0, 5);
-  if (validFocusIds.length === 0) return null;
-
-  const skillWeights: Record<string, number> = {};
-  for (const w of parsed.weights || []) {
-    if (w && typeof w.skillId === 'string' && VALID_SKILL_IDS.has(w.skillId)) {
-      skillWeights[w.skillId] = clampSkillWeight(Number(w.weight));
+  const availableSections = Array.from(
+    new Set(topCandidates.map((c) => c.section).filter((s) => s === 'READ' || s === 'MATH' || s === 'THINK'))
+  );
+  if (availableSections.length >= 2) {
+    const sectionCriteria: Record<string, string> = {};
+    for (const sec of availableSections) {
+      sectionCriteria[sec] =
+        sec === 'READ'
+          ? 'Reading comprehension, cloze, poetry, and inference skills show highest urgency.'
+          : sec === 'MATH'
+            ? 'Mathematical reasoning, multi-step problem solving, or geometry/measurement shows highest urgency.'
+            : 'Thinking skills, deductive logic, or critical reasoning shows highest urgency.';
     }
+    questions.recommended_section = {
+      type: 'choice',
+      instructions: 'Which exam section most urgently needs focused practice today?',
+      criteria: sectionCriteria,
+    };
   }
-  for (const id of validFocusIds) {
-    if (skillWeights[id] === undefined) {
-      skillWeights[id] = 1.2;
-    }
+
+  topCandidates.forEach((cand, idx) => {
+    questions[`skill_${idx}`] = {
+      type: 'score',
+      instructions: `How high is today’s study priority for skill "${cand.displayName}" (${cand.skillId}, section ${cand.section}, mastery=${cand.mastery}, repairs=${cand.repairs}, dueReviews=${cand.dueReviews}, unseen=${cand.unseen}, plateau=${cand.plateau})?`,
+      criteria: SKILL_PRIORITY_LEVELS,
+    };
+  });
+
+  const answers = await runDecisionsApi(payloadJson, questions, input.decideFn);
+
+  const scoredSkills = topCandidates
+    .map((cand, idx) => {
+      const ans = answers[`skill_${idx}`];
+      const rawScore = ans?.type === 'score' && Number.isFinite(ans.score) ? ans.score : 2;
+      const conf = ans?.type === 'score' && Number.isFinite(ans.confidence) ? ans.confidence : 0.5;
+      return {
+        cand,
+        score: rawScore,
+        confidence: conf,
+      };
+    })
+    .filter((row) => VALID_SKILL_IDS.has(row.cand.skillId))
+    .sort((a, b) => b.score - a.score || b.cand.urgency - a.cand.urgency);
+
+  const chosenRows = scoredSkills.slice(0, 5);
+  if (chosenRows.length === 0) return null;
+
+  const focusSkillIds = chosenRows.map((r) => r.cand.skillId);
+  const skillWeights: Record<string, number> = {};
+  for (const row of scoredSkills) {
+    // Map expected rubric score [0..4] cleanly into [0.85..1.35]
+    const rawWeight = 0.85 + (Math.min(4, Math.max(0, row.score)) / 4) * 0.5;
+    skillWeights[row.cand.skillId] = clampSkillWeight(rawWeight);
   }
 
   const validSections = new Set(['READ', 'MATH', 'THINK']);
+  const secAns = answers.recommended_section;
   const recommendedSection =
-    typeof parsed.recommendedSection === 'string' && validSections.has(parsed.recommendedSection)
-      ? (parsed.recommendedSection as DailyFocusPlan['recommendedSection'])
+    secAns?.type === 'choice' && validSections.has(secAns.choice)
+      ? (secAns.choice as DailyFocusPlan['recommendedSection'])
       : input.basePlan.recommendedSection;
 
-  const rationale =
-    typeof parsed.rationale === 'string' && parsed.rationale.trim()
-      ? parsed.rationale.trim().slice(0, 280)
-      : input.basePlan.rationale;
+  const algorithmAdjustments = extractAlgorithmAdjustmentsFromAnswers(answers);
+  const topNames = chosenRows.slice(0, 3).map((r) => r.cand.displayName);
+  const totalRepairs = topCandidates.reduce((s, r) => s + r.repairs, 0);
+  const totalDue = topCandidates.reduce((s, r) => s + r.dueReviews, 0);
+  const rationaleParts = [`Prioritising ${topNames.join(', ')}`];
+  if (totalRepairs > 0) rationaleParts.push(`${totalRepairs} repair item${totalRepairs === 1 ? '' : 's'} queued`);
+  if (totalDue > 0) rationaleParts.push(`${totalDue} spaced review${totalDue === 1 ? '' : 's'} due`);
+  if (recommendedSection) rationaleParts.push(`recommended focus: ${recommendedSection}`);
 
   return {
     ...input.basePlan,
     source: 'gemini',
     modelId: GEMINI_DECISION_MODEL,
-    focusSkillIds: validFocusIds,
+    focusSkillIds,
     skillWeights,
-    algorithmAdjustments: clampAlgorithmAdjustments(parsed.algorithmAdjustments),
+    algorithmAdjustments,
     recommendedSection,
-    rationale,
+    rationale: `${rationaleParts.join(' · ')}.`.slice(0, 280),
   };
 }
 
@@ -353,13 +481,14 @@ export async function getOrCreateDailyFocusPlan(input: {
   questionMemory: Record<string, QuestionMemoryState>;
   questions: QuestionItem[];
   nowIso?: string;
-}): Promise<DailyFocusPlan> {
+  decideFn?: DecisionsExecutor;
+}): Promise<{ plan: DailyFocusPlan; error?: string }> {
   const nowIso = input.nowIso ?? new Date().toISOString();
   const planDate = nowIso.slice(0, 10);
 
   const cached = await input.repo.getDailyFocusPlan(input.studentId, planDate).catch(() => null);
-  if (cached && cached.focusSkillIds.length > 0) {
-    return cached;
+  if (cached && cached.focusSkillIds.length > 0 && cached.source === 'gemini') {
+    return { plan: cached };
   }
 
   const deterministic = buildDeterministicDailyFocusPlan({
@@ -371,32 +500,36 @@ export async function getOrCreateDailyFocusPlan(input: {
     nowIso,
   });
 
-  // Pass real computed skill telemetry to Gemini Decisions 1 (at most once/day per student)
-  let plan = deterministic;
+  if (!input.decideFn && !isGeminiConfigured()) {
+    await input.repo.saveDailyFocusPlan(input.studentId, deterministic).catch(() => undefined);
+    return { plan: deterministic };
+  }
+
+  const candidateRows = computeRankedSkillCandidates({
+    skillStates: input.skillStates,
+    evidenceMap: input.evidenceMap,
+    questionMemory: input.questionMemory,
+    questions: input.questions,
+    nowIso,
+  });
+
   try {
-    const candidateRows = computeRankedSkillCandidates({
-      skillStates: input.skillStates,
-      evidenceMap: input.evidenceMap,
-      questionMemory: input.questionMemory,
-      questions: input.questions,
-      nowIso,
-    });
     const geminiPlan = await generateGeminiFocusOverride({
       basePlan: deterministic,
       candidates: candidateRows,
+      decideFn: input.decideFn,
     });
     if (geminiPlan) {
-      plan = geminiPlan;
+      await input.repo.saveDailyFocusPlan(input.studentId, geminiPlan).catch(() => undefined);
+      return { plan: geminiPlan };
     }
+    await input.repo.saveDailyFocusPlan(input.studentId, deterministic).catch(() => undefined);
+    return { plan: deterministic };
   } catch (err) {
-    console.warn(
-      'Daily Gemini focus plan fell back to deterministic planner:',
-      err instanceof Error ? err.message : err
-    );
+    const message = err instanceof Error ? err.message : 'Gemini Decisions 1 focus planning failed.';
+    console.error('Daily Gemini Decisions 1 focus plan failed:', message);
+    return { plan: cached || deterministic, error: message };
   }
-
-  await input.repo.saveDailyFocusPlan(input.studentId, plan).catch(() => undefined);
-  return plan;
 }
 
 export async function decidePracticeQuestionOrderWithGemini(input: {
@@ -410,7 +543,7 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
   config: LearningConfig;
   nowIso: string;
   seed: number;
-  generateTextFn?: (payloadJson: string) => Promise<string>;
+  decideFn?: DecisionsExecutor;
 }): Promise<{ questions: QuestionItem[]; decision: SessionSelectionDecision }> {
   const baseAdj = clampAlgorithmAdjustments(input.dailyPlan?.algorithmAdjustments);
   const deterministicQuestions = selectPracticeSession({
@@ -442,12 +575,12 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     },
   });
 
-  // Never alter canonical fixed benchmark/writing sessions or run Gemini without a key
+  // Never alter canonical fixed benchmark/writing sessions or invoke Gemini when unconfigured
   if (
     input.mode === 'benchmark_exam' ||
     input.mode === 'writing_sprint' ||
     deterministicQuestions.length <= 1 ||
-    (!input.generateTextFn && !isGeminiConfigured())
+    (!input.decideFn && !isGeminiConfigured())
   ) {
     return deterministicFallback();
   }
@@ -471,7 +604,6 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     return deterministicFallback();
   }
 
-  const candidateById = new Map(candidates.map((c) => [c.q.questionId, c.q]));
   // Metadata only — NEVER send prompts, options, answers, or explanations
   const metadataPayload = JSON.stringify({
     mode: input.mode,
@@ -495,133 +627,121 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     })),
   });
 
-  try {
-    const rawText = input.generateTextFn
-      ? await input.generateTextFn(metadataPayload)
-      : await withGeminiRetry(async () => {
-          const ai = createGeminiClient();
-          const response = await ai.models.generateContent({
-            model: GEMINI_DECISION_MODEL,
-            contents: metadataPayload,
-            config: {
-              systemInstruction: [
-                'You are the Gemini Decisions 1 question-selection and pacing engine for Selective Lab.',
-                'You NEVER create questions or answers. Pick and order exactly targetCount existing questionIds from the provided candidates array.',
-                'If sectionCaps is provided, obey the exact maximum per section. Avoid repeating the same skillId consecutively when variety exists.',
-                'Prioritize repair items, spaced confirmation due items, and focus skills while pacing difficulty cleanly.',
-                'Return valid candidate questionIds plus a concise 1-sentence selectionRationale.',
-              ].join(' '),
-              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-              abortSignal: AbortSignal.timeout(3500),
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  selectedQuestionIds: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                  },
-                  algorithmAdjustments: {
-                    type: Type.OBJECT,
-                    properties: {
-                      spacedReviewWeightMultiplier: { type: Type.NUMBER },
-                      weakestSkillWeightMultiplier: { type: Type.NUMBER },
-                      noveltyCoverageWeightMultiplier: { type: Type.NUMBER },
-                      zpdDifficultyOffset: { type: Type.NUMBER },
-                    },
-                  },
-                  selectionRationale: { type: Type.STRING },
-                },
-                required: ['selectedQuestionIds', 'selectionRationale'],
-              },
-            },
-          });
-          return (response.text ?? '').trim();
-        });
+  const questions: Record<string, DecisionQuestionSpec> = {
+    review_emphasis: {
+      type: 'score',
+      instructions:
+        'For this practice session, how strongly should spaced-repetition & confirmation reviews be prioritized?',
+      criteria: ALGORITHM_SCORE_LEVELS,
+    },
+    weakness_emphasis: {
+      type: 'score',
+      instructions: 'For this practice session, how strongly should weaker skills be weighted?',
+      criteria: ALGORITHM_SCORE_LEVELS,
+    },
+    novelty_emphasis: {
+      type: 'score',
+      instructions: 'For this practice session, how strongly should unseen/novel questions be favored?',
+      criteria: ALGORITHM_SCORE_LEVELS,
+    },
+    zpd_challenge_step: {
+      type: 'score',
+      instructions: 'What ZPD difficulty offset fits the candidate skill mastery distribution?',
+      criteria: ZPD_OFFSET_LEVELS,
+    },
+  };
 
-    if (!rawText) return deterministicFallback();
-    const parsed = JSON.parse(rawText) as {
-      selectedQuestionIds?: string[];
-      algorithmAdjustments?: AlgorithmAdjustments;
-      selectionRationale?: string;
+  candidates.forEach((cand, idx) => {
+    const skillId = cand.q.parts[0]?.skillId || '';
+    questions[`q_${idx}`] = {
+      type: 'score',
+      instructions: `Rate selection priority for candidate question ${cand.q.questionId} (${cand.q.section}, ${cand.q.formatType}, skill=${skillId}, diff=${cand.avgDifficulty}, repair=${cand.isNeedsRepair}, confirmDue=${cand.isConfirmationDue}, sm2Due=${cand.isDue}, cooldown=${cand.isOnCooldown}, mastery=${cand.meanSkillMastery}).`,
+      criteria: ITEM_SELECTION_LEVELS,
     };
+  });
 
-    const chosen: QuestionItem[] = [];
-    const seenIds = new Set<string>();
-    const sectionCounts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
+  const answers = await runDecisionsApi(metadataPayload, questions, input.decideFn);
 
-    for (const rawId of parsed.selectedQuestionIds || []) {
-      if (chosen.length >= targetCount) break;
-      if (typeof rawId !== 'string' || seenIds.has(rawId)) continue;
-      const cand = candidateById.get(rawId);
-      if (!cand) continue;
-      if (cand.qcStatus !== 'active' || cand.poolType === 'benchmark_holdout') continue;
-      if (input.sectionFilter && cand.section !== input.sectionFilter) continue;
+  const scoredCandidates = candidates
+    .map((cand, idx) => {
+      const ans = answers[`q_${idx}`];
+      const decisionScore = ans?.type === 'score' && Number.isFinite(ans.score) ? ans.score : 2;
+      return {
+        cand,
+        decisionScore,
+        combinedRank: decisionScore * 10 + cand.priority,
+      };
+    })
+    .filter(
+      (row) =>
+        row.cand.q.qcStatus === 'active' &&
+        row.cand.q.poolType !== 'benchmark_holdout' &&
+        (!input.sectionFilter || row.cand.q.section === input.sectionFilter)
+    )
+    .sort((a, b) => b.combinedRank - a.combinedRank);
+
+  // Order cleanly while respecting section caps and avoiding identical consecutive skills when variety exists
+  const chosen: QuestionItem[] = [];
+  const seenIds = new Set<string>();
+  const sectionCounts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
+  const remaining = [...scoredCandidates];
+
+  while (chosen.length < targetCount && remaining.length > 0) {
+    const lastSkill = chosen.length > 0 ? chosen[chosen.length - 1].parts[0]?.skillId : undefined;
+    let pickIdx = remaining.findIndex((row) => {
+      if (seenIds.has(row.cand.q.questionId)) return false;
       if (effectiveCaps) {
-        const cap = Math.max(0, Number(effectiveCaps[cand.section] ?? 0));
-        if (sectionCounts[cand.section] >= cap) continue;
+        const cap = Math.max(0, Number(effectiveCaps[row.cand.q.section] ?? 0));
+        if (sectionCounts[row.cand.q.section] >= cap) return false;
       }
-      chosen.push(cand);
-      seenIds.add(rawId);
-      sectionCounts[cand.section] += 1;
-    }
+      const rowSkill = row.cand.q.parts[0]?.skillId;
+      return !lastSkill || rowSkill !== lastSkill;
+    });
 
-    if (chosen.length === 0) {
-      return deterministicFallback();
-    }
-
-    // Backfill deterministically if Gemini returned fewer than targetCount valid IDs
-    const updatedAdj = parsed.algorithmAdjustments
-      ? clampAlgorithmAdjustments(parsed.algorithmAdjustments)
-      : baseAdj;
-    if (chosen.length < targetCount) {
-      const backfillSource = parsed.algorithmAdjustments
-        ? selectPracticeSession({
-            mode: input.mode,
-            sectionFilter: input.sectionFilter,
-            questions: input.questions,
-            skillStates: input.skillStates,
-            questionMemory: input.questionMemory,
-            evidenceMap: input.evidenceMap,
-            skillFocusWeights: input.dailyPlan?.skillWeights,
-            algorithmAdjustments: updatedAdj,
-            config: input.config,
-            nowIso: input.nowIso,
-            seed: input.seed,
-          })
-        : deterministicQuestions;
-      for (const q of backfillSource) {
-        if (chosen.length >= targetCount) break;
-        if (seenIds.has(q.questionId)) continue;
+    if (pickIdx === -1) {
+      pickIdx = remaining.findIndex((row) => {
+        if (seenIds.has(row.cand.q.questionId)) return false;
         if (effectiveCaps) {
-          const cap = Math.max(0, Number(effectiveCaps[q.section] ?? 0));
-          if (sectionCounts[q.section] >= cap) continue;
+          const cap = Math.max(0, Number(effectiveCaps[row.cand.q.section] ?? 0));
+          if (sectionCounts[row.cand.q.section] >= cap) return false;
         }
-        chosen.push(q);
-        seenIds.add(q.questionId);
-        sectionCounts[q.section] += 1;
-      }
+        return true;
+      });
     }
 
-    const rationale =
-      typeof parsed.selectionRationale === 'string' && parsed.selectionRationale.trim()
-        ? parsed.selectionRationale.trim().slice(0, 280)
-        : 'Curated and sequenced from canonical bank candidates by Gemini Decisions 1.';
+    if (pickIdx === -1) break;
+    const [picked] = remaining.splice(pickIdx, 1);
+    chosen.push(picked.cand.q);
+    seenIds.add(picked.cand.q.questionId);
+    sectionCounts[picked.cand.q.section] += 1;
+  }
 
-    return {
-      questions: chosen,
-      decision: {
-        source: 'gemini',
-        modelId: GEMINI_DECISION_MODEL,
-        rationale,
-        algorithmAdjustments: updatedAdj,
-      },
-    };
-  } catch (err) {
-    console.warn(
-      'Session Gemini decision engine fell back to deterministic ordering:',
-      err instanceof Error ? err.message : err
-    );
+  if (chosen.length === 0) {
     return deterministicFallback();
   }
+
+  const updatedAdj = extractAlgorithmAdjustmentsFromAnswers(answers);
+  const repairsSelected = chosen.filter((q) => {
+    const c = candidates.find((item) => item.q.questionId === q.questionId);
+    return Boolean(c?.isNeedsRepair);
+  }).length;
+  const dueSelected = chosen.filter((q) => {
+    const c = candidates.find((item) => item.q.questionId === q.questionId);
+    return Boolean(c?.isConfirmationDue || c?.isDue);
+  }).length;
+
+  const rationaleParts = [`Ranked ${chosen.length} canonical items via gemini-decision-1`];
+  if (repairsSelected > 0) rationaleParts.push(`${repairsSelected} repair`);
+  if (dueSelected > 0) rationaleParts.push(`${dueSelected} spaced review`);
+
+  return {
+    questions: chosen,
+    decision: {
+      source: 'gemini',
+      modelId: GEMINI_DECISION_MODEL,
+      rationale: `${rationaleParts.join(' · ')}.`.slice(0, 280),
+      algorithmAdjustments: updatedAdj,
+    },
+  };
 }
+

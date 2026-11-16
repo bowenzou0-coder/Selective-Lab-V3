@@ -1,10 +1,16 @@
 import { GoogleGenAI } from '@google/genai';
 
 /**
- * Gemini Decisions 1 ('gemini-4-hydrogen'): active Flash/Hydrogen model powering
- * question-selection algorithms, daily study focus prioritization, and writing rubric marking.
+ * Gemini Decisions 1 ('gemini-decision-1'): System 1 calibrated Decisions API model
+ * powering daily focus skill ranking, algorithm weights, session question selection,
+ * and calibrated writing rubric scoring (zero generated output tokens).
  */
-export const GEMINI_DECISION_MODEL = 'gemini-4-hydrogen';
+export const GEMINI_DECISION_MODEL = 'gemini-decision-1';
+
+/**
+ * Gemini 4 Hydrogen ('gemini-4-hydrogen'): LLM used alongside gemini-decision-1
+ * to author qualitative writing coaching feedback, quotes, and priority fixes.
+ */
 export const GEMINI_WRITING_MODEL = 'gemini-4-hydrogen';
 
 export function getGeminiApiKey(): string | null {
@@ -15,6 +21,25 @@ export function getGeminiApiKey(): string | null {
 
 export function isGeminiConfigured(): boolean {
   return getGeminiApiKey() !== null;
+}
+
+export function createDecisionsClient(): GoogleGenAI {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new GeminiServiceError(
+      503,
+      'GEMINI_API_KEY is not configured. Add GEMINI_API_KEY in Settings > Secrets to enable Gemini features.'
+    );
+  }
+  return new GoogleGenAI({
+    apiKey,
+    apiVersion: 'v1beta',
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
 }
 
 export function createGeminiClient(): GoogleGenAI {
@@ -59,13 +84,22 @@ export function normalizeGeminiError(err: unknown): GeminiServiceError {
   if (
     rawMessage.includes('API_KEY_INVALID') ||
     rawMessage.includes('PERMISSION_DENIED') ||
-    statusFromErr === 400 ||
+    statusFromErr === 401 ||
     statusFromErr === 403
   ) {
     return new GeminiServiceError(
-      statusFromErr === 400 ? 400 : 403,
+      statusFromErr === 401 ? 401 : 403,
       'Gemini API credentials were rejected. Check your GEMINI_API_KEY in Settings > Secrets.'
     );
+  }
+  if (statusFromErr === 400) {
+    if (/API_KEY|key/i.test(rawMessage)) {
+      return new GeminiServiceError(
+        400,
+        'Gemini API key is invalid. Check your GEMINI_API_KEY in Settings > Secrets.'
+      );
+    }
+    return new GeminiServiceError(400, rawMessage);
   }
   if (rawMessage.includes('RESOURCE_EXHAUSTED') || statusFromErr === 429) {
     return new GeminiServiceError(
@@ -76,7 +110,7 @@ export function normalizeGeminiError(err: unknown): GeminiServiceError {
   if (rawMessage.includes('NOT_FOUND') || statusFromErr === 404) {
     return new GeminiServiceError(
       502,
-      `Configured Gemini model (${GEMINI_DECISION_MODEL}) returned NOT_FOUND (404).`
+      `Configured Gemini model (${GEMINI_DECISION_MODEL}) returned NOT_FOUND (404). Verify @google/genai >= 3.2.0 and apiVersion: v1beta.`
     );
   }
   if ((err as { name?: string })?.name === 'AbortError' || rawMessage.toLowerCase().includes('abort')) {
