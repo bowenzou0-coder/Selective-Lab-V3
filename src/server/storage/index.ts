@@ -21,6 +21,12 @@ export function isDisposableDemoMode(): boolean {
 }
 
 export function createRepository(): AppRepository {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_MEMORY_DB === 'true') {
+    throw new Error(
+      'Production configuration error: ALLOW_DEMO_MEMORY_DB=true is forbidden in production.'
+    );
+  }
+
   if (isPostgresConfigured()) {
     return new PostgresRepository();
   }
@@ -35,7 +41,7 @@ export function createRepository(): AppRepository {
 
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
-      'Production configuration error: No durable database is configured. Configure Firestore (ADC / FIREBASE_SERVICE_ACCOUNT_JSON / USE_FIRESTORE=true) or Cloud SQL Postgres before starting in production.'
+      'Production configuration error: No durable database is configured. Configure Firestore (ADC / FIREBASE_SERVICE_ACCOUNT_JSON / USE_FIRESTORE_DB=true) or Cloud SQL Postgres before starting in production.'
     );
   }
 

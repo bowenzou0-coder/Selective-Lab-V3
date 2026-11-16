@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, X, XCircle } from 'lucide-react';
 import type {
   EvidenceCitationRef,
@@ -57,6 +57,7 @@ interface QuestionWorkspaceProps {
   onSelectEvidenceRef?: (ref: EvidenceCitationRef | null) => void;
   footerNav?: ReactNode;
   embedded?: boolean;
+  frozen?: boolean;
 }
 
 export function QuestionWorkspace({
@@ -80,15 +81,20 @@ export function QuestionWorkspace({
   onSelectEvidenceRef,
   footerNav,
   embedded = false,
+  frozen = false,
 }: QuestionWorkspaceProps) {
   const [internalGapIdx, setInternalGapIdx] = useState(0);
   const [mobileTab, setMobileTab] = useState<'stimulus' | 'answer'>('stimulus');
   const [expandedBreakdown, setExpandedBreakdown] = useState(false);
 
+  useEffect(() => {
+    setInternalGapIdx(0);
+  }, [question.questionId]);
+
   const activeGapIndex = controlledGapIdx ?? internalGapIdx;
   const setActiveGapIndex = onSelectGapIndex ?? setInternalGapIdx;
   const stim = stimulusProp || question.stimulus;
-  const readOnly = mode !== 'exam';
+  const readOnly = mode !== 'exam' || frozen;
   const showAnswerKey = mode === 'review' || mode === 'adminPreview';
 
   const isReading = question.section === 'READ';
@@ -113,19 +119,20 @@ export function QuestionWorkspace({
     if (mode === 'exam' || isWriting) return null;
 
     const fullParts = question.parts as (QuestionItem['parts'][number])[];
-    const primaryPart = fullParts[0];
+    const safePartIdx = Math.min(Math.max(0, activeGapIndex), Math.max(0, fullParts.length - 1));
+    const primaryPart = fullParts[safePartIdx];
     const primaryRes = primaryPart ? reviewByPartId[primaryPart.partId] : undefined;
     const primaryExplanation =
       primaryRes?.workedExplanation || (mode === 'adminPreview' ? primaryPart?.workedExplanation : undefined);
 
     return (
       <div className="pt-4 border-t border-[var(--border-hairline)] space-y-3">
-        {primaryExplanation && (
-          <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-elevated)] border border-[var(--border-hairline)] space-y-2">
+        {(primaryExplanation || fullParts.length > 1) && (
+          <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-elevated)] border border-[var(--border-hairline)] space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-bold text-[var(--text-primary)]">
                 Worked Explanation
-                {fullParts.length > 1 ? ' (Part 1)' : ''}
+                {fullParts.length > 1 ? ` (Part ${safePartIdx + 1} of ${fullParts.length})` : ''}
               </div>
               {mode === 'review' && primaryRes && (
                 <span
@@ -159,18 +166,41 @@ export function QuestionWorkspace({
               )}
             </div>
 
-            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-              {primaryExplanation}
-            </p>
+            {fullParts.length > 1 && (
+              <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Select question part explanation">
+                {fullParts.map((part, pIdx) => (
+                  <button
+                    key={part.partId}
+                    type="button"
+                    role="tab"
+                    aria-selected={pIdx === safePartIdx}
+                    onClick={() => setActiveGapIndex(pIdx)}
+                    className={`px-2.5 py-1 rounded-[var(--radius-sm)] border text-[11px] font-semibold cursor-pointer transition-colors ${
+                      pIdx === safePartIdx
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
+                        : 'border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    Part {pIdx + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {primaryExplanation && (
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
+                {primaryExplanation}
+              </p>
+            )}
 
             {mode === 'review' && primaryRes?.distractorRationale && (
-              <p className="text-xs text-[var(--status-warn)] bg-[var(--status-warn-bg)]/60 px-2.5 py-1.5 rounded-[var(--radius-sm)]">
+              <p className="text-xs text-[var(--status-warn)] bg-[var(--status-warn-bg)]/60 px-2.5 py-1.5 rounded-[var(--radius-sm)] whitespace-pre-line">
                 <strong>Why {primaryRes.selectedAnswer} is a distractor:</strong>{' '}
                 {primaryRes.distractorRationale}
               </p>
             )}
 
-            {/* Evidence citation buttons for primary part */}
+            {/* Evidence citation buttons for active part */}
             {((mode === 'review' && primaryRes?.evidenceRefs) ||
               (mode === 'adminPreview' && primaryPart?.evidenceRefs)) &&
               ((primaryRes?.evidenceRefs || primaryPart?.evidenceRefs || []).length > 0) && (
@@ -254,16 +284,18 @@ export function QuestionWorkspace({
                             : `Picked ${res.selectedAnswer}`}
                       </div>
                     )}
-                    {explanation && <p className="text-[var(--text-secondary)]">{explanation}</p>}
+                    {explanation && (
+                      <p className="text-[var(--text-secondary)] whitespace-pre-line">{explanation}</p>
+                    )}
                     {res?.distractorRationale && (
-                      <p className="text-[var(--status-warn)]">
+                      <p className="text-[var(--status-warn)] whitespace-pre-line">
                         <strong>Distractor note:</strong> {res.distractorRationale}
                       </p>
                     )}
                     {rationales && Object.keys(rationales).length > 0 && (
                       <div className="space-y-1 pt-1">
                         {Object.entries(rationales).map(([optKey, note]) => (
-                          <div key={optKey} className="text-[var(--text-secondary)]">
+                          <div key={optKey} className="text-[var(--text-secondary)] whitespace-pre-line">
                             <span className="font-mono font-bold mr-1.5">{optKey}:</span>
                             {note}
                           </div>

@@ -7,13 +7,14 @@ import { HomeView } from './client/components/HomeView';
 import { ProgressView } from './client/components/ProgressView';
 import { SessionPlayerView } from './client/components/SessionPlayerView';
 import { TopNav } from './client/components/TopNav';
-import { auth as firebaseAuth } from './lib/firebase';
+import { auth as firebaseAuth, testFirestoreConnection } from './lib/firebase';
 
 export default function App() {
   const [path, setPath] = useState<string>(() => window.location.pathname || '/');
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const [authSyncError, setAuthSyncError] = useState('');
   const inFlightSyncRef = useRef<Map<string, Promise<AuthState>>>(new Map());
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export default function App() {
     const task = (async () => {
       const idToken = await user.getIdToken();
       const loginState = await api.firebaseLogin(idToken);
+      setAuthSyncError('');
       setAuth(loginState);
       return loginState;
     })().finally(() => {
@@ -47,10 +49,18 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
       if (!active) return;
       if (user) {
+        testFirestoreConnection().catch(() => undefined);
         try {
           await syncFirebaseUser(user);
         } catch (err) {
           console.error('Firebase session auth failed:', err);
+          if (active) {
+            setAuthSyncError(
+              err instanceof Error
+                ? err.message
+                : 'Unable to complete server sign-in. Check backend database configuration.'
+            );
+          }
           const fallback = await api.getMe().catch(() => ({
             authenticated: false,
             role: null,
@@ -86,20 +96,34 @@ export default function App() {
     };
   }, [syncFirebaseUser]);
 
-  const navigate = useCallback((nextPath: string) => {
-    const nextUrl = nextPath.startsWith('/') ? nextPath : `/${nextPath}`;
-    const [pathnameOnly] = nextUrl.split('?');
-    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
-      window.history.pushState({}, '', nextUrl);
-    }
-    setPath(pathnameOnly || '/');
-    window.scrollTo({ top: 0, behavior: 'auto' });
+  const navigate = useCallback(
+    (nextPath: string) => {
+      const nextUrl = nextPath.startsWith('/') ? nextPath : `/${nextPath}`;
+      const [pathnameOnly] = nextUrl.split('?');
+      if (auth?.authenticated && auth.activeSessionId) {
+        const lockedPath = `/session/${auth.activeSessionId}`;
+        if (pathnameOnly !== lockedPath) {
+          window.history.replaceState({}, '', lockedPath);
+          setPath(lockedPath);
+          return;
+        }
+      }
+      if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+        window.history.pushState({}, '', nextUrl);
+      }
+      setPath(pathnameOnly || '/');
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    },
+    [auth]
+  );
+
+  const handleActiveSessionCleared = useCallback(() => {
+    setAuth((prev) => (prev && prev.activeSessionId !== null ? { ...prev, activeSessionId: null } : prev));
   }, []);
 
-  // Lock student routes into an active non-sandbox test until submitted
+  // Lock all routes into an active non-sandbox test until submitted
   useEffect(() => {
     if (!auth?.authenticated || !auth.activeSessionId) return;
-    if (auth.role === 'admin' && (path.startsWith('/admin') || path.startsWith('/session/'))) return;
     const lockedPath = `/session/${auth.activeSessionId}`;
     if (path !== lockedPath) {
       if (window.location.pathname !== lockedPath) {
@@ -114,6 +138,7 @@ export default function App() {
       api.logout().catch(() => undefined),
       signOut(firebaseAuth).catch(() => undefined),
     ]);
+    setAuthSyncError('');
     setAuth({ authenticated: false, role: null, studentId: null, activeSessionId: null });
     navigate('/');
   };
@@ -149,7 +174,11 @@ export default function App() {
           {demoBanner}
           <AdminPasswordGate
             localDevPinEnabled={localDevPinEnabled}
-            onAuthenticated={(next) => setAuth(next)}
+            initialError={authSyncError}
+            onAuthenticated={(next) => {
+              setAuthSyncError('');
+              setAuth(next);
+            }}
             onGoogleAuthenticated={async (user) => {
               await syncFirebaseUser(user);
             }}
@@ -163,7 +192,11 @@ export default function App() {
         {demoBanner}
         <StudentPinGate
           localDevPinEnabled={localDevPinEnabled}
-          onAuthenticated={(next) => setAuth(next)}
+          initialError={authSyncError}
+          onAuthenticated={(next) => {
+            setAuthSyncError('');
+            setAuth(next);
+          }}
           onGoogleAuthenticated={async (user) => {
             await syncFirebaseUser(user);
           }}
@@ -186,7 +219,11 @@ export default function App() {
         />
         <AdminPasswordGate
           localDevPinEnabled={localDevPinEnabled}
-          onAuthenticated={(next) => setAuth(next)}
+          initialError={authSyncError}
+          onAuthenticated={(next) => {
+            setAuthSyncError('');
+            setAuth(next);
+          }}
           onGoogleAuthenticated={async (user) => {
             const nextAuth = await syncFirebaseUser(user);
             if (nextAuth.role !== 'admin') {
@@ -208,9 +245,7 @@ export default function App() {
           studentId={auth.studentId || 'default-student'}
           isAdmin={auth.role === 'admin'}
           onNavigate={navigate}
-          onActiveSessionCleared={() =>
-            setAuth((prev) => (prev ? { ...prev, activeSessionId: null } : prev))
-          }
+          onActiveSessionCleared={handleActiveSessionCleared}
         />
       </>
     );

@@ -42,6 +42,7 @@ test('validateAndDryRunManifest normalizes AI manifest defaults, up to 8 options
               { key: 'H', text: '8' },
             ],
             correctAnswerKey: 'H',
+            workedExplanation: 'Option H evaluates to 8.',
           },
         ],
       },
@@ -68,4 +69,96 @@ test('validateAndDryRunManifest normalizes AI manifest defaults, up to 8 options
   assert.equal(manifest.questions[0].parts[0].options.length, 8);
   assert.equal(manifest.questions[1].parts.length, 1);
   assert.equal(manifest.questions[1].parts[0].skillId, 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE');
+});
+
+test('validateAndDryRunManifest rejects object or empty workedExplanation on non-writing items and preserves multiline', () => {
+  const badObjPayload = {
+    manifestVersion: '1.0',
+    batchLabel: 'bad_expl_obj',
+    questions: [
+      {
+        questionId: 'q_bad_obj_v1',
+        section: 'MATH',
+        formatType: 'MATH_MCQ_5',
+        parts: [
+          {
+            partId: 'q_bad_obj_p1',
+            promptText: 'Solve x + 1 = 2',
+            skillId: 'MATH.NUM.NUMBER_SEQUENCES',
+            options: [
+              { key: 'A', text: '1' },
+              { key: 'B', text: '2' },
+            ],
+            correctAnswerKey: 'A',
+            workedExplanation: { steps: ['Step 1'] },
+          },
+        ],
+      },
+    ],
+  };
+
+  const objRes = validateAndDryRunManifest(badObjPayload, []);
+  assert.equal(objRes.report.valid, false);
+  assert.ok(objRes.report.errors.some((e) => e.includes('workedExplanation')));
+
+  const emptyExplPayload = {
+    manifestVersion: '1.0',
+    batchLabel: 'empty_expl',
+    questions: [
+      {
+        questionId: 'q_empty_expl_v1',
+        section: 'THINK',
+        formatType: 'THINK_MCQ_4',
+        parts: [
+          {
+            partId: 'q_empty_expl_p1',
+            promptText: 'Pick A.',
+            skillId: 'THINK.LOG.CONDITIONAL_DEDUCTION',
+            options: [
+              { key: 'A', text: 'Yes' },
+              { key: 'B', text: 'No' },
+            ],
+            correctAnswerKey: 'A',
+            workedExplanation: '   ',
+          },
+        ],
+      },
+    ],
+  };
+
+  const emptyRes = validateAndDryRunManifest(emptyExplPayload, []);
+  assert.equal(emptyRes.report.valid, false);
+  assert.ok(emptyRes.report.errors.some((e) => e.includes('workedExplanation')));
+
+  const multilinePayload = {
+    manifestVersion: '1.0',
+    batchLabel: 'multiline_expl',
+    questions: [
+      {
+        questionId: 'q_multiline_v1',
+        section: 'MATH',
+        formatType: 'MATH_MCQ_5',
+        parts: [
+          {
+            partId: 'q_multiline_p1',
+            promptText: '2 + 2?',
+            skillId: 'MATH.NUM.NUMBER_SEQUENCES',
+            options: [
+              { key: 'A', text: '4' },
+              { key: 'B', text: '5' },
+            ],
+            correctAnswerKey: 'A',
+            workedExplanation: 'Line 1: Add the integers.\nLine 2: Result is 4.',
+          },
+        ],
+      },
+    ],
+  };
+
+  const multiRes = validateAndDryRunManifest(multilinePayload, []);
+  assert.equal(multiRes.report.valid, true, multiRes.report.errors.join('; '));
+  assert.equal(
+    multiRes.manifest?.questions[0].parts[0].workedExplanation,
+    'Line 1: Add the integers.\nLine 2: Result is 4.'
+  );
 });

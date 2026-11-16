@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 
+import { assertNoEmulatorInProduction, isFirebaseEmulatorActive } from './firebaseAdmin.ts';
+
 export type AuthRole = 'student' | 'admin';
 
 export interface UserIdentity {
@@ -17,19 +19,48 @@ export interface AuthenticatedRequest extends Request {
 
 export const AUTH_COOKIE_NAME = 'selective_lab_session';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-const DEV_SESSION_SECRET = 'selective-lab-dev-session-secret-v1';
+const LEGACY_INSECURE_SECRET = 'selective-lab-dev-session-secret-v1';
+let ephemeralProcessSecret: string | null = null;
+let warnedEphemeralSecret = false;
 
 export function isLocalDevPinAuthEnabled(): boolean {
   if (process.env.NODE_ENV === 'production') {
-    return process.env.ALLOW_LOCAL_DEV_LOGIN === 'true';
+    return false;
   }
-  return process.env.ALLOW_LOCAL_DEV_LOGIN !== 'false';
+  const explicit =
+    process.env.ALLOW_LOCAL_DEV_PIN ?? process.env.ALLOW_LOCAL_DEV_LOGIN;
+  if (explicit === 'true') return true;
+  if (explicit === 'false') return false;
+  // In Cloud Run / AI Studio preview (K_SERVICE set), require Firebase Auth unless explicitly opted in
+  if (process.env.K_SERVICE) return false;
+  // Local dev outside containers: enable only in explicit test mode or when local emulators are running
+  return process.env.NODE_ENV === 'test' || isFirebaseEmulatorActive();
 }
 
 export function assertAuthRuntimeConfig(): void {
+  assertNoEmulatorInProduction();
   if (process.env.NODE_ENV === 'production') {
+    if (process.env.ALLOW_DEMO_MEMORY_DB === 'true') {
+      throw new Error(
+        'Production configuration error: ALLOW_DEMO_MEMORY_DB=true is forbidden in production.'
+      );
+    }
+    if (
+      process.env.ALLOW_LOCAL_DEV_PIN === 'true' ||
+      process.env.ALLOW_LOCAL_DEV_LOGIN === 'true'
+    ) {
+      throw new Error(
+        'Production configuration error: ALLOW_LOCAL_DEV_PIN must not be enabled in production.'
+      );
+    }
     const secret = (process.env.SESSION_SECRET || '').trim();
-    if (!secret || secret === DEV_SESSION_SECRET || secret === 'change-me-in-production' || secret.length < 16) {
+    if (
+      !secret ||
+      secret === LEGACY_INSECURE_SECRET ||
+      secret === 'change-me-in-production' ||
+      secret === 'local-preview-secret' ||
+      secret.length < 16
+    ) {
       throw new Error(
         'Production configuration error: SESSION_SECRET must be set to a strong secret (>= 16 chars).'
       );
@@ -37,15 +68,31 @@ export function assertAuthRuntimeConfig(): void {
   }
 }
 
-function getSessionSecret(): string {
+export function getSessionSecret(): string {
   const secret = (process.env.SESSION_SECRET || '').trim();
   if (process.env.NODE_ENV === 'production') {
-    if (!secret || secret === DEV_SESSION_SECRET || secret === 'change-me-in-production') {
+    if (
+      !secret ||
+      secret === LEGACY_INSECURE_SECRET ||
+      secret === 'change-me-in-production' ||
+      secret === 'local-preview-secret' ||
+      secret.length < 16
+    ) {
       throw new Error('SESSION_SECRET is missing or insecure in production.');
     }
     return secret;
   }
-  return secret || DEV_SESSION_SECRET;
+  if (secret) return secret;
+  if (!ephemeralProcessSecret) {
+    ephemeralProcessSecret = crypto.randomBytes(32).toString('hex');
+    if (!warnedEphemeralSecret && process.env.NODE_ENV !== 'test') {
+      warnedEphemeralSecret = true;
+      console.warn(
+        '[auth] SESSION_SECRET not set; using ephemeral per-process secret for this non-production runtime.'
+      );
+    }
+  }
+  return ephemeralProcessSecret;
 }
 
 export function getStudentPin(): string {

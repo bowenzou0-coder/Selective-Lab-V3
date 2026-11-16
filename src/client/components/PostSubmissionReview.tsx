@@ -179,7 +179,7 @@ export function PostSubmissionReview({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-bold text-[var(--text-primary)]">
-          Gemini Writing Assessment · Band:{' '}
+          Gemini Writing Assessment{ev.modelId ? ` (${ev.modelId})` : ''} · Band:{' '}
           <span className="text-[var(--accent-primary)]">
             {ev.overallBandEstimate.replace('_', ' ')}
           </span>

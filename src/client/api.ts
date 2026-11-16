@@ -1,6 +1,7 @@
 import type {
   BankImportManifest,
   BankMasterySummary,
+  DailyFocusPlan,
   ImportBatchRecord,
   LearningConfig,
   MarkingResult,
@@ -52,11 +53,14 @@ export interface DashboardResponse {
   batchCounts: Record<MockTestBatch, Record<SectionCode, number>>;
   activeSession: SessionRecord | null;
   recentSessions: SessionRecord[];
+  dailyFocusPlan?: DailyFocusPlan;
+  serverNowIso?: string;
 }
 
 export interface SessionDetailResponse {
   session: SessionRecord;
   questions: StudentQuestionView[];
+  serverNowIso?: string;
   reviewResults?: Record<string, MarkingResult[]>;
   writingReview?: {
     submissionId: string;
@@ -109,6 +113,37 @@ export interface AdminStatusResponse {
   openFlagsCount: number;
   activeConfigVersion: number;
   batchesCount?: number;
+}
+
+export interface RuntimeDiagnosticsResponse {
+  checkedAtIso: string;
+  configSource: 'firebase-applet-config.json';
+  projectId: string;
+  firestoreDatabaseId: string;
+  storageBucket: string;
+  runtimeBackend: string;
+  nodeEnv: string;
+  isCloudRuntime: boolean;
+  kService: string | null;
+  runtimeServiceAccount: string | null;
+  credentialMode: 'explicit_credentials' | 'emulator' | 'attached_adc' | 'none';
+  emulatorActive: boolean;
+  localDevPinEnabled: boolean;
+  sessionSecretConfigured: boolean;
+  geminiConfigured: boolean;
+  geminiModel?: string;
+  firestoreProbe: {
+    ok: boolean;
+    latencyMs: number;
+    errorCode?: string;
+    errorMessage?: string;
+  };
+  storageProbe: {
+    ok: boolean;
+    exists?: boolean;
+    error?: string;
+  };
+  remediationHint: string | null;
 }
 
 export interface PaginatedQuestionsResponse {
@@ -200,6 +235,7 @@ export type ApiError = Error & {
   activeSessionId?: string;
   currentRevision?: number;
   serverCheckpoint?: SessionRecord['checkpoint'];
+  expiredAutoSubmitted?: boolean;
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -232,12 +268,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       activeSessionId?: string;
       currentRevision?: number;
       serverCheckpoint?: SessionRecord['checkpoint'];
+      expiredAutoSubmitted?: boolean;
     };
     const err = new Error(payload?.error || `Request failed (${res.status})`) as ApiError;
     err.status = res.status;
     if (payload?.activeSessionId) err.activeSessionId = payload.activeSessionId;
     if (typeof payload?.currentRevision === 'number') err.currentRevision = payload.currentRevision;
     if (payload?.serverCheckpoint) err.serverCheckpoint = payload.serverCheckpoint;
+    if (typeof payload?.expiredAutoSubmitted === 'boolean') {
+      err.expiredAutoSubmitted = payload.expiredAutoSubmitted;
+    }
     throw err;
   }
   return data as T;
@@ -304,7 +344,7 @@ export const api = {
     timeMultiplier?: number;
     customTimeLimitSec?: number;
   }) =>
-    request<{ sessionId: string; session: SessionRecord }>('/api/student/sessions', {
+    request<{ sessionId: string; session: SessionRecord; serverNowIso?: string }>('/api/student/sessions', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -348,6 +388,7 @@ export const api = {
 
   // Admin APIs
   getAdminStatus: () => request<AdminStatusResponse>('/api/admin/status'),
+  getAdminDiagnostics: () => request<RuntimeDiagnosticsResponse>('/api/admin/diagnostics'),
   getAdminQuestions: (params?: {
     search?: string;
     section?: string;

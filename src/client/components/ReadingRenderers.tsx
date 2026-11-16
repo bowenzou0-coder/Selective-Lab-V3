@@ -302,7 +302,12 @@ export function ReadingStimulusPane({
                         aria-label={`Gap ${gapNum}`}
                         disabled={readOnly}
                         value={picked}
-                        onChange={(e) => !readOnly && onSelectAnswer(part.partId, e.target.value || null)}
+                        onFocus={() => onSelectGapIndex(gapNum - 1)}
+                        onClick={() => onSelectGapIndex(gapNum - 1)}
+                        onChange={(e) => {
+                          onSelectGapIndex(gapNum - 1);
+                          if (!readOnly) onSelectAnswer(part.partId, e.target.value || null);
+                        }}
                         className={`px-2 py-0.5 text-sm rounded-[var(--radius-sm)] border font-medium transition-colors ${
                           readOnly ? 'cursor-default' : 'cursor-pointer'
                         } ${
@@ -573,19 +578,35 @@ export function ReadingRightAnswerPane({
         {question.parts.map((part, idx) => {
           const picked = answersByPartId[part.partId] || null;
           const correctKey = getKeyForPart(part.partId);
+          const isActivePart = activeGapIndex === idx;
           return (
             <div
               key={part.partId}
-              className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-2.5"
+              className={`p-4 rounded-[var(--radius-md)] border bg-[var(--bg-canvas)] space-y-2.5 transition-colors ${
+                isActivePart
+                  ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/20'
+                  : 'border-[var(--border-hairline)]'
+              }`}
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[var(--text-primary)] tabular-nums">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectGapIndex(idx);
+                  }}
+                  className="text-xs font-bold text-[var(--text-primary)] tabular-nums cursor-pointer hover:text-[var(--accent-primary)]"
+                >
                   Gap {idx + 1}
-                </span>
+                </button>
                 {!readOnly && picked && (
                   <button
                     type="button"
-                    onClick={() => onSelectAnswer(part.partId, null)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectGapIndex(idx);
+                      onSelectAnswer(part.partId, null);
+                    }}
                     className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
                     Clear
@@ -601,10 +622,13 @@ export function ReadingRightAnswerPane({
                     <button
                       key={opt.key}
                       type="button"
-                      disabled={readOnly}
-                      onClick={() => !readOnly && onSelectAnswer(part.partId, selected ? null : opt.key)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectGapIndex(idx);
+                        if (!readOnly) onSelectAnswer(part.partId, selected ? null : opt.key);
+                      }}
                       className={`px-3 py-2 rounded-[var(--radius-sm)] border text-left text-sm flex items-center justify-between gap-2 transition-colors ${
-                        readOnly ? 'cursor-default' : 'cursor-pointer'
+                        readOnly ? 'cursor-pointer' : 'cursor-pointer'
                       } ${
                         readOnly && isCorrect
                           ? 'border-[var(--status-success)] bg-[var(--status-success-bg)] font-semibold text-[var(--text-primary)]'
@@ -724,7 +748,7 @@ export function ReadingRightAnswerPane({
                       {assignedGapNum ? ` · Selected Gap ${assignedGapNum}` : ''}
                       {correctGapNum ? ` · Key: Gap ${correctGapNum}` : ''}
                     </div>
-                    <p className="text-sm text-[var(--text-primary)] leading-relaxed">{ex.bodyMarkdown}</p>
+                    <p className="text-sm text-[var(--text-primary)] leading-relaxed whitespace-pre-line">{ex.bodyMarkdown}</p>
                   </div>
                   {!readOnly && (
                     <button
@@ -764,15 +788,27 @@ export function ReadingRightAnswerPane({
         {question.parts.map((part, idx) => {
           const picked = answersByPartId[part.partId] || null;
           const correctKey = getKeyForPart(part.partId);
+          const isActivePart = activeGapIndex === idx;
           return (
             <div
               key={part.partId}
-              className="p-3.5 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-elevated)] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              className={`p-3.5 rounded-[var(--radius-md)] border bg-[var(--bg-elevated)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                isActivePart
+                  ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/20'
+                  : 'border-[var(--border-hairline)]'
+              }`}
             >
-              <div className="text-sm text-[var(--text-primary)]">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectGapIndex(idx);
+                }}
+                className="text-sm text-[var(--text-primary)] text-left whitespace-pre-line cursor-pointer"
+              >
                 <span className="font-mono text-xs text-[var(--text-muted)] mr-2">{idx + 1}.</span>
                 {part.promptText}
-              </div>
+              </button>
               <div className="flex items-center gap-1.5 shrink-0">
                 {keys.map((k) => {
                   const selected = picked === k;
@@ -782,12 +818,13 @@ export function ReadingRightAnswerPane({
                     <button
                       key={k}
                       type="button"
-                      disabled={readOnly}
                       aria-label={`Statement ${idx + 1} option ${k}`}
-                      onClick={() => !readOnly && onSelectAnswer(part.partId, selected ? null : k)}
-                      className={`w-9 h-9 rounded-[var(--radius-sm)] border text-xs font-bold transition-colors ${
-                        readOnly ? 'cursor-default' : 'cursor-pointer'
-                      } ${
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectGapIndex(idx);
+                        if (!readOnly) onSelectAnswer(part.partId, selected ? null : k);
+                      }}
+                      className={`w-9 h-9 rounded-[var(--radius-sm)] border text-xs font-bold transition-colors cursor-pointer ${
                         readOnly && isCorrect
                           ? 'border-[var(--status-success)] bg-[var(--status-success)] text-white'
                           : isWrongSelected

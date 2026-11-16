@@ -17,6 +17,7 @@ import {
   type MediaMigrationManifest,
   type MigrationPreflightReport,
   type RestoreReport,
+  type RuntimeDiagnosticsResponse,
 } from '../api';
 import type {
   BankImportManifest,
@@ -118,6 +119,8 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
     return 'browser';
   });
   const [status, setStatus] = useState<AdminStatusResponse | null>(null);
+  const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsResponse | null>(null);
+  const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -267,6 +270,18 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
     selectedQid,
   ]);
 
+  const loadDiagnostics = useCallback(async () => {
+    setLoadingDiagnostics(true);
+    try {
+      const diag = await api.getAdminDiagnostics();
+      setDiagnostics(diag);
+    } catch {
+      // ignore secondary probe error if offline
+    } finally {
+      setLoadingDiagnostics(false);
+    }
+  }, []);
+
   const loadAdminOverview = useCallback(async () => {
     try {
       const [st, flRes, cfgRes, batchRes] = await Promise.all([
@@ -281,10 +296,11 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
       setConfigVersionNum(cfgRes.active.versionNumber);
       setConfigHistory(cfgRes.history);
       setBatches(batchRes.batches);
+      loadDiagnostics();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load admin console.');
     }
-  }, []);
+  }, [loadDiagnostics]);
 
   useEffect(() => {
     loadAdminOverview();
@@ -578,6 +594,16 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
           </button>
         ))}
       </div>
+
+      {diagnostics?.remediationHint && (
+        <div
+          role="alert"
+          className="p-4 rounded-[var(--radius-md)] bg-[var(--status-warn-bg)] border border-[var(--status-warn)]/40 text-xs text-[var(--status-warn)] space-y-1.5"
+        >
+          <div className="font-bold">Managed Cloud Permission Notice</div>
+          <p>{diagnostics.remediationHint}</p>
+        </div>
+      )}
 
       {error && (
         <div role="alert" className="p-3.5 rounded-[var(--radius-sm)] bg-[var(--status-error-bg)] text-[var(--status-error)] text-xs font-medium">
@@ -1535,23 +1561,24 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
               </h3>
               {(
                 [
-                  ['spacedReviewWeight', 'Spaced Review Weight', 0.1],
-                  ['weakestSkillWeight', 'Weakest Skill Weight', 0.1],
-                  ['noveltyCoverageWeight', 'Novelty Weight', 0.1],
-                  ['minRepeatCooldownHours', 'Cooldown (hours)', 1],
-                  ['sm2EaseFloor', 'SM-2 Ease Floor', 0.1],
+                  ['spacedReviewWeight', 'Spaced Review Weight', 0, 10, 0.1],
+                  ['weakestSkillWeight', 'Weakest Skill Weight', 0, 10, 0.1],
+                  ['noveltyCoverageWeight', 'Novelty Weight', 0, 10, 0.1],
+                  ['minRepeatCooldownHours', 'Cooldown (hours)', 0, 168, 1],
+                  ['sm2EaseFloor', 'SM-2 Ease Floor', 1.1, 3.0, 0.1],
                 ] as const
-              ).map(([field, label, step]) => (
+              ).map(([field, label, min, max, step]) => (
                 <div key={field} className="flex items-center justify-between gap-2 text-xs">
                   <label className="font-medium text-[var(--text-primary)]">{label}</label>
-                  <input
-                    type="number"
+                  <NumericConfigInput
+                    min={min}
+                    max={max}
                     step={step}
                     value={configDraft.scheduling[field]}
-                    onChange={(e) =>
+                    onCommit={(val) =>
                       setConfigDraft({
                         ...configDraft,
-                        scheduling: { ...configDraft.scheduling, [field]: Number(e.target.value) },
+                        scheduling: { ...configDraft.scheduling, [field]: val },
                       })
                     }
                     className="w-24 px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] tabular-nums"
@@ -1566,19 +1593,17 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
               </h3>
               <div className="flex items-center justify-between gap-2 text-xs">
                 <label className="font-medium text-[var(--text-primary)]">Target Success Min</label>
-                <input
-                  type="number"
+                <NumericConfigInput
+                  min={0.1}
+                  max={0.95}
                   step={0.05}
                   value={configDraft.calibration.targetSuccessRateRange[0]}
-                  onChange={(e) =>
+                  onCommit={(val) =>
                     setConfigDraft({
                       ...configDraft,
                       calibration: {
                         ...configDraft.calibration,
-                        targetSuccessRateRange: [
-                          Number(e.target.value),
-                          configDraft.calibration.targetSuccessRateRange[1],
-                        ],
+                        targetSuccessRateRange: [val, configDraft.calibration.targetSuccessRateRange[1]],
                       },
                     })
                   }
@@ -1587,19 +1612,17 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
               </div>
               <div className="flex items-center justify-between gap-2 text-xs">
                 <label className="font-medium text-[var(--text-primary)]">Target Success Max</label>
-                <input
-                  type="number"
+                <NumericConfigInput
+                  min={0.1}
+                  max={1.0}
                   step={0.05}
                   value={configDraft.calibration.targetSuccessRateRange[1]}
-                  onChange={(e) =>
+                  onCommit={(val) =>
                     setConfigDraft({
                       ...configDraft,
                       calibration: {
                         ...configDraft.calibration,
-                        targetSuccessRateRange: [
-                          configDraft.calibration.targetSuccessRateRange[0],
-                          Number(e.target.value),
-                        ],
+                        targetSuccessRateRange: [configDraft.calibration.targetSuccessRateRange[0], val],
                       },
                     })
                   }
@@ -1608,15 +1631,17 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
               </div>
               <div className="flex items-center justify-between gap-2 text-xs">
                 <label className="font-medium text-[var(--text-primary)]">Plateau Min Attempts</label>
-                <input
-                  type="number"
+                <NumericConfigInput
+                  min={1}
+                  max={50}
+                  step={1}
                   value={configDraft.plateauDetection.minAttemptsForEvaluation}
-                  onChange={(e) =>
+                  onCommit={(val) =>
                     setConfigDraft({
                       ...configDraft,
                       plateauDetection: {
                         ...configDraft.plateauDetection,
-                        minAttemptsForEvaluation: Number(e.target.value),
+                        minAttemptsForEvaluation: Math.round(val),
                       },
                     })
                   }
@@ -1625,16 +1650,17 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
               </div>
               <div className="flex items-center justify-between gap-2 text-xs">
                 <label className="font-medium text-[var(--text-primary)]">Stagnant Ceiling</label>
-                <input
-                  type="number"
+                <NumericConfigInput
+                  min={0.1}
+                  max={1.0}
                   step={0.05}
                   value={configDraft.plateauDetection.stagnantAccuracyCeiling}
-                  onChange={(e) =>
+                  onCommit={(val) =>
                     setConfigDraft({
                       ...configDraft,
                       plateauDetection: {
                         ...configDraft.plateauDetection,
-                        stagnantAccuracyCeiling: Number(e.target.value),
+                        stagnantAccuracyCeiling: val,
                       },
                     })
                   }
@@ -1678,6 +1704,75 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
       {/* TAB 5: Backup, Restore & Migration Preflight */}
       {tab === 'backup' && (
         <div className="space-y-6">
+          <section className="p-6 rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] border border-[var(--border-hairline)] space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--text-primary)]">Managed Google Runtime Diagnostics</h2>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Live redacted probe of Firebase Admin, Firestore named DB, Cloud Storage bucket, and managed secret readiness.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={loadingDiagnostics}
+                onClick={loadDiagnostics}
+                className="px-4 py-2 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-surface)] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingDiagnostics ? 'animate-spin' : ''}`} />
+                <span>Refresh Diagnostics</span>
+              </button>
+            </div>
+            {diagnostics && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs tabular-nums">
+                <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--bg-canvas)] border border-[var(--border-hairline)] space-y-1">
+                  <div className="font-semibold text-[var(--text-primary)]">Firebase Project &amp; Config</div>
+                  <div>Config: {diagnostics.configSource}</div>
+                  <div className="font-mono break-all">Project: {diagnostics.projectId}</div>
+                  <div className="font-mono break-all">DB ID: {diagnostics.firestoreDatabaseId}</div>
+                  <div className="font-mono break-all">Bucket: {diagnostics.storageBucket}</div>
+                </div>
+                <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--bg-canvas)] border border-[var(--border-hairline)] space-y-1">
+                  <div className="font-semibold text-[var(--text-primary)]">Runtime Identity &amp; Secrets</div>
+                  <div>Backend: {diagnostics.runtimeBackend} ({diagnostics.credentialMode})</div>
+                  <div className="font-mono break-all">
+                    SA: {diagnostics.runtimeServiceAccount || 'none / local'}
+                  </div>
+                  <div>Session Secret: {diagnostics.sessionSecretConfigured ? 'Configured' : 'Ephemeral/Unset'}</div>
+                  <div>
+                    Gemini Decisions: {diagnostics.geminiModel || 'gemini-4-hydrogen'} (
+                    {diagnostics.geminiConfigured ? 'Configured' : 'Unset'})
+                  </div>
+                  <div>Local PIN Auth: {diagnostics.localDevPinEnabled ? 'Enabled' : 'Disabled'}</div>
+                </div>
+                <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--bg-canvas)] border border-[var(--border-hairline)] space-y-1">
+                  <div className="font-semibold text-[var(--text-primary)]">Storage Probes</div>
+                  <div
+                    className={
+                      diagnostics.firestoreProbe.ok ? 'text-[var(--status-success)] font-semibold' : 'text-[var(--status-error)] font-semibold'
+                    }
+                  >
+                    Firestore: {diagnostics.firestoreProbe.ok ? `OK (${diagnostics.firestoreProbe.latencyMs}ms)` : `Error (${diagnostics.firestoreProbe.errorCode || 'ERR'})`}
+                  </div>
+                  {diagnostics.firestoreProbe.errorMessage && (
+                    <div className="text-[var(--text-secondary)] break-words">
+                      {diagnostics.firestoreProbe.errorMessage}
+                    </div>
+                  )}
+                  <div
+                    className={
+                      diagnostics.storageProbe.ok ? 'text-[var(--status-success)] font-semibold' : 'text-[var(--status-error)] font-semibold'
+                    }
+                  >
+                    Cloud Storage: {diagnostics.storageProbe.ok ? 'Bucket Accessible' : `Unavailable`}
+                  </div>
+                  {diagnostics.storageProbe.error && (
+                    <div className="text-[var(--text-secondary)] break-words">{diagnostics.storageProbe.error}</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
           <section className="p-6 rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] border border-[var(--border-hairline)] space-y-4">
             <h2 className="text-lg font-bold text-[var(--text-primary)]">Full Canonical Database Backup</h2>
             <p className="text-sm text-[var(--text-secondary)]">

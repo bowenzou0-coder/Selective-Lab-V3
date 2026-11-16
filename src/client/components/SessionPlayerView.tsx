@@ -127,6 +127,12 @@ export function SessionPlayerView({
   const [activeGapIndex, setActiveGapIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const autoSubmittedRef = useRef(false);
+  const onActiveSessionClearedRef = useRef(onActiveSessionCleared);
+  useEffect(() => {
+    onActiveSessionClearedRef.current = onActiveSessionCleared;
+  }, [onActiveSessionCleared]);
+  const serverAnchorRef = useRef<{ serverMs: number; perfMs: number } | null>(null);
+  const [, setClockTick] = useState(0);
 
   // Submission Review
   const [reviewResults, setReviewResults] = useState<Record<string, MarkingResult[]> | undefined>();
@@ -190,10 +196,16 @@ export function SessionPlayerView({
     setError('');
     setConflictState(null);
     setRecoverableDraft(null);
+    autoSubmittedRef.current = false;
     api
       .getSession(sessionId)
       .then(async (res) => {
         if (!active) return;
+        const parsedServerMs = res.serverNowIso ? Date.parse(res.serverNowIso) : Date.now();
+        serverAnchorRef.current = {
+          serverMs: Number.isNaN(parsedServerMs) ? Date.now() : parsedServerMs,
+          perfMs: performance.now(),
+        };
         setSession(res.session);
         setQuestions(res.questions);
         checkpointRevisionRef.current = res.session.checkpointRevision ?? 1;
@@ -222,6 +234,9 @@ export function SessionPlayerView({
           }
         } else {
           clearLocalDraft(draftStorageKey);
+          if (!res.session.isSandbox) {
+            onActiveSessionClearedRef.current?.();
+          }
         }
 
         if (res.reviewResults) setReviewResults(res.reviewResults);
@@ -270,6 +285,21 @@ export function SessionPlayerView({
         setSaveStatus('saved');
       } catch (err) {
         const apiErr = err as ApiError;
+        if (apiErr.status === 409 && apiErr.expiredAutoSubmitted) {
+          clearLocalDraft(draftStorageKey);
+          dirtyRef.current = false;
+          try {
+            const refreshed = await api.getSession(session.sessionId);
+            setSession(refreshed.session);
+            setQuestions(refreshed.questions);
+            if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
+            if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
+            onActiveSessionClearedRef.current?.();
+          } catch {
+            setSaveStatus('failed');
+          }
+          return;
+        }
         if (apiErr.status === 409 && apiErr.serverCheckpoint && typeof apiErr.currentRevision === 'number') {
           setConflictState({
             currentRevision: apiErr.currentRevision,
@@ -284,17 +314,21 @@ export function SessionPlayerView({
     [session, conflictState, draftStorageKey]
   );
 
-  // Elapsed timer + 30s periodic autosave
+  // Elapsed timer, 500ms monotonic deadline clock tick, and 30s periodic autosave
   useEffect(() => {
     if (!session || session.status !== 'in_progress') return;
     const secTimer = window.setInterval(() => {
       setElapsedSec((prev) => prev + 1);
     }, 1000);
+    const clockTimer = window.setInterval(() => {
+      setClockTick((t) => (t + 1) % 100_000);
+    }, 500);
     const saveTimer = window.setInterval(() => {
       flushCheckpoint();
     }, 30_000);
     return () => {
       window.clearInterval(secTimer);
+      window.clearInterval(clockTimer);
       window.clearInterval(saveTimer);
     };
   }, [session, flushCheckpoint]);
@@ -427,6 +461,19 @@ export function SessionPlayerView({
       !session.isSandbox
   );
 
+  const deadlineMs = session?.deadlineAt ? Date.parse(session.deadlineAt) : null;
+  let remainingSec: number | null = null;
+  if (deadlineMs !== null && !Number.isNaN(deadlineMs)) {
+    const anchor = serverAnchorRef.current;
+    const nowApproxMs = anchor
+      ? anchor.serverMs + (performance.now() - anchor.perfMs)
+      : Date.now();
+    remainingSec = Math.max(0, Math.ceil((deadlineMs - nowApproxMs) / 1000));
+  } else if (session?.timeLimitSec) {
+    remainingSec = Math.max(0, session.timeLimitSec - elapsedSec);
+  }
+  const isTimeUp = Boolean(isLockedStudentSession && remainingSec !== null && remainingSec <= 0);
+
   // Warn on tab close/refresh when unsent draft exists or while locked in timed test
   useEffect(() => {
     if (!isLockedStudentSession && saveStatus !== 'unsent' && saveStatus !== 'failed') return;
@@ -458,22 +505,20 @@ export function SessionPlayerView({
       );
       setReviewResults(res.reviewResults);
       setWritingReview(res.writingReview);
-      onActiveSessionCleared?.();
+      onActiveSessionClearedRef.current?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to submit session.');
     } finally {
       setSubmitting(false);
     }
-  }, [session, submitting, onActiveSessionCleared, draftStorageKey]);
+  }, [session, submitting, draftStorageKey]);
 
-  // Auto-submit when timed locked student session hits 00:00
+  // Auto-submit when timed locked student session hits 00:00 on server clock
   useEffect(() => {
-    if (!isLockedStudentSession || !session?.timeLimitSec || autoSubmittedRef.current) return;
-    if (elapsedSec >= session.timeLimitSec) {
-      autoSubmittedRef.current = true;
-      handleSubmit();
-    }
-  }, [isLockedStudentSession, session?.timeLimitSec, elapsedSec, handleSubmit]);
+    if (!isTimeUp || autoSubmittedRef.current) return;
+    autoSubmittedRef.current = true;
+    handleSubmit();
+  }, [isTimeUp, handleSubmit]);
 
   const handleInspectorQcChange = async (questionId: string, nextStatus: QuestionItem['qcStatus']) => {
     try {
@@ -549,10 +594,13 @@ export function SessionPlayerView({
     );
   }
 
-  const remainingSec = session.timeLimitSec ? Math.max(0, session.timeLimitSec - elapsedSec) : null;
   const isFlagged = flaggedQuestionIds.includes(currentQuestion.questionId);
   const currentStimId = currentQuestion.stimulus?.stimulusId || currentQuestion.questionId;
   const activeInspectorQ = inspectorMap[currentQuestion.questionId];
+  const safeInspectorPartIdx = activeInspectorQ
+    ? Math.min(Math.max(0, activeGapIndex), Math.max(0, activeInspectorQ.parts.length - 1))
+    : 0;
+  const activeInspectorPart = activeInspectorQ?.parts[safeInspectorPartIdx];
 
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[var(--bg-canvas)]">
@@ -579,6 +627,16 @@ export function SessionPlayerView({
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
                 <span>{isLockedStudentSession ? 'Locked exam session' : 'Calibration workspace'}</span>
+                {session.selectionDecision && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span title={session.selectionDecision.rationale}>
+                      {session.selectionDecision.source === 'gemini'
+                        ? `Gemini Decisions (${session.selectionDecision.modelId || 'gemini-4-hydrogen'})`
+                        : 'Adaptive engine'}
+                    </span>
+                  </>
+                )}
                 <span aria-hidden="true">·</span>
                 {saveStatus === 'saving' && (
                   <span className="text-[var(--text-secondary)] font-medium">Saving...</span>
@@ -827,6 +885,12 @@ export function SessionPlayerView({
         </div>
       )}
 
+      {isTimeUp && (
+        <div role="status" className="border-b border-[var(--status-error)]/40 bg-[var(--status-error-bg)] px-6 py-2.5 text-center text-xs font-semibold text-[var(--status-error)]">
+          Time expired — locking inputs and finalising your submission on the server...
+        </div>
+      )}
+
       {error && (
         <div role="alert" className="max-w-[1440px] mx-auto w-full px-6 pt-4">
           <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--status-error-bg)] text-[var(--status-error)] text-xs font-medium">
@@ -838,8 +902,8 @@ export function SessionPlayerView({
       {/* Admin Inspector Panel (if active in calibration mode) */}
       {session.mode === 'admin_calibration' && isAdmin && inspectorOpen && activeInspectorQ && (
         <div className="border-b border-[var(--border-strong)] bg-[var(--bg-surface)] px-6 py-4">
-          <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs">
-            <div className="space-y-1">
+          <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-start justify-between gap-4 text-xs">
+            <div className="space-y-1.5 flex-1 min-w-0">
               <div className="font-bold text-[var(--text-primary)] tabular-nums">
                 Admin Inspector · {activeInspectorQ.questionId} · Pool: {activeInspectorQ.poolType} · QC:{' '}
                 {activeInspectorQ.qcStatus}
@@ -847,18 +911,30 @@ export function SessionPlayerView({
                   ? ` · ${activeInspectorQ.provenance.sourceReference}`
                   : ''}
               </div>
-              <div className="text-[var(--text-secondary)]">
+              <div className="flex flex-wrap items-center gap-2 text-[var(--text-secondary)]">
                 {activeInspectorQ.parts.map((p, idx) => (
-                  <span key={p.partId} className="mr-4">
+                  <button
+                    key={p.partId}
+                    type="button"
+                    onClick={() => setActiveGapIndex(idx)}
+                    className={`px-2 py-0.5 rounded-[var(--radius-sm)] border text-left cursor-pointer ${
+                      idx === safeInspectorPartIdx
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--text-primary)]'
+                        : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-canvas)]'
+                    }`}
+                  >
                     {activeInspectorQ.parts.length > 1 ? `P${idx + 1}: ` : ''}
                     <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> · Diff:{' '}
                     {p.difficultyInitial} · {SKILL_NAME_MAP.get(p.skillId) || p.skillId}
-                  </span>
+                  </button>
                 ))}
               </div>
-              {activeInspectorQ.parts[0]?.workedExplanation && (
-                <div className="text-[var(--text-secondary)]">
-                  Explanation: {activeInspectorQ.parts[0].workedExplanation}
+              {activeInspectorPart?.workedExplanation && (
+                <div className="text-[var(--text-secondary)] whitespace-pre-line pt-1">
+                  <strong className="text-[var(--text-primary)]">
+                    Explanation{activeInspectorQ.parts.length > 1 ? ` (Part ${safeInspectorPartIdx + 1})` : ''}:
+                  </strong>{' '}
+                  {activeInspectorPart.workedExplanation}
                 </div>
               )}
             </div>
@@ -893,6 +969,7 @@ export function SessionPlayerView({
       {/* Shared Janison QuestionWorkspace in 'exam' mode */}
       <QuestionWorkspace
         mode="exam"
+        frozen={isTimeUp || submitting}
         question={currentQuestion}
         answersByPartId={answersByPartId}
         eliminatedByPartId={eliminatedByPartId}

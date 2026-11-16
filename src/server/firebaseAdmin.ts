@@ -15,6 +15,14 @@ export function isFirebaseEmulatorActive(): boolean {
   );
 }
 
+export function assertNoEmulatorInProduction(): void {
+  if (process.env.NODE_ENV === 'production' && isFirebaseEmulatorActive()) {
+    throw new Error(
+      'Production configuration error: Firebase emulator env vars (FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST / FIREBASE_STORAGE_EMULATOR_HOST) must not be set in production.'
+    );
+  }
+}
+
 export function hasExplicitServiceCredentials(): boolean {
   return Boolean(
     process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim() ||
@@ -37,6 +45,7 @@ export function isFirestoreRuntimeConfigured(): boolean {
     isFirebaseEmulatorActive() ||
     hasExplicitServiceCredentials() ||
     isCloudRunOrGcpRuntime() ||
+    process.env.USE_FIRESTORE_DB === 'true' ||
     process.env.USE_FIRESTORE === 'true'
   );
 }
@@ -47,7 +56,9 @@ export function isStorageBucketConfigured(): boolean {
     cfg.storageBucket &&
       (process.env.FIREBASE_STORAGE_EMULATOR_HOST ||
         hasExplicitServiceCredentials() ||
-        isCloudRunOrGcpRuntime())
+        isCloudRunOrGcpRuntime() ||
+        process.env.USE_FIRESTORE_DB === 'true' ||
+        process.env.USE_FIRESTORE === 'true')
   );
 }
 

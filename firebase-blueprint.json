@@ -52,10 +52,13 @@
         "isSandbox": { "type": "boolean" },
         "status": { "type": "string", "enum": ["in_progress", "submitted"] },
         "plannedQuestionIds": { "type": "array" },
+        "selectionDecision": { "type": "object" },
         "checkpoint": { "type": "object" },
         "checkpointRevision": { "type": "integer" },
         "submissionSummary": { "type": "object" },
         "timeLimitSec": { "type": "integer" },
+        "deadlineAt": { "type": "string", "maxLength": 64 },
+        "expiredAutoSubmitted": { "type": "boolean" },
         "totalSlots": { "type": "integer" },
         "correctSlots": { "type": "integer" },
         "startedAt": { "type": "string", "maxLength": 64 },
@@ -175,9 +178,40 @@
         "lastSeenAt": { "type": "string" },
         "nextDueAt": { "type": "string" },
         "intervalDays": { "type": "number" },
+        "easeFactor": { "type": "number" },
         "lapseCount": { "type": "integer" }
       },
       "required": ["userId", "questionFamilyId", "lastSeenAt", "nextDueAt", "intervalDays", "lapseCount"]
+    },
+    "ActiveSessionLock": {
+      "title": "ActiveSessionLock",
+      "description": "Atomic per-user active non-sandbox session lock with durable server deadline.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "activeSessionId": { "type": "string", "maxLength": 128 },
+        "deadlineAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "activeSessionId"]
+    },
+    "DailyFocusPlan": {
+      "title": "DailyFocusPlan",
+      "description": "Cached daily adaptive focus plan per learner and date.",
+      "type": "object",
+      "properties": {
+        "planDate": { "type": "string", "maxLength": 16 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "generatedAtIso": { "type": "string", "maxLength": 64 },
+        "source": { "type": "string", "enum": ["gemini", "deterministic"] },
+        "modelId": { "type": "string", "maxLength": 64 },
+        "focusSkillIds": { "type": "array" },
+        "skillWeights": { "type": "object" },
+        "algorithmAdjustments": { "type": "object" },
+        "recommendedSection": { "type": "string", "enum": ["READ", "MATH", "THINK"] },
+        "rationale": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["planDate", "studentId", "generatedAtIso", "source", "focusSkillIds", "skillWeights", "rationale"]
     },
     "WritingSubmission": {
       "title": "WritingSubmission",
@@ -330,6 +364,14 @@
     "/users/{userId}/writing_submissions/{submissionId}": {
       "schema": { "$ref": "#/entities/WritingSubmission" },
       "description": "Student writing responses and rubric evaluations."
+    },
+    "/users/{userId}/locks/{lockId}": {
+      "schema": { "$ref": "#/entities/ActiveSessionLock" },
+      "description": "Atomic server-enforced active session lock per user."
+    },
+    "/users/{userId}/daily_plans/{planDate}": {
+      "schema": { "$ref": "#/entities/DailyFocusPlan" },
+      "description": "Single daily cached adaptive focus plan per user and date."
     },
     "/admin_configs/{configVersionId}": {
       "schema": { "$ref": "#/entities/AdminConfigVersion" },

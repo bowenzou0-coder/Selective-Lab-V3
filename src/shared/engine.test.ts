@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_LEARNING_CONFIG, type QuestionItem, type StimulusGroup } from './contracts';
 import {
+  clampAlgorithmAdjustments,
   computeWritingMetrics,
   detectPlateauStatus,
   gradeSubmission,
   selectAdminCalibrationQuestions,
   selectMockTestQuestions,
+  selectPracticeCandidates,
   selectPracticeSession,
   toStudentQuestionView,
+  updateFamilyMemoryOnce,
   updateSkillAndMemory,
 } from './engine';
 
@@ -266,3 +269,198 @@ test('selectPracticeSession uses sectionDrillQuestionCount (10) and safely falls
   assert.equal(dailyWithZeros.length, 3);
 });
 
+test('updateFamilyMemoryOnce tracks SM-2 easeFactor growth and lapse reset', () => {
+  const m1 = updateFamilyMemoryOnce({
+    questionFamilyId: 'fam_sm2',
+    allPartsCorrect: true,
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-14T10:00:00Z',
+    lastEvidenceStatus: 'correct_once',
+  });
+  assert.equal(m1.easeFactor, 2.6);
+  assert.equal(m1.intervalDays, 1);
+  assert.equal(m1.lastEvidenceStatus, 'correct_once');
+
+  const m2 = updateFamilyMemoryOnce({
+    prevMemory: m1,
+    questionFamilyId: 'fam_sm2',
+    allPartsCorrect: true,
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-15T10:00:00Z',
+    lastEvidenceStatus: 'awaiting_review',
+  });
+  assert.equal(m2.easeFactor, 2.7);
+  assert.equal(m2.intervalDays, 3); // round(1 * 2.6)
+
+  const mLapse = updateFamilyMemoryOnce({
+    prevMemory: m2,
+    questionFamilyId: 'fam_sm2',
+    allPartsCorrect: false,
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-18T10:00:00Z',
+    lastEvidenceStatus: 'needs_repair',
+  });
+  assert.equal(mLapse.easeFactor, 2.45);
+  assert.equal(mLapse.intervalDays, 1);
+  assert.equal(mLapse.lapseCount, 1);
+  assert.equal(mLapse.lastEvidenceStatus, 'needs_repair');
+});
+
+test('selectPracticeSession integrates evidence signals, skillFocusWeights, and diversity', () => {
+  const mkQ = (id: string, skillId: string): QuestionItem => ({
+    ...SAMPLE_Q,
+    questionId: `${id}_v1`,
+    questionFamilyId: id,
+    section: 'MATH',
+    formatType: 'MATH_MCQ_5',
+    poolType: 'practice',
+    evidenceRevision: 'er_1',
+    parts: [
+      {
+        ...SAMPLE_Q.parts[0],
+        partId: `${id}_p1`,
+        skillId,
+      },
+    ],
+  });
+
+  const retainedQ = mkQ('q_ret', 'MATH.NUM.NUMBER_SEQUENCES');
+  const repairQ = mkQ('q_rep', 'MATH.GEO2D.COMPOSITE_AREA');
+  const confirmQ = mkQ('q_conf', 'MATH.MEAS.TIME_CALENDAR');
+  const focusUnseenQ = mkQ('q_foc', 'MATH.ALG.LINEAR_EQUATIONS_RATIO');
+
+  const picked = selectPracticeSession({
+    mode: 'section_drill',
+    sectionFilter: 'MATH',
+    questions: [retainedQ, repairQ, confirmQ, focusUnseenQ],
+    skillStates: {},
+    questionMemory: {
+      q_ret: {
+        questionFamilyId: 'q_ret',
+        timesSeen: 2,
+        lastSeenAt: '2026-11-01T00:00:00Z',
+        lastAllCorrect: true,
+        intervalDays: 14,
+        easeFactor: 2.7,
+        lapseCount: 0,
+        nextDueAt: '2026-11-28T00:00:00Z',
+      },
+    },
+    evidenceMap: {
+      q_ret__er_1: {
+        evidenceKey: 'q_ret__er_1',
+        questionFamilyId: 'q_ret',
+        questionId: 'q_ret_v1',
+        evidenceRevision: 'er_1',
+        section: 'MATH',
+        status: 'retained',
+        cleanPassesCount: 2,
+        passTimestampsIso: ['2026-11-01T00:00:00Z', '2026-11-10T00:00:00Z'],
+        everCleanPassed: true,
+        firstSubmissionCleanPass: true,
+        attemptsCount: 2,
+        resetCount: 0,
+        lastAllCorrect: true,
+        policyVersion: 'v3_3stage_24h_7d',
+        updatedAtIso: '2026-11-10T00:00:00Z',
+      },
+      q_rep__er_1: {
+        evidenceKey: 'q_rep__er_1',
+        questionFamilyId: 'q_rep',
+        questionId: 'q_rep_v1',
+        evidenceRevision: 'er_1',
+        section: 'MATH',
+        status: 'needs_repair',
+        cleanPassesCount: 0,
+        passTimestampsIso: [],
+        everCleanPassed: false,
+        firstSubmissionCleanPass: false,
+        attemptsCount: 1,
+        resetCount: 1,
+        lastAllCorrect: false,
+        policyVersion: 'v3_3stage_24h_7d',
+        updatedAtIso: '2026-11-11T00:00:00Z',
+      },
+      q_conf__er_1: {
+        evidenceKey: 'q_conf__er_1',
+        questionFamilyId: 'q_conf',
+        questionId: 'q_conf_v1',
+        evidenceRevision: 'er_1',
+        section: 'MATH',
+        status: 'correct_once',
+        cleanPassesCount: 1,
+        passTimestampsIso: ['2026-11-11T00:00:00Z'],
+        everCleanPassed: true,
+        firstSubmissionCleanPass: true,
+        attemptsCount: 1,
+        resetCount: 0,
+        lastAllCorrect: true,
+        nextEligibleAtIso: '2026-11-12T00:00:00Z',
+        policyVersion: 'v3_3stage_24h_7d',
+        updatedAtIso: '2026-11-11T00:00:00Z',
+      },
+    },
+    skillFocusWeights: {
+      'MATH.ALG.LINEAR_EQUATIONS_RATIO': 1.35,
+    },
+    config: {
+      ...DEFAULT_LEARNING_CONFIG,
+      sessionDefaults: {
+        ...DEFAULT_LEARNING_CONFIG.sessionDefaults,
+        sectionDrillQuestionCount: 4,
+      },
+    },
+    nowIso: '2026-11-14T12:00:00Z',
+    seed: 12,
+  });
+
+  // Retained-and-not-due should rank strictly last behind repair, due confirmation, and focused unseen
+  assert.equal(picked[3].questionFamilyId, 'q_ret');
+});
+
+test('clampAlgorithmAdjustments bounds multipliers and selectPracticeCandidates isolates holdout items', () => {
+  const clamped = clampAlgorithmAdjustments({
+    spacedReviewWeightMultiplier: 5.0,
+    weakestSkillWeightMultiplier: 0.1,
+    noveltyCoverageWeightMultiplier: 1.15,
+    zpdDifficultyOffset: -3.0,
+  });
+  assert.deepEqual(clamped, {
+    spacedReviewWeightMultiplier: 1.35,
+    weakestSkillWeightMultiplier: 0.75,
+    noveltyCoverageWeightMultiplier: 1.15,
+    zpdDifficultyOffset: -0.75,
+  });
+
+  const holdoutQ: QuestionItem = {
+    ...SAMPLE_Q,
+    questionId: 'q_holdout_pool_v1',
+    questionFamilyId: 'q_holdout_pool',
+    poolType: 'benchmark_holdout',
+  };
+  const practiceMath: QuestionItem = {
+    ...SAMPLE_Q,
+    questionId: 'q_prac_math_v1',
+    questionFamilyId: 'q_prac_math',
+    section: 'MATH',
+    formatType: 'MATH_MCQ_5',
+    poolType: 'practice',
+    parts: [{ ...SAMPLE_Q.parts[0], partId: 'pm1', skillId: 'MATH.GEO2D.COMPOSITE_AREA' }],
+  };
+
+  const { candidates, targetCount, effectiveCaps } = selectPracticeCandidates({
+    mode: 'daily_adaptive',
+    questions: [SAMPLE_Q, holdoutQ, practiceMath],
+    skillStates: {},
+    questionMemory: {},
+    algorithmAdjustments: clamped,
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-14T12:00:00Z',
+    seed: 5,
+    poolLimit: 12,
+  });
+
+  assert.equal(candidates.some((c) => c.q.poolType === 'benchmark_holdout'), false);
+  assert.equal(targetCount, 2);
+  assert.ok(effectiveCaps);
+});

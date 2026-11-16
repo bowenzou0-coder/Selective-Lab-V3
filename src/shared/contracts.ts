@@ -242,7 +242,29 @@ export interface QuestionMemoryState {
   lastAllCorrect: boolean;
   nextDueAt: string;
   intervalDays: number;
+  easeFactor?: number;
   lapseCount: number;
+  lastEvidenceStatus?: MasteryCertificationStatus;
+}
+
+export interface AlgorithmAdjustments {
+  spacedReviewWeightMultiplier?: number;
+  weakestSkillWeightMultiplier?: number;
+  noveltyCoverageWeightMultiplier?: number;
+  zpdDifficultyOffset?: number;
+}
+
+export interface DailyFocusPlan {
+  planDate: string;
+  studentId: string;
+  generatedAtIso: string;
+  source: 'gemini' | 'deterministic';
+  modelId?: string;
+  focusSkillIds: string[];
+  skillWeights: Record<string, number>;
+  algorithmAdjustments?: AlgorithmAdjustments;
+  recommendedSection?: Extract<SectionCode, 'READ' | 'MATH' | 'THINK'>;
+  rationale: string;
 }
 
 export type MasteryCertificationStatus =
@@ -418,6 +440,13 @@ export interface SessionSubmissionPayload {
   }[];
 }
 
+export interface SessionSelectionDecision {
+  source: 'gemini' | 'deterministic';
+  modelId?: string;
+  rationale: string;
+  algorithmAdjustments?: AlgorithmAdjustments;
+}
+
 export interface SessionRecord {
   sessionId: string;
   studentId?: string;
@@ -430,9 +459,12 @@ export interface SessionRecord {
   timeMultiplier?: number;
   status: 'in_progress' | 'submitted' | 'abandoned';
   plannedQuestionIds: string[];
+  selectionDecision?: SessionSelectionDecision;
   checkpointRevision?: number;
   checkpoint?: SessionCheckpoint;
   timeLimitSec?: number;
+  deadlineAt?: string;
+  expiredAutoSubmitted?: boolean;
   totalSlots: number;
   correctSlots: number;
   startedAt: string;

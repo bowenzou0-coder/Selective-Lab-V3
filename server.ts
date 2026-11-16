@@ -22,6 +22,12 @@ import {
   getBootstrappedAdminEmail,
   verifyFirebaseIdToken,
 } from './src/server/firebaseVerify.ts';
+import { getRuntimeDiagnostics } from './src/server/diagnostics.ts';
+import { GeminiServiceError } from './src/server/geminiClient.ts';
+import {
+  decidePracticeQuestionOrderWithGemini,
+  getOrCreateDailyFocusPlan,
+} from './src/server/geminiPlanner.ts';
 import { evaluateWritingWithGemini } from './src/server/geminiWriting.ts';
 import { validateAndDryRunManifest } from './src/server/manifestValidator.ts';
 import {
@@ -49,9 +55,11 @@ import {
   type QuestionMasteryEvidence,
   type QuestionMemoryState,
   type SectionCode,
+  type SessionCheckpoint,
   type SessionMode,
   type SessionQuestionSnapshot,
   type SessionRecord,
+  type SessionSelectionDecision,
   type SessionSubmissionPayload,
   type SkillState,
   type StimulusGroup,
@@ -179,6 +187,332 @@ async function resolveSessionQuestionPairs(
   };
 }
 
+class SessionValidationError extends Error {
+  readonly statusCode = 400;
+}
+
+function getEffectiveDeadlineMs(session: SessionRecord): number | null {
+  if (session.isSandbox) return null;
+  if (session.deadlineAt) {
+    const parsed = Date.parse(session.deadlineAt);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (session.timeLimitSec && session.timeLimitSec > 0 && session.startedAt) {
+    const startMs = Date.parse(session.startedAt);
+    if (Number.isFinite(startMs)) return startMs + session.timeLimitSec * 1000;
+  }
+  return null;
+}
+
+function isSessionExpired(session: SessionRecord, nowMs = Date.now()): boolean {
+  if (session.status !== 'in_progress' || session.isSandbox) return false;
+  const deadlineMs = getEffectiveDeadlineMs(session);
+  return deadlineMs !== null && nowMs >= deadlineMs;
+}
+
+async function finalizeSessionRecord(input: {
+  repo: AppRepository;
+  session: SessionRecord;
+  checkpoint: SessionCheckpoint;
+  assisted: boolean;
+  completedAtIso: string;
+  expiredAutoSubmitted?: boolean;
+  rejectValidationErrors?: boolean;
+}): Promise<{
+  alreadySubmitted: boolean;
+  session: SessionRecord;
+  submissionSummary: SessionSubmissionPayload;
+}> {
+  const {
+    repo,
+    session,
+    checkpoint,
+    assisted,
+    completedAtIso,
+    expiredAutoSubmitted = false,
+    rejectValidationErrors = true,
+  } = input;
+
+  if (session.status === 'submitted' && session.submissionSummary) {
+    return {
+      alreadySubmitted: true,
+      session,
+      submissionSummary: session.submissionSummary,
+    };
+  }
+
+  const ownerId = session.studentId || 'default-student';
+  const answersByPartId = checkpoint.answersByPartId || {};
+  const { pairs } = await resolveSessionQuestionPairs(repo, session);
+
+  const allValidationErrors: string[] = [];
+  const reviewResults: Record<string, MarkingResult[]> = {};
+
+  for (const { question } of pairs) {
+    if (question.formatType === 'WRIT_TYPED_TASK') {
+      reviewResults[question.questionId] = [];
+      continue;
+    }
+    const { results, validationErrors } = gradeSubmission(question, answersByPartId);
+    if (validationErrors.length > 0) {
+      allValidationErrors.push(...validationErrors);
+    }
+    reviewResults[question.questionId] = results;
+  }
+
+  if (rejectValidationErrors && allValidationErrors.length > 0) {
+    throw new SessionValidationError(allValidationErrors.join(' '));
+  }
+
+  const [configData, skillStates, questionMemory, pastAttempts, evidenceMap] = await Promise.all([
+    repo.getActiveConfig(),
+    repo.getSkillStates(ownerId),
+    repo.getQuestionMemory(ownerId),
+    repo.listPartAttempts(500, ownerId, false),
+    repo.getQuestionEvidence(ownerId),
+  ]);
+
+  const totalPartsCount = pairs.reduce((acc, p) => acc + p.question.parts.length, 0);
+  const perPartTimeSec = Math.max(
+    5,
+    Math.round((checkpoint.elapsedSec || 60) / Math.max(1, totalPartsCount))
+  );
+
+  const newAttempts: PartAttemptRecord[] = [];
+  const updatedSkillsMap = new Map<string, SkillState>();
+  const updatedMemoryMap = new Map<string, QuestionMemoryState>();
+  const updatedEvidenceMap = new Map<string, QuestionMasteryEvidence>();
+  const writingSubmissionsToSave: {
+    submissionId: string;
+    studentId: string;
+    sessionId: string;
+    questionId: string;
+    planNotes: string;
+    responseText: string;
+    wordCount: number;
+    timeSpentSec: number;
+    deterministicMetricsJson: string;
+    submittedAt: string;
+  }[] = [];
+
+  const writingReview: {
+    submissionId: string;
+    questionId: string;
+    metrics: WritingDeterministicMetrics;
+    evaluations: WritingEvaluationRecord[];
+  }[] = [];
+
+  let totalObjectiveSlots = 0;
+  let correctObjectiveSlots = 0;
+  let savedWritingSubmission: SessionSubmissionPayload['writingSubmission'];
+
+  for (const { question, evidenceRevision } of pairs) {
+    if (question.formatType === 'WRIT_TYPED_TASK') {
+      const responseText = checkpoint.writingDraft?.responseText || '';
+      const planNotes = checkpoint.writingDraft?.planNotes || '';
+      const spec = question.writingSpec || {
+        genre: 'essay',
+        audience: 'General',
+        purpose: 'Inform',
+        recommendedWordRange: [200, 450],
+        timeLimitSec: 1800,
+      };
+      const metrics = computeWritingMetrics(spec, responseText);
+      const submissionId = `wsub_${session.sessionId}_${question.questionId}`.slice(0, 120);
+      const subRecord = {
+        submissionId,
+        studentId: ownerId,
+        sessionId: session.sessionId,
+        questionId: question.questionId,
+        planNotes,
+        responseText,
+        wordCount: metrics.wordCount,
+        timeSpentSec: checkpoint.elapsedSec || 0,
+        deterministicMetricsJson: JSON.stringify(metrics),
+        submittedAt: completedAtIso,
+      };
+      if (!session.isSandbox) {
+        writingSubmissionsToSave.push(subRecord);
+        savedWritingSubmission = {
+          submissionId: subRecord.submissionId,
+          sessionId: subRecord.sessionId,
+          questionId: subRecord.questionId,
+          planNotes: subRecord.planNotes,
+          responseText: subRecord.responseText,
+          wordCount: subRecord.wordCount,
+          timeSpentSec: subRecord.timeSpentSec,
+          deterministicMetricsJson: subRecord.deterministicMetricsJson,
+          submittedAt: subRecord.submittedAt,
+          evaluations: [],
+        };
+      }
+      writingReview.push({
+        submissionId,
+        questionId: question.questionId,
+        metrics,
+        evaluations: [],
+      });
+      continue;
+    }
+
+    const qResults = reviewResults[question.questionId] || [];
+    const allPartsCorrect = qResults.length > 0 && qResults.every((r) => r.isCorrect);
+    const prevMem =
+      updatedMemoryMap.get(question.questionFamilyId) || questionMemory[question.questionFamilyId];
+    const isSpacedReview = Boolean(prevMem && Date.parse(prevMem.nextDueAt) <= Date.now());
+
+    for (let i = 0; i < question.parts.length; i++) {
+      const part = question.parts[i];
+      const resItem = qResults.find((r) => r.partId === part.partId);
+      const isCorrect = Boolean(resItem?.isCorrect);
+      totalObjectiveSlots++;
+      if (isCorrect) correctObjectiveSlots++;
+
+      newAttempts.push({
+        attemptId: `att_${session.sessionId}_${part.partId}`.slice(0, 120),
+        studentId: ownerId,
+        sessionId: session.sessionId,
+        questionId: question.questionId,
+        questionFamilyId: question.questionFamilyId,
+        questionVersion: question.version,
+        evidenceRevision,
+        partId: part.partId,
+        skillId: part.skillId,
+        difficultyAtAttempt: part.difficultyCalibrated ?? part.difficultyInitial,
+        selectedAnswer: resItem?.selectedAnswer ?? null,
+        isCorrect,
+        timeSpentSec: perPartTimeSec,
+        isSpacedReview,
+        isSandbox: Boolean(session.isSandbox),
+        isLegacy: false,
+        assisted,
+        createdAt: completedAtIso,
+      });
+
+      if (!session.isSandbox) {
+        const prevSkill = updatedSkillsMap.get(part.skillId) || skillStates[part.skillId];
+        const nextSkillState = updateSkillState({
+          prevSkillState: prevSkill,
+          skillId: part.skillId,
+          isCorrect,
+          timeSpentSec: perPartTimeSec,
+          targetTimeSec: part.targetTimeSec,
+          config: configData.config,
+          nowIso: completedAtIso,
+        });
+        const recentForSkill = [
+          isCorrect,
+          ...pastAttempts.filter((a) => a.skillId === part.skillId).map((a) => a.isCorrect),
+        ];
+        nextSkillState.plateauStatus = detectPlateauStatus({
+          recentIsCorrectDesc: recentForSkill,
+          ewmaAccuracy: nextSkillState.ewmaAccuracy,
+          config: configData.config,
+        });
+        updatedSkillsMap.set(part.skillId, nextSkillState);
+      }
+    }
+
+    if (!session.isSandbox) {
+      let nextEv: QuestionMasteryEvidence | undefined;
+      if (question.poolType !== 'benchmark_holdout' && question.qcStatus === 'active') {
+        const evKey = buildEvidenceKey(question.questionFamilyId, evidenceRevision);
+        const prevEv = updatedEvidenceMap.get(evKey) || evidenceMap[evKey];
+        nextEv = advanceQuestionEvidence({
+          prev: prevEv,
+          question,
+          evidenceRevision,
+          allPartsClean: allPartsCorrect,
+          assisted,
+          isSandbox: false,
+          submittedAtIso: completedAtIso,
+          policy: configData.config.masteryPolicy,
+        });
+        updatedEvidenceMap.set(evKey, nextEv);
+      }
+
+      const nextMemory = updateFamilyMemoryOnce({
+        prevMemory: prevMem,
+        questionFamilyId: question.questionFamilyId,
+        allPartsCorrect,
+        config: configData.config,
+        nowIso: completedAtIso,
+        lastEvidenceStatus: nextEv?.status,
+      });
+      updatedMemoryMap.set(question.questionFamilyId, nextMemory);
+    }
+  }
+
+  const savedSkillStates = !session.isSandbox ? Array.from(updatedSkillsMap.values()) : [];
+  const savedQuestionMemory = !session.isSandbox ? Array.from(updatedMemoryMap.values()) : [];
+  const savedEvidence = !session.isSandbox ? Array.from(updatedEvidenceMap.values()) : [];
+  const savedAttempts = !session.isSandbox ? newAttempts : [];
+
+  const submissionSummary: SessionSubmissionPayload = {
+    ok: true,
+    correctSlots: correctObjectiveSlots,
+    totalSlots: totalObjectiveSlots,
+    completedAt: completedAtIso,
+    checkpoint,
+    attempts: savedAttempts,
+    skillStates: savedSkillStates,
+    questionMemory: savedQuestionMemory,
+    evidenceUpdates: savedEvidence,
+    writingSubmission: savedWritingSubmission,
+    reviewResults,
+    writingReview,
+  };
+
+  return repo.finalizeSessionAtomically({
+    sessionId: session.sessionId,
+    studentId: ownerId,
+    checkpoint,
+    correctSlots: correctObjectiveSlots,
+    totalSlots: totalObjectiveSlots,
+    completedAtIso,
+    expiredAutoSubmitted,
+    submissionSummary,
+    attempts: savedAttempts,
+    skillStates: savedSkillStates,
+    questionMemory: savedQuestionMemory,
+    evidenceUpdates: savedEvidence,
+    writingSubmissions: writingSubmissionsToSave,
+  });
+}
+
+async function resolveOrExpireSession(
+  repo: AppRepository,
+  session: SessionRecord
+): Promise<SessionRecord> {
+  if (!isSessionExpired(session)) return session;
+  const deadlineMs = getEffectiveDeadlineMs(session);
+  const completedAtIso =
+    session.deadlineAt ||
+    (deadlineMs !== null ? new Date(deadlineMs).toISOString() : new Date().toISOString());
+  const baseCheckpoint: SessionCheckpoint = session.checkpoint
+    ? {
+        ...session.checkpoint,
+        elapsedSec: session.timeLimitSec ?? session.checkpoint.elapsedSec ?? 0,
+      }
+    : {
+        currentIndex: 0,
+        elapsedSec: session.timeLimitSec ?? 0,
+        answersByPartId: {},
+        flaggedQuestionIds: [],
+      };
+
+  const finalized = await finalizeSessionRecord({
+    repo,
+    session,
+    checkpoint: baseCheckpoint,
+    assisted: false,
+    completedAtIso,
+    expiredAutoSubmitted: true,
+    rejectValidationErrors: false,
+  });
+  return finalized.session;
+}
+
 export interface CreateAppOptions {
   repo?: AppRepository;
   skipSeed?: boolean;
@@ -276,13 +610,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     try {
       await ensureSeeded();
       const sessions = await repo.listSessions(50, req.auth.studentId, false);
-      const active = sessions.find((s) => s.status === 'in_progress' && !s.isSandbox) || null;
+      let activeSessionId: string | null = null;
+      for (const s of sessions) {
+        if (s.status === 'in_progress' && !s.isSandbox) {
+          const resolved = await resolveOrExpireSession(repo, s);
+          if (resolved.status === 'in_progress' && !activeSessionId) {
+            activeSessionId = resolved.sessionId;
+          }
+        }
+      }
       res.json({
         authenticated: true,
         role: req.auth.role,
         studentId: req.auth.studentId,
         email: req.auth.email,
-        activeSessionId: active?.sessionId ?? null,
+        activeSessionId,
         backendName: repo.backendName,
         isDisposableDemo: repo.backendName === 'memory_preview',
         localDevPinEnabled: isLocalDevPinAuthEnabled(),
@@ -320,7 +662,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     try {
       await ensureSeeded();
       const sessions = await repo.listSessions(50, studentId, false);
-      activeSessionId = sessions.find((s) => s.status === 'in_progress' && !s.isSandbox)?.sessionId ?? null;
+      for (const s of sessions) {
+        if (s.status === 'in_progress' && !s.isSandbox) {
+          const resolved = await resolveOrExpireSession(repo, s);
+          if (resolved.status === 'in_progress' && !activeSessionId) {
+            activeSessionId = resolved.sessionId;
+          }
+        }
+      }
     } catch {
       // ignore
     }
@@ -350,8 +699,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       res.status(400).json({ error: 'Firebase ID token is required.' });
       return;
     }
+
+    let decoded;
     try {
-      const decoded = await verifyFirebaseIdToken(idToken);
+      decoded = await verifyFirebaseIdToken(idToken);
+    } catch (err) {
+      res.status(401).json({
+        error: err instanceof Error ? err.message : 'Invalid Firebase credentials.',
+      });
+      return;
+    }
+
+    try {
       const isBootstrappedAdmin =
         decoded.email.toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
       const { role } = await repo.upsertUserFromAuth({
@@ -372,15 +731,28 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       try {
         await ensureSeeded();
         const sessions = await repo.listSessions(50, studentId, false);
-        activeSessionId =
-          sessions.find((s) => s.status === 'in_progress' && !s.isSandbox)?.sessionId ?? null;
-      } catch {
-        // ignore
+        for (const s of sessions) {
+          if (s.status === 'in_progress' && !s.isSandbox) {
+            const resolved = await resolveOrExpireSession(repo, s);
+            if (resolved.status === 'in_progress' && !activeSessionId) {
+              activeSessionId = resolved.sessionId;
+            }
+          }
+        }
+      } catch (seedErr) {
+        console.warn(
+          'Post-login seed/session scan warning:',
+          seedErr instanceof Error ? seedErr.message : seedErr
+        );
       }
       res.json({ authenticated: true, role, studentId, email: decoded.email, activeSessionId, token });
     } catch (err) {
-      res.status(401).json({
-        error: err instanceof Error ? err.message : 'Invalid Firebase credentials.',
+      console.error('POST /api/auth/firebase-login persistence error:', err);
+      res.status(503).json({
+        error:
+          err instanceof Error
+            ? `Database connection error during sign-in: ${err.message}`
+            : 'Database connection error during sign-in.',
       });
     }
   });
@@ -405,12 +777,37 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     try {
       await ensureSeeded();
       const studentId = req.auth!.studentId;
-      const [configData, sessions, attempts, questions] = await Promise.all([
-        repo.getActiveConfig(),
-        repo.listSessions(100, studentId, false),
-        repo.listPartAttempts(500, studentId, false),
-        repo.listQuestions({ qcStatus: 'active' }),
-      ]);
+      const [configData, rawSessions, initialAttempts, questions, skillStates, evidenceMap, questionMemory] =
+        await Promise.all([
+          repo.getActiveConfig(),
+          repo.listSessions(100, studentId, false),
+          repo.listPartAttempts(500, studentId, false),
+          repo.listQuestions({ qcStatus: 'active' }),
+          repo.getSkillStates(studentId),
+          repo.getQuestionEvidence(studentId),
+          repo.getQuestionMemory(studentId),
+        ]);
+
+      let anyExpired = false;
+      const sessions: SessionRecord[] = [];
+      for (const s of rawSessions) {
+        if (isSessionExpired(s)) {
+          anyExpired = true;
+          sessions.push(await resolveOrExpireSession(repo, s));
+        } else {
+          sessions.push(s);
+        }
+      }
+      const attempts = anyExpired ? await repo.listPartAttempts(500, studentId, false) : initialAttempts;
+
+      const dailyFocusPlan = await getOrCreateDailyFocusPlan({
+        repo,
+        studentId,
+        skillStates,
+        evidenceMap,
+        questionMemory,
+        questions,
+      });
 
       const todayPrefix = new Date().toISOString().slice(0, 10);
       const todaySessions = sessions.filter((s) => !s.isSandbox && s.startedAt.startsWith(todayPrefix));
@@ -447,6 +844,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         batchCounts,
         activeSession: activeInProgress,
         recentSessions: sessions.filter((s) => !s.isSandbox).slice(0, 8),
+        dailyFocusPlan,
+        serverNowIso: new Date().toISOString(),
       });
     } catch (err) {
       console.error('GET /api/student/dashboard error:', err);
@@ -471,24 +870,32 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         return;
       }
 
-      const [existingSessions, configData, allQuestions, skillStates, questionMemory] = await Promise.all([
-        repo.listSessions(50, studentId, false),
-        repo.getActiveConfig(),
-        repo.listQuestions(),
-        repo.getSkillStates(studentId),
-        repo.getQuestionMemory(studentId),
-      ]);
+      const [existingSessions, configData, allQuestions, skillStates, questionMemory, evidenceMap] =
+        await Promise.all([
+          repo.listSessions(50, studentId, false),
+          repo.getActiveConfig(),
+          repo.listQuestions(),
+          repo.getSkillStates(studentId),
+          repo.getQuestionMemory(studentId),
+          repo.getQuestionEvidence(studentId),
+        ]);
 
-      const existingActive = existingSessions.find((s) => s.status === 'in_progress' && !s.isSandbox);
-      if (existingActive) {
-        res.status(409).json({
-          error: 'Only one active test is allowed per account at a time. Complete and submit your current test first.',
-          activeSessionId: existingActive.sessionId,
-        });
-        return;
+      for (const s of existingSessions) {
+        if (s.status === 'in_progress' && !s.isSandbox) {
+          const resolved = await resolveOrExpireSession(repo, s);
+          if (resolved.status === 'in_progress') {
+            res.status(409).json({
+              error: 'Only one active test is allowed per account at a time. Complete and submit your current test first.',
+              activeSessionId: resolved.sessionId,
+            });
+            return;
+          }
+        }
       }
 
+      const nowIso = new Date().toISOString();
       let selected: QuestionItem[] = [];
+      let selectionDecision: SessionSelectionDecision | undefined;
       let title = '';
       let effectiveMode: SessionMode = mode;
       let timeLimitSec = 1500;
@@ -524,18 +931,53 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       } else {
         const effectiveSection: SectionCode | undefined =
           mode === 'writing_sprint' ? 'WRIT' : sectionFilter;
-        selected = selectPracticeSession({
-          mode,
-          sectionFilter: effectiveSection,
-          questions: allQuestions,
-          skillStates,
-          questionMemory,
-          config: configData.config,
-          nowIso: new Date().toISOString(),
-          seed: Date.now() & 0xfffffff,
-        });
+        const normalizedMode: SessionMode =
+          mode === 'spaced_review' ? 'daily_adaptive' : mode;
+        const dailyPlan =
+          mode === 'writing_sprint'
+            ? null
+            : await getOrCreateDailyFocusPlan({
+                repo,
+                studentId,
+                skillStates,
+                evidenceMap,
+                questionMemory,
+                questions: allQuestions,
+                nowIso,
+              });
+        const seed = Date.now() & 0xfffffff;
         if (mode === 'writing_sprint') {
-          selected = selected.slice(0, 1);
+          selected = selectPracticeSession({
+            mode: normalizedMode,
+            sectionFilter: effectiveSection,
+            questions: allQuestions,
+            skillStates,
+            questionMemory,
+            evidenceMap,
+            skillFocusWeights: dailyPlan?.skillWeights,
+            algorithmAdjustments: dailyPlan?.algorithmAdjustments,
+            config: configData.config,
+            nowIso,
+            seed,
+          }).slice(0, 1);
+        } else {
+          const ordered = await decidePracticeQuestionOrderWithGemini({
+            mode: normalizedMode,
+            sectionFilter: effectiveSection,
+            questions: allQuestions,
+            skillStates,
+            questionMemory,
+            evidenceMap,
+            dailyPlan,
+            config: configData.config,
+            nowIso,
+            seed,
+          });
+          selected = ordered.questions;
+          selectionDecision = ordered.decision;
+        }
+        effectiveMode = normalizedMode;
+        if (mode === 'writing_sprint') {
           timeLimitSec = 1800;
           title = 'Writing Sprint (30 min)';
         } else if (effectiveSection) {
@@ -560,6 +1002,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
       const snapshots = await buildQuestionSnapshots(repo, selected);
       const totalSlots = snapshots.reduce((sum, s) => sum + s.question.parts.length, 0);
+      const startedAtIso = new Date().toISOString();
+      const deadlineAt =
+        timeLimitSec > 0 ? new Date(Date.parse(startedAtIso) + timeLimitSec * 1000).toISOString() : undefined;
+
       const session: SessionRecord = {
         sessionId: `sess_${crypto.randomUUID().slice(0, 12)}`,
         studentId,
@@ -572,6 +1018,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         timeMultiplier,
         status: 'in_progress',
         plannedQuestionIds: snapshots.map((s) => s.questionId),
+        selectionDecision,
         checkpointRevision: 1,
         checkpoint: {
           currentIndex: 0,
@@ -583,13 +1030,30 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           writingDraft: { planNotes: '', responseText: '' },
         },
         timeLimitSec: timeLimitSec > 0 ? timeLimitSec : undefined,
+        deadlineAt,
         totalSlots,
         correctSlots: 0,
-        startedAt: new Date().toISOString(),
+        startedAt: startedAtIso,
       };
 
-      await repo.createSession(session, snapshots);
-      res.status(201).json({ sessionId: session.sessionId, session });
+      let reserved = await repo.reserveAndCreateSession(session, snapshots);
+      if (!reserved.created && reserved.conflictSession && isSessionExpired(reserved.conflictSession)) {
+        await resolveOrExpireSession(repo, reserved.conflictSession);
+        reserved = await repo.reserveAndCreateSession(session, snapshots);
+      }
+      if (!reserved.created) {
+        res.status(409).json({
+          error: 'Only one active test is allowed per account at a time. Complete and submit your current test first.',
+          activeSessionId: reserved.conflictSessionId,
+        });
+        return;
+      }
+
+      res.status(201).json({
+        sessionId: session.sessionId,
+        session,
+        serverNowIso: new Date().toISOString(),
+      });
     } catch (err) {
       console.error('POST /api/student/sessions error:', err);
       res.status(500).json({ error: 'Failed to create practice session.' });
@@ -599,16 +1063,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.get('/api/student/sessions/:id', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const session = await repo.getSession(req.params.id);
-      if (!session) {
+      const loaded = await repo.getSession(req.params.id);
+      if (!loaded) {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
-      if ((session.studentId || 'default-student') !== req.auth!.studentId) {
+      if ((loaded.studentId || 'default-student') !== req.auth!.studentId) {
         res.status(403).json({ error: 'Forbidden: session belongs to another user.' });
         return;
       }
 
+      const session = await resolveOrExpireSession(repo, loaded);
       const { pairs } = await resolveSessionQuestionPairs(repo, session);
       const isSubmitted = session.status === 'submitted';
 
@@ -657,6 +1122,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         questions,
         reviewResults,
         writingReview,
+        serverNowIso: new Date().toISOString(),
       });
     } catch (err) {
       console.error('GET /api/student/sessions/:id error:', err);
@@ -676,9 +1142,20 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         res.status(403).json({ error: 'Forbidden: session belongs to another user.' });
         return;
       }
+      if (isSessionExpired(session)) {
+        const finalized = await resolveOrExpireSession(repo, session);
+        res.status(409).json({
+          error: 'Time expired — this test has been auto-submitted.',
+          expiredAutoSubmitted: true,
+          currentRevision: finalized.checkpointRevision ?? 1,
+          serverCheckpoint: finalized.checkpoint,
+        });
+        return;
+      }
       if (session.status !== 'in_progress') {
         res.status(409).json({
           error: 'Session already submitted.',
+          expiredAutoSubmitted: Boolean(session.expiredAutoSubmitted),
           currentRevision: session.checkpointRevision ?? 1,
           serverCheckpoint: session.checkpoint,
         });
@@ -702,7 +1179,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         cp,
         expectedRevision
       );
-      res.json({ ok: true, ...saved });
+      res.json({ ok: true, ...saved, serverNowIso: new Date().toISOString() });
     } catch (err) {
       if (err instanceof RevisionConflictError) {
         res.status(409).json({
@@ -739,266 +1216,59 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         return;
       }
 
-      // Idempotent retry: return original immutable result cleanly
       if (session.status === 'submitted' && session.submissionSummary) {
         res.json({
           ...session.submissionSummary,
           alreadySubmitted: true,
+          expiredAutoSubmitted: Boolean(session.expiredAutoSubmitted),
         });
         return;
       }
 
+      const nowMs = Date.now();
+      const expired = isSessionExpired(session, nowMs);
+      const deadlineMs = getEffectiveDeadlineMs(session);
+      const completedAtIso =
+        expired && deadlineMs !== null
+          ? session.deadlineAt || new Date(deadlineMs).toISOString()
+          : new Date(nowMs).toISOString();
+
       const incomingCheckpoint = req.body?.checkpoint as SessionRecord['checkpoint'] | undefined;
-      const cp = incomingCheckpoint ||
+      const baseCp: SessionCheckpoint = incomingCheckpoint ||
         session.checkpoint || {
           currentIndex: 0,
           elapsedSec: 0,
           answersByPartId: {},
           flaggedQuestionIds: [],
         };
-      const answersByPartId = cp.answersByPartId || {};
+      const cp: SessionCheckpoint = expired
+        ? {
+            ...baseCp,
+            elapsedSec: session.timeLimitSec ?? baseCp.elapsedSec ?? 0,
+          }
+        : baseCp;
+
       const assisted = Boolean(req.body?.assisted);
-
-      const { pairs } = await resolveSessionQuestionPairs(repo, session);
-
-      const allValidationErrors: string[] = [];
-      const reviewResults: Record<string, MarkingResult[]> = {};
-
-      for (const { question } of pairs) {
-        if (question.formatType === 'WRIT_TYPED_TASK') {
-          reviewResults[question.questionId] = [];
-          continue;
-        }
-        const { results, validationErrors } = gradeSubmission(question, answersByPartId);
-        if (validationErrors.length > 0) {
-          allValidationErrors.push(...validationErrors);
-        }
-        reviewResults[question.questionId] = results;
-      }
-
-      if (allValidationErrors.length > 0) {
-        res.status(400).json({ error: allValidationErrors.join(' ') });
-        return;
-      }
-
-      const nowIso = new Date().toISOString();
-      const [configData, skillStates, questionMemory, pastAttempts, evidenceMap] = await Promise.all([
-        repo.getActiveConfig(),
-        repo.getSkillStates(ownerId),
-        repo.getQuestionMemory(ownerId),
-        repo.listPartAttempts(500, ownerId, false),
-        repo.getQuestionEvidence(ownerId),
-      ]);
-
-      const totalPartsCount = pairs.reduce((acc, p) => acc + p.question.parts.length, 0);
-      const perPartTimeSec = Math.max(
-        5,
-        Math.round((cp.elapsedSec || 60) / Math.max(1, totalPartsCount))
-      );
-
-      const newAttempts: PartAttemptRecord[] = [];
-      const updatedSkillsMap = new Map<string, SkillState>();
-      const updatedMemoryMap = new Map<string, QuestionMemoryState>();
-      const updatedEvidenceMap = new Map<string, QuestionMasteryEvidence>();
-      const writingSubmissionsToSave: {
-        submissionId: string;
-        studentId: string;
-        sessionId: string;
-        questionId: string;
-        planNotes: string;
-        responseText: string;
-        wordCount: number;
-        timeSpentSec: number;
-        deterministicMetricsJson: string;
-        submittedAt: string;
-      }[] = [];
-
-      const writingReview: {
-        submissionId: string;
-        questionId: string;
-        metrics: WritingDeterministicMetrics;
-        evaluations: WritingEvaluationRecord[];
-      }[] = [];
-
-      let totalObjectiveSlots = 0;
-      let correctObjectiveSlots = 0;
-      let savedWritingSubmission: SessionSubmissionPayload['writingSubmission'];
-
-      for (const { question, evidenceRevision } of pairs) {
-        if (question.formatType === 'WRIT_TYPED_TASK') {
-          const responseText = cp.writingDraft?.responseText || '';
-          const planNotes = cp.writingDraft?.planNotes || '';
-          const spec = question.writingSpec || {
-            genre: 'essay',
-            audience: 'General',
-            purpose: 'Inform',
-            recommendedWordRange: [200, 450],
-            timeLimitSec: 1800,
-          };
-          const metrics = computeWritingMetrics(spec, responseText);
-          const submissionId = `wsub_${session.sessionId}_${question.questionId}`.slice(0, 120);
-          const subRecord = {
-            submissionId,
-            studentId: ownerId,
-            sessionId: session.sessionId,
-            questionId: question.questionId,
-            planNotes,
-            responseText,
-            wordCount: metrics.wordCount,
-            timeSpentSec: cp.elapsedSec || 0,
-            deterministicMetricsJson: JSON.stringify(metrics),
-            submittedAt: nowIso,
-          };
-          if (!session.isSandbox) {
-            writingSubmissionsToSave.push(subRecord);
-            savedWritingSubmission = {
-              submissionId: subRecord.submissionId,
-              sessionId: subRecord.sessionId,
-              questionId: subRecord.questionId,
-              planNotes: subRecord.planNotes,
-              responseText: subRecord.responseText,
-              wordCount: subRecord.wordCount,
-              timeSpentSec: subRecord.timeSpentSec,
-              deterministicMetricsJson: subRecord.deterministicMetricsJson,
-              submittedAt: subRecord.submittedAt,
-              evaluations: [],
-            };
-          }
-          writingReview.push({
-            submissionId,
-            questionId: question.questionId,
-            metrics,
-            evaluations: [],
-          });
-          continue;
-        }
-
-        const qResults = reviewResults[question.questionId] || [];
-        const allPartsCorrect = qResults.length > 0 && qResults.every((r) => r.isCorrect);
-        const prevMem = updatedMemoryMap.get(question.questionFamilyId) || questionMemory[question.questionFamilyId];
-        const isSpacedReview = Boolean(prevMem && Date.parse(prevMem.nextDueAt) <= Date.now());
-
-        for (let i = 0; i < question.parts.length; i++) {
-          const part = question.parts[i];
-          const resItem = qResults.find((r) => r.partId === part.partId);
-          const isCorrect = Boolean(resItem?.isCorrect);
-          totalObjectiveSlots++;
-          if (isCorrect) correctObjectiveSlots++;
-
-          newAttempts.push({
-            attemptId: `att_${session.sessionId}_${part.partId}`.slice(0, 120),
-            studentId: ownerId,
-            sessionId: session.sessionId,
-            questionId: question.questionId,
-            questionFamilyId: question.questionFamilyId,
-            questionVersion: question.version,
-            evidenceRevision,
-            partId: part.partId,
-            skillId: part.skillId,
-            difficultyAtAttempt: part.difficultyCalibrated ?? part.difficultyInitial,
-            selectedAnswer: resItem?.selectedAnswer ?? null,
-            isCorrect,
-            timeSpentSec: perPartTimeSec,
-            isSpacedReview,
-            isSandbox: Boolean(session.isSandbox),
-            isLegacy: false,
-            assisted,
-            createdAt: nowIso,
-          });
-
-          if (!session.isSandbox) {
-            const prevSkill = updatedSkillsMap.get(part.skillId) || skillStates[part.skillId];
-            const nextSkillState = updateSkillState({
-              prevSkillState: prevSkill,
-              skillId: part.skillId,
-              isCorrect,
-              timeSpentSec: perPartTimeSec,
-              targetTimeSec: part.targetTimeSec,
-              config: configData.config,
-              nowIso,
-            });
-            const recentForSkill = [
-              isCorrect,
-              ...pastAttempts.filter((a) => a.skillId === part.skillId).map((a) => a.isCorrect),
-            ];
-            nextSkillState.plateauStatus = detectPlateauStatus({
-              recentIsCorrectDesc: recentForSkill,
-              ewmaAccuracy: nextSkillState.ewmaAccuracy,
-              config: configData.config,
-            });
-            updatedSkillsMap.set(part.skillId, nextSkillState);
-          }
-        }
-
-        if (!session.isSandbox) {
-          // Spaced repetition memory advances strictly ONCE per question encounter (not per part)
-          const nextMemory = updateFamilyMemoryOnce({
-            prevMemory: prevMem,
-            questionFamilyId: question.questionFamilyId,
-            allPartsCorrect,
-            config: configData.config,
-            nowIso,
-          });
-          updatedMemoryMap.set(question.questionFamilyId, nextMemory);
-
-          // Certified mastery evidence updates cleanly for eligible objective questions (excluding holdout/inactive/writing)
-          if (question.poolType !== 'benchmark_holdout' && question.qcStatus === 'active') {
-            const evKey = buildEvidenceKey(question.questionFamilyId, evidenceRevision);
-            const prevEv = updatedEvidenceMap.get(evKey) || evidenceMap[evKey];
-            const nextEv = advanceQuestionEvidence({
-              prev: prevEv,
-              question,
-              evidenceRevision,
-              allPartsClean: allPartsCorrect,
-              assisted,
-              isSandbox: false,
-              submittedAtIso: nowIso,
-              policy: configData.config.masteryPolicy,
-            });
-            updatedEvidenceMap.set(evKey, nextEv);
-          }
-        }
-      }
-
-      const savedSkillStates = !session.isSandbox ? Array.from(updatedSkillsMap.values()) : [];
-      const savedQuestionMemory = !session.isSandbox ? Array.from(updatedMemoryMap.values()) : [];
-      const savedEvidence = !session.isSandbox ? Array.from(updatedEvidenceMap.values()) : [];
-      const savedAttempts = !session.isSandbox ? newAttempts : [];
-
-      const submissionSummary: SessionSubmissionPayload = {
-        ok: true,
-        correctSlots: correctObjectiveSlots,
-        totalSlots: totalObjectiveSlots,
-        completedAt: nowIso,
+      const finalResult = await finalizeSessionRecord({
+        repo,
+        session,
         checkpoint: cp,
-        attempts: savedAttempts,
-        skillStates: savedSkillStates,
-        questionMemory: savedQuestionMemory,
-        writingSubmission: savedWritingSubmission,
-        reviewResults,
-        writingReview,
-      };
-
-      const finalResult = await repo.finalizeSessionAtomically({
-        sessionId: session.sessionId,
-        studentId: ownerId,
-        checkpoint: cp,
-        correctSlots: correctObjectiveSlots,
-        totalSlots: totalObjectiveSlots,
-        completedAtIso: nowIso,
-        submissionSummary,
-        attempts: savedAttempts,
-        skillStates: savedSkillStates,
-        questionMemory: savedQuestionMemory,
-        evidenceUpdates: savedEvidence,
-        writingSubmissions: writingSubmissionsToSave,
+        assisted,
+        completedAtIso,
+        expiredAutoSubmitted: expired,
+        rejectValidationErrors: !expired,
       });
 
       res.json({
         ...finalResult.submissionSummary,
         alreadySubmitted: finalResult.alreadySubmitted,
+        expiredAutoSubmitted: Boolean(finalResult.session.expiredAutoSubmitted),
       });
     } catch (err) {
+      if (err instanceof SessionValidationError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
       if (err instanceof ForbiddenError) {
         res.status(403).json({ error: err.message });
         return;
@@ -1048,6 +1318,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         res.json({ evaluation, evaluations: updated?.evaluations || [evaluation] });
       } catch (err) {
         console.error('POST /api/student/writing/:submissionId/evaluate error:', err);
+        if (err instanceof GeminiServiceError) {
+          res.status(err.statusCode).json({ error: err.message });
+          return;
+        }
         res.status(502).json({
           error: err instanceof Error ? err.message : 'Failed to evaluate writing with Gemini.',
         });
@@ -1264,6 +1538,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   // ---------------------------------------------------------------------------
   // Admin APIs (/api/admin/*) — Strictly 403 for student cookies/tokens!
   // ---------------------------------------------------------------------------
+  app.get('/api/admin/diagnostics', requireAdmin, async (_req, res) => {
+    try {
+      const report = await getRuntimeDiagnostics(repo);
+      res.json(report);
+    } catch (err) {
+      console.error('GET /api/admin/diagnostics error:', err);
+      res.status(500).json({ error: 'Failed to collect runtime diagnostics.' });
+    }
+  });
+
   app.get('/api/admin/status', requireAdmin, async (_req, res) => {
     try {
       await ensureSeeded();

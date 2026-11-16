@@ -48,7 +48,12 @@ test('createRepository fails cleanly in production when no durable DB is configu
     delete process.env.USE_FIRESTORE_DB;
     delete process.env.FIREBASE_USE_ADC;
     process.env.ALLOW_DEMO_MEMORY_DB = 'true'; // Must NOT silently allow memory DB in production!
+    assert.throws(
+      () => createRepository(),
+      /Production configuration error: ALLOW_DEMO_MEMORY_DB=true is forbidden in production/
+    );
 
+    delete process.env.ALLOW_DEMO_MEMORY_DB;
     assert.throws(() => createRepository(), /Production configuration error: No durable database is configured/);
   } finally {
     process.env = prevEnv;
@@ -400,6 +405,176 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
     assert.equal(ev.attemptsCount, 1);
     assert.equal(ev.cleanPassesCount, 1);
   } finally {
+    await srv.close();
+  }
+});
+
+test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnostics redaction, and daily focus plan caching', async () => {
+  const prevEnv = { ...process.env };
+  process.env.SESSION_SECRET = 'super-secret-value-must-never-leak';
+  delete process.env.GEMINI_API_KEY;
+  const srv = await startTestServer();
+  try {
+    const studentToken = signSessionToken({
+      role: 'student',
+      studentId: 'uid_lock_tester',
+      authMethod: 'firebase',
+    });
+    const adminToken = signSessionToken({
+      role: 'admin',
+      studentId: 'uid_admin_diag',
+      authMethod: 'firebase',
+    });
+
+    // 1. Concurrent session creation for same user: strictly 1 succeeds (201), 1 conflicts (409)
+    const [r1, r2] = await Promise.all([
+      fetch(`${srv.baseUrl}/api/student/sessions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${studentToken}`,
+        },
+        body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
+      }),
+      fetch(`${srv.baseUrl}/api/student/sessions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${studentToken}`,
+        },
+        body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'READ' }),
+      }),
+    ]);
+    const statuses = [r1.status, r2.status].sort();
+    assert.deepEqual(statuses, [201, 409]);
+
+    const okRes = r1.status === 201 ? r1 : r2;
+    const conflictRes = r1.status === 409 ? r1 : r2;
+    const okBody = (await okRes.json()) as {
+      sessionId: string;
+      serverNowIso?: string;
+      session: { deadlineAt?: string; timeLimitSec?: number };
+    };
+    const conflictBody = (await conflictRes.json()) as { activeSessionId?: string };
+    assert.equal(conflictBody.activeSessionId, okBody.sessionId);
+    assert.ok(okBody.serverNowIso);
+    assert.ok(okBody.session.deadlineAt);
+    assert.ok((okBody.session.timeLimitSec ?? 0) > 0);
+
+    // 2. Submit that active session so we can test server deadline auto-expiry cleanly
+    const subOk = await fetch(`${srv.baseUrl}/api/student/sessions/${okBody.sessionId}/submit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({
+        checkpoint: { currentIndex: 0, elapsedSec: 10, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+    assert.equal(subOk.status, 200);
+
+    // 3. Expired session via past deadlineAt auto-finalizes on checkpoint (409 expiredAutoSubmitted) & GET
+    const targetQ = (await srv.repo.getQuestionWithStimulus('q_off_pt1_math_q01_v1'))!;
+    await srv.repo.reserveAndCreateSession(
+      {
+        sessionId: 'sess_expired_test',
+        studentId: 'uid_lock_tester',
+        configVersionId: 'cfg_v1',
+        mode: 'section_drill',
+        sectionFilter: 'MATH',
+        status: 'in_progress',
+        isSandbox: false,
+        plannedQuestionIds: [targetQ.question.questionId],
+        checkpointRevision: 1,
+        checkpoint: {
+          currentIndex: 0,
+          elapsedSec: 5,
+          answersByPartId: {
+            [targetQ.question.parts[0].partId]: targetQ.question.parts[0].correctAnswerKey,
+          },
+          flaggedQuestionIds: [],
+        },
+        timeLimitSec: 60,
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+        deadlineAt: new Date(Date.now() - 10_000).toISOString(),
+        totalSlots: targetQ.question.parts.length,
+        correctSlots: 0,
+      },
+      [
+        {
+          questionId: targetQ.question.questionId,
+          snapshotIndex: 0,
+          evidenceRevision: targetQ.question.evidenceRevision || 'er_exp',
+          question: targetQ.question,
+          stimulus: targetQ.stimulus,
+        },
+      ]
+    );
+
+    const lateCp = await fetch(`${srv.baseUrl}/api/student/sessions/sess_expired_test/checkpoint`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({
+        expectedRevision: 1,
+        checkpoint: { currentIndex: 0, elapsedSec: 70, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+    assert.equal(lateCp.status, 409);
+    const lateCpJson = (await lateCp.json()) as { expiredAutoSubmitted?: boolean };
+    assert.equal(lateCpJson.expiredAutoSubmitted, true);
+
+    const getExpired = await fetch(`${srv.baseUrl}/api/student/sessions/sess_expired_test`, {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    assert.equal(getExpired.status, 200);
+    const expPayload = (await getExpired.json()) as {
+      session: { status: string; expiredAutoSubmitted?: boolean; correctSlots: number };
+      serverNowIso?: string;
+    };
+    assert.equal(expPayload.session.status, 'submitted');
+    assert.equal(expPayload.session.expiredAutoSubmitted, true);
+    assert.equal(expPayload.session.correctSlots, 1);
+    assert.ok(expPayload.serverNowIso);
+
+    // 4. Dashboard returns cached dailyFocusPlan (calling twice hits saved plan without changing timestamp)
+    const dash1 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    assert.equal(dash1.status, 200);
+    const d1 = (await dash1.json()) as { dailyFocusPlan?: { planDate: string; generatedAtIso: string; focusSkillIds: string[] } };
+    assert.ok(d1.dailyFocusPlan && d1.dailyFocusPlan.focusSkillIds.length > 0);
+
+    const dash2 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    const d2 = (await dash2.json()) as { dailyFocusPlan?: { planDate: string; generatedAtIso: string } };
+    assert.equal(d2.dailyFocusPlan?.generatedAtIso, d1.dailyFocusPlan?.generatedAtIso);
+
+    // 5. Admin diagnostics strictly redacts actual secrets
+    process.env.GEMINI_API_KEY = 'gemini-secret-value-must-never-leak';
+    const diagRes = await fetch(`${srv.baseUrl}/api/admin/diagnostics`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(diagRes.status, 200);
+    const diagText = await diagRes.text();
+    assert.equal(diagText.includes('super-secret-value-must-never-leak'), false);
+    assert.equal(diagText.includes('gemini-secret-value-must-never-leak'), false);
+    const diagJson = JSON.parse(diagText) as {
+      sessionSecretConfigured: boolean;
+      geminiConfigured: boolean;
+      geminiModel: string;
+      configSource: string;
+    };
+    assert.equal(diagJson.sessionSecretConfigured, true);
+    assert.equal(diagJson.geminiConfigured, true);
+    assert.equal(diagJson.geminiModel, 'gemini-4-hydrogen');
+    assert.equal(diagJson.configSource, 'firebase-applet-config.json');
+  } finally {
+    process.env = prevEnv;
     await srv.close();
   }
 });

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { FieldPath, FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type {
   BankImportManifest,
+  DailyFocusPlan,
   ImportBatchRecord,
   LearningConfig,
   MediaAssetRecord,
@@ -37,6 +38,7 @@ import {
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
+  type ReserveSessionResult,
   type SyncHydratePayload,
   type WritingSubmissionRecord,
 } from './repository.ts';
@@ -709,6 +711,92 @@ export class FirestoreRepository implements AppRepository {
     await this.commitChunkedWrites(writeOps);
   }
 
+  async reserveAndCreateSession(
+    session: SessionRecord,
+    snapshots: SessionQuestionSnapshot[] = []
+  ): Promise<ReserveSessionResult> {
+    if (session.isSandbox) {
+      await this.createSession(session, snapshots);
+      return { created: true };
+    }
+
+    const uid = toSafeDocId(session.studentId || DEFAULT_STUDENT_ID);
+    const sid = toSafeDocId(session.sessionId);
+    await this.ensureUserDocExists(uid);
+
+    const userRef = this.db.collection('users').doc(uid);
+    const lockRef = userRef.collection('locks').doc('active_session');
+    const sessRef = userRef.collection('sessions').doc(sid);
+
+    const stamped: SessionRecord = {
+      ...structuredClone(session),
+      studentId: uid,
+      checkpointRevision: session.checkpointRevision ?? 1,
+    };
+
+    const fitsInSingleTx = snapshots.length + 2 < 400;
+    const lockResult = await this.db.runTransaction(async (tx) => {
+      const lockSnap = await tx.get(lockRef);
+      if (lockSnap.exists) {
+        const lockedId = String(lockSnap.data()?.activeSessionId || '').trim();
+        if (lockedId) {
+          const lockedSessRef = userRef.collection('sessions').doc(toSafeDocId(lockedId));
+          const lockedSessSnap = await tx.get(lockedSessRef);
+          if (lockedSessSnap.exists) {
+            const lockedSess = lockedSessSnap.data() as SessionRecord;
+            if (lockedSess.status === 'in_progress' && !lockedSess.isSandbox) {
+              return {
+                created: false as const,
+                conflictSessionId: lockedSess.sessionId,
+                conflictSession: lockedSess,
+              };
+            }
+          }
+        }
+      }
+
+      tx.set(
+        lockRef,
+        stripUndefinedDeep({
+          activeSessionId: sid,
+          mode: stamped.mode,
+          deadlineAt: stamped.deadlineAt ?? null,
+          updatedAtIso: stamped.startedAt,
+          updatedAt: this.nowTs(),
+        })
+      );
+
+      tx.set(
+        sessRef,
+        stripUndefinedDeep({
+          ...stamped,
+          userId: uid,
+          createdAt: this.nowTs(),
+          updatedAt: this.nowTs(),
+        })
+      );
+
+      if (fitsInSingleTx) {
+        for (const snap of snapshots) {
+          const snapRef = sessRef.collection('snapshots').doc(toSafeDocId(snap.questionId));
+          tx.set(snapRef, stripUndefinedDeep(snap));
+        }
+      }
+
+      return { created: true as const };
+    });
+
+    if (lockResult.created && !fitsInSingleTx && snapshots.length > 0) {
+      await this.commitChunkedWrites(
+        snapshots.map((snap) => (batch) =>
+          batch.set(sessRef.collection('snapshots').doc(toSafeDocId(snap.questionId)), stripUndefinedDeep(snap))
+        )
+      );
+    }
+
+    return lockResult;
+  }
+
   async getSession(sessionId: string, studentId?: string): Promise<SessionRecord | null> {
     const sid = toSafeDocId(sessionId);
     if (studentId) {
@@ -877,7 +965,7 @@ export class FirestoreRepository implements AppRepository {
         data: stripUndefinedDeep({
           ...mem,
           userId: uid,
-          easeFactor: 2.5,
+          easeFactor: mem.easeFactor ?? 2.5,
           streak: mem.timesSeen,
           updatedAt: this.nowTs(),
         }),
@@ -924,8 +1012,10 @@ export class FirestoreRepository implements AppRepository {
       );
     }
 
+    const lockRef = userRef.collection('locks').doc('active_session');
+
     return this.db.runTransaction(async (tx) => {
-      const currentSnap = await tx.get(sessRef);
+      const [currentSnap, lockSnap] = await Promise.all([tx.get(sessRef), tx.get(lockRef)]);
       if (!currentSnap.exists) {
         throw new NotFoundError('Session not found.');
       }
@@ -947,6 +1037,10 @@ export class FirestoreRepository implements AppRepository {
         }
       }
 
+      if (lockSnap.exists && lockSnap.data()?.activeSessionId === sid) {
+        tx.delete(lockRef);
+      }
+
       const nextRev = (existing.checkpointRevision ?? 1) + 1;
       const updatedSession: SessionRecord = {
         ...existing,
@@ -956,6 +1050,7 @@ export class FirestoreRepository implements AppRepository {
         correctSlots: input.correctSlots,
         totalSlots: input.totalSlots,
         completedAt: input.completedAtIso,
+        expiredAutoSubmitted: input.expiredAutoSubmitted || existing.expiredAutoSubmitted,
         submissionSummary: input.submissionSummary,
       };
 
@@ -968,6 +1063,7 @@ export class FirestoreRepository implements AppRepository {
           correctSlots: input.correctSlots,
           totalSlots: input.totalSlots,
           completedAt: input.completedAtIso,
+          expiredAutoSubmitted: updatedSession.expiredAutoSubmitted ?? false,
           submissionSummary: input.submissionSummary,
           updatedAt: this.nowTs(),
         })
@@ -1221,13 +1317,41 @@ export class FirestoreRepository implements AppRepository {
           stripUndefinedDeep({
             ...m,
             userId: uid,
-            easeFactor: 2.5,
+            easeFactor: m.easeFactor ?? 2.5,
             streak: m.timesSeen,
             updatedAt: this.nowTs(),
           })
         )
       )
     );
+  }
+
+  async getDailyFocusPlan(studentId: string, planDate: string): Promise<DailyFocusPlan | null> {
+    const uid = toSafeDocId(studentId || DEFAULT_STUDENT_ID);
+    const snap = await this.db
+      .collection('users')
+      .doc(uid)
+      .collection('daily_plans')
+      .doc(toSafeDocId(planDate))
+      .get();
+    return snap.exists ? (snap.data() as DailyFocusPlan) : null;
+  }
+
+  async saveDailyFocusPlan(studentId: string, plan: DailyFocusPlan): Promise<void> {
+    const uid = toSafeDocId(studentId || DEFAULT_STUDENT_ID);
+    await this.ensureUserDocExists(uid);
+    await this.db
+      .collection('users')
+      .doc(uid)
+      .collection('daily_plans')
+      .doc(toSafeDocId(plan.planDate))
+      .set(
+        stripUndefinedDeep({
+          ...plan,
+          userId: uid,
+          updatedAt: this.nowTs(),
+        })
+      );
   }
 
   async saveQuestionFlag(flag: QuestionFlagRecord): Promise<void> {

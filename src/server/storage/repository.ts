@@ -1,5 +1,6 @@
 import type {
   BankImportManifest,
+  DailyFocusPlan,
   ImportBatchRecord,
   LearningConfig,
   MediaAssetRecord,
@@ -124,6 +125,7 @@ export interface FinalizeSessionInput {
   correctSlots: number;
   totalSlots: number;
   completedAtIso: string;
+  expiredAutoSubmitted?: boolean;
   submissionSummary: SessionSubmissionPayload;
   attempts: PartAttemptRecord[];
   skillStates: SkillState[];
@@ -137,6 +139,10 @@ export interface FinalizeSessionResult {
   session: SessionRecord;
   submissionSummary: SessionSubmissionPayload;
 }
+
+export type ReserveSessionResult =
+  | { created: true }
+  | { created: false; conflictSessionId: string; conflictSession?: SessionRecord };
 
 export interface BackupSectionCounts {
   stimuli: number;
@@ -250,6 +256,10 @@ export interface AppRepository {
   saveConfigVersion(config: LearningConfig, notes?: string): Promise<{ configVersionId: string; versionNumber: number }>;
 
   createSession(session: SessionRecord, snapshots?: SessionQuestionSnapshot[]): Promise<void>;
+  reserveAndCreateSession(
+    session: SessionRecord,
+    snapshots?: SessionQuestionSnapshot[]
+  ): Promise<ReserveSessionResult>;
   getSession(sessionId: string, studentId?: string): Promise<SessionRecord | null>;
   getSessionSnapshots(studentId: string, sessionId: string): Promise<SessionQuestionSnapshot[]>;
   saveSessionCheckpoint(
@@ -286,6 +296,8 @@ export interface AppRepository {
   upsertSkillStates(states: SkillState[], studentId?: string): Promise<void>;
   getQuestionMemory(studentId?: string): Promise<Record<string, QuestionMemoryState>>;
   upsertQuestionMemory(entries: QuestionMemoryState[], studentId?: string): Promise<void>;
+  getDailyFocusPlan(studentId: string, planDate: string): Promise<DailyFocusPlan | null>;
+  saveDailyFocusPlan(studentId: string, plan: DailyFocusPlan): Promise<void>;
 
   saveQuestionFlag(flag: QuestionFlagRecord): Promise<void>;
   listQuestionFlags(): Promise<QuestionFlagRecord[]>;

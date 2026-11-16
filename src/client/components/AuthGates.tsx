@@ -32,16 +32,19 @@ export function StudentPinGate({
   onGoogleAuthenticated,
   onGoAdmin,
   localDevPinEnabled = true,
+  initialError = '',
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onGoogleAuthenticated: (user: User) => Promise<void>;
   onGoAdmin: () => void;
   localDevPinEnabled?: boolean;
+  initialError?: string;
 }) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const displayError = error || initialError;
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
@@ -98,9 +101,9 @@ export function StudentPinGate({
           <span>{googleLoading ? 'Syncing with Google...' : 'Sign in with Google'}</span>
         </button>
 
-        {!localDevPinEnabled && error && (
+        {!localDevPinEnabled && displayError && (
           <p role="alert" className="mt-4 text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
-            {error}
+            {displayError}
           </p>
         )}
 
@@ -129,9 +132,9 @@ export function StudentPinGate({
                 />
               </div>
 
-              {error && (
+              {displayError && (
                 <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
-                  {error}
+                  {displayError}
                 </p>
               )}
 
@@ -166,16 +169,19 @@ export function AdminPasswordGate({
   onGoogleAuthenticated,
   onBackHome,
   localDevPinEnabled = true,
+  initialError = '',
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onGoogleAuthenticated: (user: User) => Promise<void>;
   onBackHome: () => void;
   localDevPinEnabled?: boolean;
+  initialError?: string;
 }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const displayError = error || initialError;
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
@@ -232,9 +238,9 @@ export function AdminPasswordGate({
 
         {!localDevPinEnabled && (
           <div className="mt-4 space-y-3">
-            {error && (
+            {displayError && (
               <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
-                {error}
+                {displayError}
               </p>
             )}
             <button
@@ -270,9 +276,9 @@ export function AdminPasswordGate({
                 />
               </div>
 
-              {error && (
+              {displayError && (
                 <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
-                  {error}
+                  {displayError}
                 </p>
               )}
 

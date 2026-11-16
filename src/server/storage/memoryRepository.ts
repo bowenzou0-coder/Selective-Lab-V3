@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type {
   BankImportManifest,
+  DailyFocusPlan,
   ImportBatchRecord,
   LearningConfig,
   MediaAssetRecord,
@@ -35,6 +36,7 @@ import {
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
+  type ReserveSessionResult,
   type SyncHydratePayload,
   type WritingSubmissionRecord,
 } from './repository.ts';
@@ -73,7 +75,9 @@ export class MemoryRepository implements AppRepository {
     },
   ];
   private sessions = new Map<string, SessionRecord>();
+  private activeLocksByStudent = new Map<string, string>();
   private snapshotsBySessionId = new Map<string, SessionQuestionSnapshot[]>();
+  private dailyPlansByStudent = new Map<string, DailyFocusPlan>();
   private attempts: PartAttemptRecord[] = [];
   private writingSubmissions = new Map<string, WritingSubmissionRecord>();
   private writingEvaluations: WritingEvaluationRecord[] = [];
@@ -475,6 +479,42 @@ export class MemoryRepository implements AppRepository {
       checkpointRevision: session.checkpointRevision ?? 1,
     });
     this.snapshotsBySessionId.set(session.sessionId, structuredClone(snapshots));
+    if (!session.isSandbox && session.status === 'in_progress') {
+      this.activeLocksByStudent.set(studentId, session.sessionId);
+    }
+  }
+
+  async reserveAndCreateSession(
+    session: SessionRecord,
+    snapshots: SessionQuestionSnapshot[] = []
+  ): Promise<ReserveSessionResult> {
+    const studentId = session.studentId || DEFAULT_STUDENT_ID;
+    if (!session.isSandbox) {
+      const lockedSid = this.activeLocksByStudent.get(studentId);
+      if (lockedSid) {
+        const existing = this.sessions.get(lockedSid);
+        if (existing && existing.status === 'in_progress' && !existing.isSandbox) {
+          return {
+            created: false,
+            conflictSessionId: existing.sessionId,
+            conflictSession: structuredClone(existing),
+          };
+        }
+        this.activeLocksByStudent.delete(studentId);
+      }
+      for (const s of this.sessions.values()) {
+        if ((s.studentId || DEFAULT_STUDENT_ID) === studentId && s.status === 'in_progress' && !s.isSandbox) {
+          this.activeLocksByStudent.set(studentId, s.sessionId);
+          return {
+            created: false,
+            conflictSessionId: s.sessionId,
+            conflictSession: structuredClone(s),
+          };
+        }
+      }
+    }
+    await this.createSession(session, snapshots);
+    return { created: true };
   }
 
   async getSession(sessionId: string, studentId?: string): Promise<SessionRecord | null> {
@@ -573,7 +613,12 @@ export class MemoryRepository implements AppRepository {
     s.correctSlots = input.correctSlots;
     s.totalSlots = input.totalSlots;
     s.completedAt = input.completedAtIso;
+    if (input.expiredAutoSubmitted) s.expiredAutoSubmitted = true;
     s.submissionSummary = structuredClone(input.submissionSummary);
+
+    if (this.activeLocksByStudent.get(input.studentId) === input.sessionId) {
+      this.activeLocksByStudent.delete(input.studentId);
+    }
 
     return {
       alreadySubmitted: false,
@@ -680,6 +725,15 @@ export class MemoryRepository implements AppRepository {
     const map = { ...(this.questionMemoryByStudent.get(studentId) || {}) };
     for (const m of entries) map[m.questionFamilyId] = structuredClone(m);
     this.questionMemoryByStudent.set(studentId, map);
+  }
+
+  async getDailyFocusPlan(studentId: string, planDate: string): Promise<DailyFocusPlan | null> {
+    const found = this.dailyPlansByStudent.get(`${studentId}::${planDate}`);
+    return found ? structuredClone(found) : null;
+  }
+
+  async saveDailyFocusPlan(studentId: string, plan: DailyFocusPlan): Promise<void> {
+    this.dailyPlansByStudent.set(`${studentId}::${plan.planDate}`, structuredClone(plan));
   }
 
   async saveQuestionFlag(flag: QuestionFlagRecord): Promise<void> {

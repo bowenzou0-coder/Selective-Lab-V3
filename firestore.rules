@@ -93,6 +93,16 @@ service cloud.firestore {
         allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
         allow create, update, delete: if false;
       }
+
+      match /locks/{lockId} {
+        allow get: if isValidId(userId) && isValidId(lockId) && (isOwner(userId) || isAdmin());
+        allow list, create, update, delete: if false;
+      }
+
+      match /daily_plans/{planDate} {
+        allow get: if isValidId(userId) && isValidId(planDate) && (isOwner(userId) || isAdmin());
+        allow list, create, update, delete: if false;
+      }
     }
 
     // Configuration versions: read-only for verified users, server-only writes

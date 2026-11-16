@@ -1,7 +1,10 @@
 import type {
+  AlgorithmAdjustments,
   LearningConfig,
   MarkingResult,
+  MasteryCertificationStatus,
   QuestionItem,
+  QuestionMasteryEvidence,
   QuestionMemoryState,
   SectionCode,
   SessionMode,
@@ -11,6 +14,27 @@ import type {
   WritingDeterministicMetrics,
   WritingTaskSpec,
 } from './contracts';
+
+export function clampAlgorithmAdjustments(
+  raw?: AlgorithmAdjustments
+): Required<AlgorithmAdjustments> {
+  const clampMult = (v: unknown, def = 1): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(n)) return def;
+    return Number(Math.min(1.35, Math.max(0.75, n)).toFixed(2));
+  };
+  const clampOffset = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return Number(Math.min(0.75, Math.max(-0.75, n)).toFixed(2));
+  };
+  return {
+    spacedReviewWeightMultiplier: clampMult(raw?.spacedReviewWeightMultiplier, 1),
+    weakestSkillWeightMultiplier: clampMult(raw?.weakestSkillWeightMultiplier, 1),
+    noveltyCoverageWeightMultiplier: clampMult(raw?.noveltyCoverageWeightMultiplier, 1),
+    zpdDifficultyOffset: clampOffset(raw?.zpdDifficultyOffset),
+  };
+}
 
 export function toStudentQuestionView(
   q: QuestionItem,
@@ -160,7 +184,7 @@ export function updateSkillState(input: {
 }
 
 /**
- * Updates family-level spaced repetition state strictly once per question encounter
+ * Updates family-level SM-2 spaced repetition state strictly once per question encounter
  * (never inflated per-part on multi-part reading stimuli).
  */
 export function updateFamilyMemoryOnce(input: {
@@ -169,20 +193,34 @@ export function updateFamilyMemoryOnce(input: {
   allPartsCorrect: boolean;
   config: LearningConfig;
   nowIso: string;
+  lastEvidenceStatus?: MasteryCertificationStatus;
 }): QuestionMemoryState {
-  const { prevMemory, questionFamilyId, allPartsCorrect, config, nowIso } = input;
+  const { prevMemory, questionFamilyId, allPartsCorrect, config, nowIso, lastEvidenceStatus } = input;
   const nowMs = Date.parse(nowIso);
-  const memPrevInterval = prevMemory?.intervalDays ?? config.scheduling.sm2InitialIntervalDays;
+  const initialDays = Math.max(1, config.scheduling.sm2InitialIntervalDays ?? 1);
+  const easeFloor = config.scheduling.sm2EaseFloor ?? 1.3;
+  const lapseResetDays = Math.max(1, config.scheduling.lapseIntervalResetDays ?? 1);
+  const prevEase = prevMemory?.easeFactor ?? 2.5;
+  const prevInterval = prevMemory?.intervalDays ?? initialDays;
+
+  const nextEase = Number(
+    Math.max(easeFloor, Math.min(3.0, prevEase + (allPartsCorrect ? 0.1 : -0.25))).toFixed(2)
+  );
   const memInterval = allPartsCorrect
-    ? Math.min(45, Math.max(1, Math.round(memPrevInterval * 2.1)))
-    : 1;
+    ? prevMemory
+      ? Math.min(60, Math.max(1, Math.round(prevInterval * prevEase)))
+      : initialDays
+    : lapseResetDays;
+
   return {
     questionFamilyId,
     timesSeen: (prevMemory?.timesSeen ?? 0) + 1,
     lastSeenAt: nowIso,
     lastAllCorrect: allPartsCorrect,
     intervalDays: memInterval,
+    easeFactor: nextEase,
     lapseCount: (prevMemory?.lapseCount ?? 0) + (allPartsCorrect ? 0 : 1),
+    lastEvidenceStatus: lastEvidenceStatus ?? prevMemory?.lastEvidenceStatus,
     nextDueAt: new Date(nowMs + memInterval * 86_400_000).toISOString(),
   };
 }
@@ -213,28 +251,109 @@ function seededNoise(seed: number, key: string): number {
   return (h % 1000) / 10000;
 }
 
-export function selectPracticeSession(input: {
+function findFamilyEvidence(
+  q: QuestionItem,
+  evidenceMap?: Record<string, QuestionMasteryEvidence>
+): QuestionMasteryEvidence | undefined {
+  if (!evidenceMap) return undefined;
+  if (q.evidenceRevision) {
+    const exact = evidenceMap[`${q.questionFamilyId}__${q.evidenceRevision}`];
+    if (exact) return exact;
+  }
+  const prefix = `${q.questionFamilyId}__`;
+  for (const [k, ev] of Object.entries(evidenceMap)) {
+    if (k.startsWith(prefix)) return ev;
+  }
+  return undefined;
+}
+
+function pickWithDiversity<T extends { q: QuestionItem; priority: number }>(
+  candidates: T[],
+  limit: number
+): T[] {
+  if (limit <= 0 || candidates.length === 0) return [];
+  const remaining = [...candidates];
+  const selected: T[] = [];
+  const skillCounts = new Map<string, number>();
+  const familyCounts = new Map<string, number>();
+
+  while (selected.length < limit && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const item = remaining[i];
+      const primarySkill = item.q.parts[0]?.skillId || '';
+      const skCount = skillCounts.get(primarySkill) ?? 0;
+      const famCount = familyCounts.get(item.q.questionFamilyId) ?? 0;
+      const effective = item.priority - skCount * 0.65 - famCount * 2.0;
+      if (effective > bestScore) {
+        bestScore = effective;
+        bestIdx = i;
+      }
+    }
+    const [chosen] = remaining.splice(bestIdx, 1);
+    selected.push(chosen);
+    const primarySkill = chosen.q.parts[0]?.skillId || '';
+    if (primarySkill) {
+      skillCounts.set(primarySkill, (skillCounts.get(primarySkill) ?? 0) + 1);
+    }
+    familyCounts.set(
+      chosen.q.questionFamilyId,
+      (familyCounts.get(chosen.q.questionFamilyId) ?? 0) + 1
+    );
+  }
+  return selected;
+}
+
+export interface PracticeSelectionInput {
   mode: SessionMode;
   sectionFilter?: SectionCode;
   questions: QuestionItem[];
   skillStates: Record<string, SkillState>;
   questionMemory: Record<string, QuestionMemoryState>;
+  evidenceMap?: Record<string, QuestionMasteryEvidence>;
+  skillFocusWeights?: Record<string, number>;
+  algorithmAdjustments?: AlgorithmAdjustments;
   config: LearningConfig;
   nowIso: string;
   seed: number;
-}): QuestionItem[] {
+}
+
+export interface PracticeCandidateInfo {
+  q: QuestionItem;
+  priority: number;
+  isDue: boolean;
+  isConfirmationDue: boolean;
+  isNeedsRepair: boolean;
+  isOnCooldown: boolean;
+  meanSkillMastery: number;
+  avgDifficulty: number;
+}
+
+function scorePracticeCandidates(input: PracticeSelectionInput): {
+  scored: PracticeCandidateInfo[];
+  sectionLimit?: number;
+  effectiveCaps?: Record<SectionCode, number>;
+} {
   const {
     mode,
     sectionFilter,
     questions,
     skillStates,
     questionMemory,
+    evidenceMap,
+    skillFocusWeights,
+    algorithmAdjustments,
     config,
     nowIso,
     seed,
   } = input;
   const nowMs = Date.parse(nowIso);
   const cooldownMs = config.scheduling.minRepeatCooldownHours * 3_600_000;
+  const adj = clampAlgorithmAdjustments(algorithmAdjustments);
+  const effectiveSpacedWeight = config.scheduling.spacedReviewWeight * adj.spacedReviewWeightMultiplier;
+  const effectiveWeakestWeight = config.scheduling.weakestSkillWeight * adj.weakestSkillWeightMultiplier;
+  const effectiveNoveltyWeight = config.scheduling.noveltyCoverageWeight * adj.noveltyCoverageWeightMultiplier;
 
   // HARD INVARIANT: benchmark_holdout NEVER leaks into non-benchmark modes
   const eligible = questions.filter((q) => {
@@ -245,32 +364,69 @@ export function selectPracticeSession(input: {
     return true;
   });
 
-  const scored = eligible
+  const scored: PracticeCandidateInfo[] = eligible
     .map((q) => {
       const mem = questionMemory[q.questionFamilyId];
-      const onCooldown = mem ? nowMs - Date.parse(mem.lastSeenAt) < cooldownMs : false;
+      const ev = findFamilyEvidence(q, evidenceMap);
+      const isOnCooldown = mem ? nowMs - Date.parse(mem.lastSeenAt) < cooldownMs : false;
       const isDue = mem ? Date.parse(mem.nextDueAt) <= nowMs : false;
+      const isConfirmationDue = Boolean(
+        ev &&
+          (ev.status === 'correct_once' || ev.status === 'awaiting_review') &&
+          ev.nextEligibleAtIso &&
+          Date.parse(ev.nextEligibleAtIso) <= nowMs
+      );
+      const isNeedsRepair = ev?.status === 'needs_repair';
+      const isRetained = ev?.status === 'retained';
+
       const meanSkillMastery =
         q.parts.reduce((acc, p) => acc + (skillStates[p.skillId]?.masteryScore ?? 0.5), 0) /
-        q.parts.length;
-      const avgDiff = q.parts.reduce((acc, p) => acc + p.difficultyInitial, 0) / q.parts.length;
-      const zpdPenalty = Math.abs(avgDiff - (1.5 + meanSkillMastery * 3.0)) * 0.25;
+        Math.max(1, q.parts.length);
+      const meanFocusWeight = skillFocusWeights
+        ? q.parts.reduce((acc, p) => {
+            const raw = skillFocusWeights[p.skillId];
+            const clamped =
+              typeof raw === 'number' && Number.isFinite(raw)
+                ? Math.min(1.35, Math.max(0.85, raw))
+                : 1.0;
+            return acc + clamped;
+          }, 0) / Math.max(1, q.parts.length)
+        : 1.0;
+      const avgDifficulty =
+        q.parts.reduce((acc, p) => acc + p.difficultyInitial, 0) / Math.max(1, q.parts.length);
+      const targetDiff = 1.5 + meanSkillMastery * 3.0 + adj.zpdDifficultyOffset;
+      const zpdPenalty = Math.abs(avgDifficulty - targetDiff) * 0.25;
 
       let priority = 0;
-      if (isDue) priority += config.scheduling.spacedReviewWeight;
-      if (!mem) priority += config.scheduling.noveltyCoverageWeight;
-      priority += (1 - meanSkillMastery) * config.scheduling.weakestSkillWeight;
+      if (isDue) priority += effectiveSpacedWeight;
+      if (isConfirmationDue) priority += effectiveSpacedWeight * 1.15;
+      if (isNeedsRepair) priority += effectiveWeakestWeight * 1.1;
+      if (!mem && (!ev || ev.status === 'unseen')) {
+        priority += effectiveNoveltyWeight;
+      }
+      if (isRetained && !isDue) priority -= 0.8;
+      priority += (1 - meanSkillMastery) * effectiveWeakestWeight;
+      priority += (meanFocusWeight - 1.0) * 2.0;
       priority -= zpdPenalty;
-      if (onCooldown) priority -= 5.0;
+      if (isOnCooldown) priority -= 5.0;
       priority += seededNoise(seed, q.questionId);
-      return { q, priority };
+      return {
+        q,
+        priority: Number(priority.toFixed(4)),
+        isDue,
+        isConfirmationDue,
+        isNeedsRepair,
+        isOnCooldown,
+        meanSkillMastery: Number(meanSkillMastery.toFixed(3)),
+        avgDifficulty: Number(avgDifficulty.toFixed(2)),
+      };
     })
     .sort((a, b) => b.priority - a.priority);
 
   if (sectionFilter) {
     const drillCap = config.sessionDefaults.sectionDrillQuestionCount ?? 10;
-    const limit = mode === 'benchmark_exam' ? 40 : Math.max(1, drillCap);
-    return scored.slice(0, limit).map((x) => x.q);
+    const sectionLimit = mode === 'benchmark_exam' ? 40 : Math.max(1, drillCap);
+    return { scored, sectionLimit };
   }
 
   const caps = config.sessionDefaults.dailyQuestionLimitBySection;
@@ -280,12 +436,63 @@ export function selectPracticeSession(input: {
   );
   const effectiveCaps: Record<SectionCode, number> =
     totalConfigured > 0 ? caps : { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
+  return { scored, effectiveCaps };
+}
 
+export function selectPracticeCandidates(
+  input: PracticeSelectionInput & { poolLimit?: number }
+): {
+  candidates: PracticeCandidateInfo[];
+  targetCount: number;
+  effectiveCaps?: Record<SectionCode, number>;
+} {
+  const poolLimit = Math.max(4, input.poolLimit ?? 24);
+  const { scored, sectionLimit, effectiveCaps } = scorePracticeCandidates(input);
+
+  if (sectionLimit !== undefined) {
+    const targetCount = Math.min(sectionLimit, scored.length);
+    const candidates = pickWithDiversity(scored, Math.min(scored.length, Math.max(targetCount * 2, poolLimit)));
+    return { candidates, targetCount };
+  }
+
+  const caps = effectiveCaps || { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
+  const candidates: PracticeCandidateInfo[] = [];
+  let targetCount = 0;
+
+  for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
+    const cap = Math.max(0, Number(caps[sec] ?? 0));
+    if (cap <= 0) continue;
+    const secScored = scored.filter((x) => x.q.section === sec);
+    targetCount += Math.min(cap, secScored.length);
+    const secPoolCap = Math.min(secScored.length, Math.max(cap * 2, Math.min(8, cap + 4)));
+    candidates.push(...pickWithDiversity(secScored, secPoolCap));
+  }
+
+  return {
+    candidates: candidates.slice(0, poolLimit),
+    targetCount,
+    effectiveCaps: caps,
+  };
+}
+
+export function selectPracticeSession(input: PracticeSelectionInput): QuestionItem[] {
+  const { scored, sectionLimit, effectiveCaps } = scorePracticeCandidates(input);
+
+  if (sectionLimit !== undefined) {
+    return pickWithDiversity(scored, sectionLimit).map((item) => item.q);
+  }
+
+  const caps = effectiveCaps || { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
   const picked: QuestionItem[] = [];
   for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
-    const cap = Math.max(0, Number(effectiveCaps[sec] ?? 0));
+    const cap = Math.max(0, Number(caps[sec] ?? 0));
     if (cap <= 0) continue;
-    picked.push(...scored.filter((x) => x.q.section === sec).slice(0, cap).map((x) => x.q));
+    picked.push(
+      ...pickWithDiversity(
+        scored.filter((x) => x.q.section === sec),
+        cap
+      ).map((item) => item.q)
+    );
   }
   return picked;
 }

@@ -2,13 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
 import {
+  assertAuthRuntimeConfig,
   attachAuth,
+  isLocalDevPinAuthEnabled,
   parseCookies,
   setAuthCookie,
   signSessionToken,
   verifySessionToken,
   type AuthenticatedRequest,
 } from './auth';
+import { assertNoEmulatorInProduction } from './firebaseAdmin';
+import { clampSkillWeight } from './geminiPlanner';
 
 test('signSessionToken and verifySessionToken preserve role and studentId', () => {
   const secret = 'test-secret-123';
@@ -65,4 +69,30 @@ test('attachAuth authenticates Bearer token when cookies are blocked and setAuth
   assert.match(setHeaderValue, /SameSite=None/);
   assert.match(setHeaderValue, /Secure/);
   assert.match(setHeaderValue, /HttpOnly/);
+});
+
+test('production runtime rejects ALLOW_LOCAL_DEV_PIN, disables PIN in K_SERVICE by default, rejects emulator, and clamps focus weights', () => {
+  const prevEnv = { ...process.env };
+  try {
+    process.env.NODE_ENV = 'production';
+    process.env.SESSION_SECRET = 'prod-test-secret-32chars-minimum-ok';
+    process.env.ALLOW_LOCAL_DEV_PIN = 'true';
+    assert.throws(() => assertAuthRuntimeConfig(), /ALLOW_LOCAL_DEV_PIN/);
+
+    delete process.env.ALLOW_LOCAL_DEV_PIN;
+    delete process.env.ALLOW_LOCAL_DEV_LOGIN;
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+    assert.throws(() => assertNoEmulatorInProduction(), /emulator/i);
+
+    delete process.env.FIRESTORE_EMULATOR_HOST;
+    process.env.NODE_ENV = 'development';
+    process.env.K_SERVICE = 'selective-lab-preview';
+    assert.equal(isLocalDevPinAuthEnabled(), false);
+
+    assert.equal(clampSkillWeight(0.2), 0.85);
+    assert.equal(clampSkillWeight(3.5), 1.35);
+    assert.equal(clampSkillWeight(Number.NaN), 1.0);
+  } finally {
+    process.env = prevEnv;
+  }
 });

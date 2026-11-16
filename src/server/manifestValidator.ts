@@ -351,6 +351,20 @@ export function validateAndDryRunManifest(
         warnings
       );
 
+      let safeWorkedExplanation = '';
+      if (rp.workedExplanation !== undefined && typeof rp.workedExplanation !== 'string') {
+        errors.push(
+          `Question ${rq.questionId} part ${partId} workedExplanation must be a string (got ${typeof rp.workedExplanation}).`
+        );
+      } else {
+        safeWorkedExplanation = String(rp.workedExplanation ?? '');
+        if (rq.formatType !== 'WRIT_TYPED_TASK' && !safeWorkedExplanation.trim()) {
+          errors.push(
+            `Question ${rq.questionId} part ${partId} missing non-empty workedExplanation.`
+          );
+        }
+      }
+
       normalizedParts.push({
         partId,
         partIndex: typeof rp.partIndex === 'number' ? rp.partIndex : pIdx,
@@ -371,7 +385,7 @@ export function validateAndDryRunManifest(
         trapTags: rp.trapTags,
         options: normOptions,
         correctAnswerKey: correctKey,
-        workedExplanation: String(rp.workedExplanation || ''),
+        workedExplanation: safeWorkedExplanation,
         distractorRationales: rp.distractorRationales,
         evidenceRefs: validatedEvidenceRefs,
       });

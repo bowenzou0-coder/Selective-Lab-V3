@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import type {
   BankImportManifest,
+  DailyFocusPlan,
   ImportBatchRecord,
   LearningConfig,
   MediaAssetRecord,
@@ -37,6 +38,7 @@ import {
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
+  type ReserveSessionResult,
   type SyncHydratePayload,
   type WritingSubmissionRecord,
 } from './repository.ts';
@@ -205,6 +207,12 @@ export class PostgresRepository implements AppRepository {
         status TEXT NOT NULL,
         data JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS daily_focus_plans (
+        student_id TEXT NOT NULL,
+        plan_date TEXT NOT NULL,
+        data JSONB NOT NULL,
+        PRIMARY KEY (student_id, plan_date)
       );
     `;
     try {
@@ -695,6 +703,58 @@ export class PostgresRepository implements AppRepository {
     }
   }
 
+  async reserveAndCreateSession(
+    session: SessionRecord,
+    snapshots: SessionQuestionSnapshot[] = []
+  ): Promise<ReserveSessionResult> {
+    await this.ensureSchema();
+    if (session.isSandbox) {
+      await this.createSession(session, snapshots);
+      return { created: true };
+    }
+    const studentId = session.studentId || DEFAULT_STUDENT_ID;
+    const stored: SessionRecord = {
+      ...session,
+      studentId,
+      checkpointRevision: session.checkpointRevision ?? 1,
+    };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT data FROM sessions WHERE student_id = $1 AND status = 'in_progress' AND is_sandbox = FALSE LIMIT 1 FOR UPDATE`,
+        [studentId]
+      );
+      if (rows.length > 0) {
+        const conflict = rows[0].data as SessionRecord;
+        await client.query('COMMIT');
+        return {
+          created: false,
+          conflictSessionId: conflict.sessionId,
+          conflictSession: conflict,
+        };
+      }
+      await client.query(
+        `INSERT INTO sessions (session_id, student_id, mode, status, is_sandbox, data, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [stored.sessionId, studentId, stored.mode, stored.status, false, JSON.stringify(stored), stored.startedAt]
+      );
+      if (snapshots.length > 0) {
+        await client.query(
+          'INSERT INTO session_snapshots (session_id, student_id, snapshots) VALUES ($1, $2, $3) ON CONFLICT (session_id) DO NOTHING',
+          [stored.sessionId, studentId, JSON.stringify(snapshots)]
+        );
+      }
+      await client.query('COMMIT');
+      return { created: true };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async getSession(sessionId: string, studentId?: string): Promise<SessionRecord | null> {
     await this.ensureSchema();
     const { rows } = await this.pool.query('SELECT data FROM sessions WHERE session_id = $1', [sessionId]);
@@ -856,6 +916,7 @@ export class PostgresRepository implements AppRepository {
       const updatedSession: SessionRecord = {
         ...existing,
         status: 'submitted',
+        expiredAutoSubmitted: Boolean(input.expiredAutoSubmitted || existing.expiredAutoSubmitted),
         checkpoint: input.checkpoint,
         checkpointRevision: nextRev,
         correctSlots: input.correctSlots,
@@ -1346,5 +1407,25 @@ export class PostgresRepository implements AppRepository {
       mediaNeedsUploadCount: mediaManifest.needsUploadCount,
       mediaMissingFilesCount: mediaManifest.missingFilesCount,
     };
+  }
+
+  async getDailyFocusPlan(studentId: string, planDate: string): Promise<DailyFocusPlan | null> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query(
+      'SELECT data FROM daily_focus_plans WHERE student_id = $1 AND plan_date = $2',
+      [studentId || DEFAULT_STUDENT_ID, planDate]
+    );
+    return rows.length ? (rows[0].data as DailyFocusPlan) : null;
+  }
+
+  async saveDailyFocusPlan(studentId: string, plan: DailyFocusPlan): Promise<void> {
+    await this.ensureSchema();
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    await this.pool.query(
+      `INSERT INTO daily_focus_plans (student_id, plan_date, data)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (student_id, plan_date) DO UPDATE SET data = EXCLUDED.data`,
+      [sid, plan.planDate, JSON.stringify(plan)]
+    );
   }
 }
