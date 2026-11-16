@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type {
   BankImportManifest,
   CognitiveDemand,
+  EvidenceCitationRef,
   PoolType,
   QcStatus,
   QuestionItem,
@@ -10,6 +11,7 @@ import type {
   StimulusGroup,
   VisualSpec,
 } from '../shared/contracts.ts';
+import { computeEvidenceRevision } from '../shared/mastery.ts';
 import { VALID_SKILL_IDS } from '../shared/skills.ts';
 
 export interface ManifestDryRunReport {
@@ -67,9 +69,100 @@ function defaultTargetSec(section: SectionCode): number {
   return 60;
 }
 
+function validateEvidenceRefs(
+  questionId: string,
+  partId: string,
+  refs: unknown,
+  stim: StimulusGroup | undefined,
+  errors: string[],
+  warnings: string[]
+): EvidenceCitationRef[] | undefined {
+  if (!Array.isArray(refs) || refs.length === 0) return undefined;
+  const validated: EvidenceCitationRef[] = [];
+
+  for (let i = 0; i < refs.length; i++) {
+    const r = refs[i] as Partial<EvidenceCitationRef>;
+    const refLabel = r.refId || `ref_${i + 1}`;
+    if (
+      typeof r.startOffset !== 'number' ||
+      typeof r.endOffset !== 'number' ||
+      r.startOffset < 0 ||
+      r.endOffset <= r.startOffset ||
+      !Number.isInteger(r.startOffset) ||
+      !Number.isInteger(r.endOffset)
+    ) {
+      errors.push(
+        `Question ${questionId} part ${partId} evidenceRef "${refLabel}" has invalid integer range [${String(r.startOffset)}, ${String(r.endOffset)}].`
+      );
+      continue;
+    }
+    if (!r.quote || typeof r.quote !== 'string') {
+      errors.push(
+        `Question ${questionId} part ${partId} evidenceRef "${refLabel}" is missing quote text.`
+      );
+      continue;
+    }
+    const targetKind = r.targetKind === 'extract' ? 'extract' : 'mainText';
+    const stimulusRevision =
+      typeof r.stimulusRevision === 'number' && r.stimulusRevision >= 1
+        ? r.stimulusRevision
+        : stim?.version ?? 1;
+
+    if (stim) {
+      let targetText = '';
+      if (targetKind === 'mainText') {
+        targetText = stim.mainTextMarkdown || '';
+      } else {
+        const ex = stim.extracts?.find((e) => e.label === r.extractLabel);
+        if (!ex) {
+          errors.push(
+            `Question ${questionId} part ${partId} evidenceRef "${refLabel}" references missing extract "${String(r.extractLabel)}".`
+          );
+          continue;
+        }
+        targetText = ex.bodyMarkdown;
+      }
+
+      if (r.endOffset > targetText.length) {
+        errors.push(
+          `Question ${questionId} part ${partId} evidenceRef "${refLabel}" endOffset (${r.endOffset}) exceeds target length (${targetText.length}).`
+        );
+        continue;
+      }
+
+      const slice = targetText.slice(r.startOffset, r.endOffset);
+      if (slice !== r.quote) {
+        errors.push(
+          `Question ${questionId} part ${partId} evidenceRef "${refLabel}" quote mismatch at [${r.startOffset}, ${r.endOffset}]: expected "${slice.slice(0, 60)}", got "${r.quote.slice(0, 60)}".`
+        );
+        continue;
+      }
+
+      if (stimulusRevision !== stim.version) {
+        warnings.push(
+          `Question ${questionId} part ${partId} evidenceRef "${refLabel}" targets stimulusRevision ${stimulusRevision} while stimulus is v${stim.version}.`
+        );
+      }
+    }
+
+    validated.push({
+      refId: refLabel,
+      stimulusRevision,
+      targetKind,
+      extractLabel: targetKind === 'extract' ? String(r.extractLabel || '') : undefined,
+      startOffset: r.startOffset,
+      endOffset: r.endOffset,
+      quote: r.quote,
+    });
+  }
+
+  return validated.length > 0 ? validated : undefined;
+}
+
 export function validateAndDryRunManifest(
   raw: unknown,
-  existingQuestions: QuestionItem[]
+  existingQuestions: QuestionItem[],
+  existingStimuliById: Record<string, StimulusGroup> = {}
 ): { manifest: BankImportManifest | null; report: ManifestDryRunReport } {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -92,14 +185,13 @@ export function validateAndDryRunManifest(
   }
 
   const m = raw as Partial<BankImportManifest>;
-  const manifestVersion = m.manifestVersion === '1.0' || !m.manifestVersion ? '1.0' : m.manifestVersion;
+  const manifestVersion =
+    m.manifestVersion === '1.0' || !m.manifestVersion ? '1.0' : m.manifestVersion;
   if (manifestVersion !== '1.0') {
     errors.push(`Unsupported manifestVersion "${String(m.manifestVersion)}". Expected "1.0".`);
   }
   const batchLabel =
-    typeof m.batchLabel === 'string' && m.batchLabel.trim()
-      ? m.batchLabel.trim()
-      : '';
+    typeof m.batchLabel === 'string' && m.batchLabel.trim() ? m.batchLabel.trim() : '';
   if (!batchLabel) {
     errors.push('Missing batchLabel string.');
   }
@@ -124,7 +216,11 @@ export function validateAndDryRunManifest(
     sourceType: s.sourceType || 'ai_generated',
   }));
 
-  const stimuliById = new Map(stimuli.map((s) => [s.stimulusId, s]));
+  const stimuliById = new Map<string, StimulusGroup>(Object.entries(existingStimuliById));
+  for (const s of stimuli) {
+    stimuliById.set(s.stimulusId, s);
+  }
+
   const existingByFamily = new Map<string, QuestionItem>();
   for (const eq of existingQuestions) {
     const prev = existingByFamily.get(eq.questionFamilyId);
@@ -202,11 +298,15 @@ export function validateAndDryRunManifest(
       seenPartIds.add(partId);
 
       if (!rp.skillId || !VALID_SKILL_IDS.has(rp.skillId)) {
-        errors.push(`Question ${rq.questionId} part ${partId} uses unknown skillId "${String(rp.skillId)}".`);
+        errors.push(
+          `Question ${rq.questionId} part ${partId} uses unknown skillId "${String(rp.skillId)}".`
+        );
       }
       for (const secSkill of rp.secondarySkillIds ?? []) {
         if (!VALID_SKILL_IDS.has(secSkill)) {
-          warnings.push(`Question ${rq.questionId} part ${partId} has unknown secondarySkillId "${secSkill}".`);
+          warnings.push(
+            `Question ${rq.questionId} part ${partId} has unknown secondarySkillId "${secSkill}".`
+          );
         }
       }
 
@@ -242,6 +342,15 @@ export function validateAndDryRunManifest(
         }
       }
 
+      const validatedEvidenceRefs = validateEvidenceRefs(
+        rq.questionId,
+        partId,
+        rp.evidenceRefs,
+        stim,
+        errors,
+        warnings
+      );
+
       normalizedParts.push({
         partId,
         partIndex: typeof rp.partIndex === 'number' ? rp.partIndex : pIdx,
@@ -264,12 +373,14 @@ export function validateAndDryRunManifest(
         correctAnswerKey: correctKey,
         workedExplanation: String(rp.workedExplanation || ''),
         distractorRationales: rp.distractorRationales,
+        evidenceRefs: validatedEvidenceRefs,
       });
     }
 
     const derivedSharedPool =
       rq.sharedPoolConfig ||
-      ((rq.formatType === 'READ_GAPPED_TEXT' || rq.formatType === 'READ_MULTIPLE_MATCH') && stim?.extracts
+      ((rq.formatType === 'READ_GAPPED_TEXT' || rq.formatType === 'READ_MULTIPLE_MATCH') &&
+      stim?.extracts
         ? {
             reuseAllowed: rq.formatType === 'READ_MULTIPLE_MATCH',
             poolKeys: stim.extracts.map((ex) => ex.label),
@@ -309,6 +420,7 @@ export function validateAndDryRunManifest(
         writingSpec: normalizedQ.writingSpec,
       });
     normalizedQ.contentHash = incomingHash;
+    normalizedQ.evidenceRevision = computeEvidenceRevision(normalizedQ, stim);
 
     const existing = existingByFamily.get(normalizedQ.questionFamilyId);
     if (!existing) {

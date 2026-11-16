@@ -2,27 +2,41 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import express from 'express';
+import express, { type Express } from 'express';
 import { createServer as createViteServer } from 'vite';
 import {
+  assertAuthRuntimeConfig,
   attachAuth,
   clearAuthCookie,
   getAdminPassword,
   getStudentPin,
+  isLocalDevPinAuthEnabled,
   requireAdmin,
   requireStudentOrAdmin,
   setAuthCookie,
   signSessionToken,
   type AuthenticatedRequest,
 } from './src/server/auth.ts';
+import { isFirebaseEmulatorActive } from './src/server/firebaseAdmin.ts';
 import {
-  BOOTSTRAPPED_ADMIN_EMAIL,
+  getBootstrappedAdminEmail,
   verifyFirebaseIdToken,
 } from './src/server/firebaseVerify.ts';
 import { evaluateWritingWithGemini } from './src/server/geminiWriting.ts';
 import { validateAndDryRunManifest } from './src/server/manifestValidator.ts';
+import {
+  buildMediaMigrationManifest,
+  readMediaBytesFromStorage,
+  storeMediaUpload,
+} from './src/server/mediaService.ts';
 import { createRepository } from './src/server/storage/index.ts';
-import type { SyncHydratePayload } from './src/server/storage/repository.ts';
+import {
+  ForbiddenError,
+  NotFoundError,
+  RevisionConflictError,
+  type AppRepository,
+  type SyncHydratePayload,
+} from './src/server/storage/repository.ts';
 import {
   DEFAULT_LEARNING_CONFIG,
   type BankImportManifest,
@@ -32,10 +46,13 @@ import {
   type PartAttemptRecord,
   type QuestionFlagRecord,
   type QuestionItem,
+  type QuestionMasteryEvidence,
   type QuestionMemoryState,
   type SectionCode,
   type SessionMode,
+  type SessionQuestionSnapshot,
   type SessionRecord,
+  type SessionSubmissionPayload,
   type SkillState,
   type StimulusGroup,
   type VisualSpec,
@@ -51,8 +68,15 @@ import {
   selectMockTestQuestions,
   selectPracticeSession,
   toStudentQuestionView,
-  updateSkillAndMemory,
+  updateFamilyMemoryOnce,
+  updateSkillState,
 } from './src/shared/engine.ts';
+import {
+  advanceQuestionEvidence,
+  buildEvidenceKey,
+  computeBankMasterySummary,
+  computeEvidenceRevision,
+} from './src/shared/mastery.ts';
 import { SKILLS_TAXONOMY } from './src/shared/skills.ts';
 import { V3_MANIFEST_JSON_SCHEMA, V3_STARTER_MANIFEST_EXAMPLE } from './src/shared/v3Schema.ts';
 
@@ -63,9 +87,6 @@ const ROOT_DIR = process.cwd();
 const SEED_DIR = path.join(ROOT_DIR, 'seed');
 const UPLOADS_DIR = path.join(ROOT_DIR, 'public', 'assets', 'uploads');
 
-const repo = createRepository();
-let seedPromise: Promise<void> | null = null;
-
 async function readSeedManifest(filename: string): Promise<BankImportManifest | null> {
   try {
     const raw = await fs.readFile(path.join(SEED_DIR, filename), 'utf8');
@@ -74,32 +95,6 @@ async function readSeedManifest(filename: string): Promise<BankImportManifest | 
     console.warn(`Optional seed file ${filename} not loaded:`, err instanceof Error ? err.message : err);
     return null;
   }
-}
-
-async function ensureSeeded(): Promise<void> {
-  if (!seedPromise) {
-    seedPromise = (async () => {
-      const smoke = await readSeedManifest('golden-smoke-pack.json');
-      if (smoke) {
-        await repo.initAndSeedIfEmpty(smoke);
-      }
-      const existing = await repo.listQuestions();
-      const existingIds = new Set(existing.map((q) => q.questionId));
-      // Seed official DoE calibration & holdout packs if not already imported
-      if (!existingIds.has('q_off_pt1_read_q01_v1')) {
-        const pt12 = await readSeedManifest('official-doe-pt1-2.json');
-        if (pt12) await repo.importManifest(pt12);
-      }
-      if (!existingIds.has('q_off_pt3_read_q01_v1')) {
-        const pt3 = await readSeedManifest('official-doe-pt3-holdout.json');
-        if (pt3) await repo.importManifest(pt3);
-      }
-    })().catch((err) => {
-      seedPromise = null;
-      throw err;
-    });
-  }
-  await seedPromise;
 }
 
 function getOfficialTimeLimitSec(sectionFilter?: SectionCode): number {
@@ -129,18 +124,137 @@ function computeSessionStreak(sessions: SessionRecord[]): number {
   return streak;
 }
 
-async function buildApp() {
+async function buildQuestionSnapshots(
+  repo: AppRepository,
+  questions: QuestionItem[]
+): Promise<SessionQuestionSnapshot[]> {
+  const stimIds = Array.from(
+    new Set(questions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
+  );
+  const stimuliById = await repo.listStimuliByIds(stimIds);
+  return questions.map((q, index) => {
+    const stim = q.stimulusId ? stimuliById[q.stimulusId] : undefined;
+    const rev = q.evidenceRevision || computeEvidenceRevision(q, stim);
+    return {
+      questionId: q.questionId,
+      snapshotIndex: index,
+      evidenceRevision: rev,
+      question: structuredClone({ ...q, evidenceRevision: rev }),
+      stimulus: stim ? structuredClone(stim) : undefined,
+    };
+  });
+}
+
+async function resolveSessionQuestionPairs(
+  repo: AppRepository,
+  session: SessionRecord
+): Promise<{ pairs: { question: QuestionItem; stimulus?: StimulusGroup; evidenceRevision: string }[]; usedLegacyLiveBank: boolean }> {
+  const ownerId = session.studentId || 'default-student';
+  const snapshots = await repo.getSessionSnapshots(ownerId, session.sessionId);
+  if (snapshots.length > 0) {
+    const sorted = [...snapshots].sort((a, b) => a.snapshotIndex - b.snapshotIndex);
+    return {
+      pairs: sorted.map((s) => ({
+        question: s.question,
+        stimulus: s.stimulus,
+        evidenceRevision: s.evidenceRevision || computeEvidenceRevision(s.question, s.stimulus),
+      })),
+      usedLegacyLiveBank: false,
+    };
+  }
+
+  const livePairs = await Promise.all(
+    session.plannedQuestionIds.map((qid) => repo.getQuestionWithStimulus(qid))
+  );
+  const valid = livePairs.filter(
+    (p): p is { question: QuestionItem; stimulus?: StimulusGroup } => p !== null
+  );
+  return {
+    pairs: valid.map((p) => ({
+      question: p.question,
+      stimulus: p.stimulus,
+      evidenceRevision: p.question.evidenceRevision || computeEvidenceRevision(p.question, p.stimulus),
+    })),
+    usedLegacyLiveBank: true,
+  };
+}
+
+export interface CreateAppOptions {
+  repo?: AppRepository;
+  skipSeed?: boolean;
+  skipVite?: boolean;
+}
+
+export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; repo: AppRepository }> {
+  assertAuthRuntimeConfig();
+  const repo = options.repo ?? createRepository();
+  let seedPromise: Promise<void> | null = null;
+
+  async function ensureSeeded(): Promise<void> {
+    if (options.skipSeed) return;
+    if (!seedPromise) {
+      seedPromise = (async () => {
+        const smoke = await readSeedManifest('golden-smoke-pack.json');
+        if (smoke) {
+          await repo.initAndSeedIfEmpty(smoke);
+        }
+        const existing = await repo.listQuestions();
+        const existingIds = new Set(existing.map((q) => q.questionId));
+        if (!existingIds.has('q_off_pt1_read_q01_v1')) {
+          const pt12 = await readSeedManifest('official-doe-pt1-2.json');
+          if (pt12) await repo.importManifest(pt12, 'system_seed');
+        }
+        if (!existingIds.has('q_off_pt3_read_q01_v1')) {
+          const pt3 = await readSeedManifest('official-doe-pt3-holdout.json');
+          if (pt3) await repo.importManifest(pt3, 'system_seed');
+        }
+      })().catch((err) => {
+        seedPromise = null;
+        throw err;
+      });
+    }
+    await seedPromise;
+  }
+
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '15mb' }));
   app.use(attachAuth);
 
-  // Serve public assets cleanly
+  // Serve bundled seed & legacy static assets cleanly
   app.use('/assets', express.static(path.join(ROOT_DIR, 'public', 'assets')));
   app.use('/fonts', express.static(path.join(ROOT_DIR, 'public', 'fonts')));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, backendName: repo.backendName });
+    res.json({
+      ok: true,
+      backendName: repo.backendName,
+      isDisposableDemo: repo.backendName === 'memory_preview',
+      emulatorActive: isFirebaseEmulatorActive(),
+      localDevPinEnabled: isLocalDevPinAuthEnabled(),
+    });
+  });
+
+  // Stream stored media assets (GCS or local temp fallback in dev)
+  app.get('/api/media/:assetId', async (req, res) => {
+    try {
+      const asset = await repo.getMediaAsset(req.params.assetId);
+      if (!asset) {
+        res.status(404).json({ error: 'Media asset not found.' });
+        return;
+      }
+      const buf = await readMediaBytesFromStorage(asset, UPLOADS_DIR);
+      if (!buf) {
+        res.status(404).json({ error: 'Media binary missing from storage.' });
+        return;
+      }
+      res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.send(buf);
+    } catch (err) {
+      console.error('GET /api/media/:assetId error:', err);
+      res.status(500).json({ error: 'Failed to load media asset.' });
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -148,42 +262,64 @@ async function buildApp() {
   // ---------------------------------------------------------------------------
   app.get('/api/auth/me', async (req: AuthenticatedRequest, res) => {
     if (!req.auth) {
-      res.json({ authenticated: false, role: null, studentId: null, activeSessionId: null });
+      res.json({
+        authenticated: false,
+        role: null,
+        studentId: null,
+        activeSessionId: null,
+        backendName: repo.backendName,
+        isDisposableDemo: repo.backendName === 'memory_preview',
+        localDevPinEnabled: isLocalDevPinAuthEnabled(),
+      });
       return;
     }
     try {
       await ensureSeeded();
-      const sessions = await repo.listSessions(50, req.auth.studentId);
+      const sessions = await repo.listSessions(50, req.auth.studentId, false);
       const active = sessions.find((s) => s.status === 'in_progress' && !s.isSandbox) || null;
       res.json({
         authenticated: true,
         role: req.auth.role,
         studentId: req.auth.studentId,
+        email: req.auth.email,
         activeSessionId: active?.sessionId ?? null,
+        backendName: repo.backendName,
+        isDisposableDemo: repo.backendName === 'memory_preview',
+        localDevPinEnabled: isLocalDevPinAuthEnabled(),
       });
     } catch {
       res.json({
         authenticated: true,
         role: req.auth.role,
         studentId: req.auth.studentId,
+        email: req.auth.email,
         activeSessionId: null,
+        backendName: repo.backendName,
+        isDisposableDemo: repo.backendName === 'memory_preview',
+        localDevPinEnabled: isLocalDevPinAuthEnabled(),
       });
     }
   });
 
   app.post('/api/auth/student-login', async (req, res) => {
+    if (!isLocalDevPinAuthEnabled()) {
+      res.status(403).json({
+        error: 'Local PIN sign-in is disabled in this environment. Please sign in with Firebase.',
+      });
+      return;
+    }
     const pin = String(req.body?.pin ?? '').trim();
     if (!pin || pin !== getStudentPin()) {
       res.status(401).json({ error: 'Incorrect PIN. Please try again.' });
       return;
     }
     const studentId = 'default-student';
-    const token = signSessionToken({ role: 'student', studentId });
+    const token = signSessionToken({ role: 'student', studentId, authMethod: 'local_pin' });
     setAuthCookie(res, token, req);
     let activeSessionId: string | null = null;
     try {
       await ensureSeeded();
-      const sessions = await repo.listSessions(50, studentId);
+      const sessions = await repo.listSessions(50, studentId, false);
       activeSessionId = sessions.find((s) => s.status === 'in_progress' && !s.isSandbox)?.sessionId ?? null;
     } catch {
       // ignore
@@ -192,12 +328,18 @@ async function buildApp() {
   });
 
   app.post('/api/auth/admin-login', (req, res) => {
+    if (!isLocalDevPinAuthEnabled()) {
+      res.status(403).json({
+        error: 'Local admin password sign-in is disabled in this environment. Use Firebase sign-in.',
+      });
+      return;
+    }
     const password = String(req.body?.password ?? '');
     if (!password || password !== getAdminPassword()) {
       res.status(401).json({ error: 'Incorrect admin password.' });
       return;
     }
-    const token = signSessionToken({ role: 'admin', studentId: 'default-student' });
+    const token = signSessionToken({ role: 'admin', studentId: 'default-student', authMethod: 'local_admin' });
     setAuthCookie(res, token, req);
     res.json({ authenticated: true, role: 'admin', studentId: 'default-student', activeSessionId: null, token });
   });
@@ -210,23 +352,32 @@ async function buildApp() {
     }
     try {
       const decoded = await verifyFirebaseIdToken(idToken);
-      const role: 'admin' | 'student' =
-        decoded.email.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
-          ? 'admin'
-          : 'student';
+      const isBootstrappedAdmin =
+        decoded.email.toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
+      const { role } = await repo.upsertUserFromAuth({
+        uid: decoded.uid,
+        email: decoded.email,
+        displayName: decoded.name,
+        isBootstrappedAdmin,
+      });
       const studentId = decoded.uid;
-      const token = signSessionToken({ role, studentId });
+      const token = signSessionToken({
+        role,
+        studentId,
+        email: decoded.email,
+        authMethod: 'firebase',
+      });
       setAuthCookie(res, token, req);
       let activeSessionId: string | null = null;
       try {
         await ensureSeeded();
-        const sessions = await repo.listSessions(50, studentId);
+        const sessions = await repo.listSessions(50, studentId, false);
         activeSessionId =
           sessions.find((s) => s.status === 'in_progress' && !s.isSandbox)?.sessionId ?? null;
       } catch {
         // ignore
       }
-      res.json({ authenticated: true, role, studentId, activeSessionId, token });
+      res.json({ authenticated: true, role, studentId, email: decoded.email, activeSessionId, token });
     } catch (err) {
       res.status(401).json({
         error: err instanceof Error ? err.message : 'Invalid Firebase credentials.',
@@ -234,32 +385,12 @@ async function buildApp() {
     }
   });
 
-  app.post('/api/sync/hydrate', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
-    try {
-      await ensureSeeded();
-      const raw = (req.body || {}) as SyncHydratePayload;
-      const isAdmin = req.auth!.role === 'admin';
-      const safePayload: SyncHydratePayload = {
-        configVersions: raw.configVersions,
-        questionOverrides: raw.questionOverrides,
-        sessions: raw.sessions,
-        attempts: raw.attempts,
-        skillStates: raw.skillStates,
-        questionMemory: raw.questionMemory,
-        writingSubmissions: raw.writingSubmissions,
-        stimuli: isAdmin ? raw.stimuli : undefined,
-        questions: isAdmin ? raw.questions : undefined,
-        flags: isAdmin ? raw.flags : undefined,
-      };
-      await repo.hydrateSyncData(req.auth!.studentId, safePayload);
-      const sessions = await repo.listSessions(50, req.auth!.studentId);
-      const activeSessionId =
-        sessions.find((s) => s.status === 'in_progress' && !s.isSandbox)?.sessionId ?? null;
-      res.json({ ok: true, activeSessionId });
-    } catch (err) {
-      console.error('POST /api/sync/hydrate error:', err);
-      res.status(500).json({ error: 'Failed to hydrate synced state.' });
-    }
+  // Disabled on normal user path per V3 architecture decision: move migration to /api/admin/migrate/*
+  app.post('/api/sync/hydrate', requireStudentOrAdmin, (_req, res) => {
+    res.status(410).json({
+      error:
+        'Browser client hydration on /api/sync/hydrate is retired. Authoritative data loads directly from the server.',
+    });
   });
 
   app.post('/api/auth/logout', (req, res) => {
@@ -268,7 +399,7 @@ async function buildApp() {
   });
 
   // ---------------------------------------------------------------------------
-  // Student APIs (/api/student/*)
+  // Student APIs (/api/student/*) — strictly scoped to req.auth.studentId!
   // ---------------------------------------------------------------------------
   app.get('/api/student/dashboard', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
@@ -276,8 +407,8 @@ async function buildApp() {
       const studentId = req.auth!.studentId;
       const [configData, sessions, attempts, questions] = await Promise.all([
         repo.getActiveConfig(),
-        repo.listSessions(100, studentId),
-        repo.listPartAttempts(500, studentId),
+        repo.listSessions(100, studentId, false),
+        repo.listPartAttempts(500, studentId, false),
         repo.listQuestions({ qcStatus: 'active' }),
       ]);
 
@@ -341,7 +472,7 @@ async function buildApp() {
       }
 
       const [existingSessions, configData, allQuestions, skillStates, questionMemory] = await Promise.all([
-        repo.listSessions(50, studentId),
+        repo.listSessions(50, studentId, false),
         repo.getActiveConfig(),
         repo.listQuestions(),
         repo.getSkillStates(studentId),
@@ -427,7 +558,8 @@ async function buildApp() {
         return;
       }
 
-      const totalSlots = selected.reduce((sum, q) => sum + q.parts.length, 0);
+      const snapshots = await buildQuestionSnapshots(repo, selected);
+      const totalSlots = snapshots.reduce((sum, s) => sum + s.question.parts.length, 0);
       const session: SessionRecord = {
         sessionId: `sess_${crypto.randomUUID().slice(0, 12)}`,
         studentId,
@@ -439,7 +571,8 @@ async function buildApp() {
         mockBatch,
         timeMultiplier,
         status: 'in_progress',
-        plannedQuestionIds: selected.map((q) => q.questionId),
+        plannedQuestionIds: snapshots.map((s) => s.questionId),
+        checkpointRevision: 1,
         checkpoint: {
           currentIndex: 0,
           elapsedSec: 0,
@@ -455,7 +588,7 @@ async function buildApp() {
         startedAt: new Date().toISOString(),
       };
 
-      await repo.createSession(session);
+      await repo.createSession(session, snapshots);
       res.status(201).json({ sessionId: session.sessionId, session });
     } catch (err) {
       console.error('POST /api/student/sessions error:', err);
@@ -471,20 +604,18 @@ async function buildApp() {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
-      if (session.studentId && session.studentId !== req.auth!.studentId && req.auth!.role !== 'admin') {
-        res.status(403).json({ error: 'Forbidden' });
+      if ((session.studentId || 'default-student') !== req.auth!.studentId) {
+        res.status(403).json({ error: 'Forbidden: session belongs to another user.' });
         return;
       }
 
-      const questionPairs = await Promise.all(
-        session.plannedQuestionIds.map((qid) => repo.getQuestionWithStimulus(qid))
-      );
-      const validPairs = questionPairs.filter(
-        (pair): pair is { question: QuestionItem; stimulus?: StimulusGroup } => pair !== null
-      );
+      const { pairs } = await resolveSessionQuestionPairs(repo, session);
+      const isSubmitted = session.status === 'submitted';
 
-      // ZERO ANSWER KEY LEAKAGE: always convert to StudentQuestionView
-      const questions = validPairs.map((pair) => toStudentQuestionView(pair.question, pair.stimulus));
+      // ZERO ANSWER KEY LEAKAGE: pre-submission strips answer keys, worked explanations, distractor rationales, evidenceRefs, and decoy markers
+      const questions = pairs.map((pair) =>
+        toStudentQuestionView(pair.question, pair.stimulus, isSubmitted)
+      );
 
       let reviewResults: Record<string, MarkingResult[]> | undefined;
       let writingReview:
@@ -496,12 +627,16 @@ async function buildApp() {
           }[]
         | undefined;
 
-      if (session.status === 'submitted') {
-        const answers = session.checkpoint?.answersByPartId ?? {};
-        reviewResults = {};
-        for (const pair of validPairs) {
-          const { results } = gradeSubmission(pair.question, answers);
-          reviewResults[pair.question.questionId] = results;
+      if (isSubmitted) {
+        if (session.submissionSummary?.reviewResults) {
+          reviewResults = session.submissionSummary.reviewResults;
+        } else {
+          const answers = session.checkpoint?.answersByPartId ?? {};
+          reviewResults = {};
+          for (const pair of pairs) {
+            const { results } = gradeSubmission(pair.question, answers);
+            reviewResults[pair.question.questionId] = results;
+          }
         }
         const allSubs = await repo.listWritingSubmissions(session.studentId || req.auth!.studentId);
         const sessionSubs = allSubs.filter((s) => s.sessionId === session.sessionId);
@@ -512,6 +647,8 @@ async function buildApp() {
             metrics: JSON.parse(s.deterministicMetricsJson) as WritingDeterministicMetrics,
             evaluations: s.evaluations,
           }));
+        } else if (session.submissionSummary?.writingReview) {
+          writingReview = session.submissionSummary.writingReview;
         }
       }
 
@@ -535,8 +672,16 @@ async function buildApp() {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
+      if ((session.studentId || 'default-student') !== req.auth!.studentId) {
+        res.status(403).json({ error: 'Forbidden: session belongs to another user.' });
+        return;
+      }
       if (session.status !== 'in_progress') {
-        res.status(409).json({ error: 'Session already submitted.' });
+        res.status(409).json({
+          error: 'Session already submitted.',
+          currentRevision: session.checkpointRevision ?? 1,
+          serverCheckpoint: session.checkpoint,
+        });
         return;
       }
       const cp = req.body?.checkpoint as NonNullable<SessionRecord['checkpoint']>;
@@ -544,9 +689,37 @@ async function buildApp() {
         res.status(400).json({ error: 'Invalid checkpoint payload.' });
         return;
       }
-      await repo.saveSessionCheckpoint(session.sessionId, cp);
-      res.json({ ok: true });
+      const expectedRevision =
+        req.body?.expectedRevision !== undefined ? Number(req.body.expectedRevision) : undefined;
+      if (expectedRevision !== undefined && Number.isNaN(expectedRevision)) {
+        res.status(400).json({ error: 'Invalid expectedRevision.' });
+        return;
+      }
+
+      const saved = await repo.saveSessionCheckpoint(
+        session.sessionId,
+        req.auth!.studentId,
+        cp,
+        expectedRevision
+      );
+      res.json({ ok: true, ...saved });
     } catch (err) {
+      if (err instanceof RevisionConflictError) {
+        res.status(409).json({
+          error: err.message,
+          currentRevision: err.currentRevision,
+          serverCheckpoint: err.serverCheckpoint,
+        });
+        return;
+      }
+      if (err instanceof ForbiddenError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
       console.error('PATCH /api/student/sessions/:id/checkpoint error:', err);
       res.status(500).json({ error: 'Failed to save checkpoint.' });
     }
@@ -560,34 +733,38 @@ async function buildApp() {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
-      if (session.status === 'submitted') {
-        res.status(409).json({ error: 'Session has already been submitted.' });
+      const ownerId = session.studentId || 'default-student';
+      if (ownerId !== req.auth!.studentId) {
+        res.status(403).json({ error: 'Forbidden: cannot submit another user session.' });
+        return;
+      }
+
+      // Idempotent retry: return original immutable result cleanly
+      if (session.status === 'submitted' && session.submissionSummary) {
+        res.json({
+          ...session.submissionSummary,
+          alreadySubmitted: true,
+        });
         return;
       }
 
       const incomingCheckpoint = req.body?.checkpoint as SessionRecord['checkpoint'] | undefined;
-      if (incomingCheckpoint) {
-        await repo.saveSessionCheckpoint(session.sessionId, incomingCheckpoint);
-      }
-      const cp = incomingCheckpoint || session.checkpoint || {
-        currentIndex: 0,
-        elapsedSec: 0,
-        answersByPartId: {},
-        flaggedQuestionIds: [],
-      };
+      const cp = incomingCheckpoint ||
+        session.checkpoint || {
+          currentIndex: 0,
+          elapsedSec: 0,
+          answersByPartId: {},
+          flaggedQuestionIds: [],
+        };
       const answersByPartId = cp.answersByPartId || {};
+      const assisted = Boolean(req.body?.assisted);
 
-      const questionPairs = await Promise.all(
-        session.plannedQuestionIds.map((qid) => repo.getQuestionWithStimulus(qid))
-      );
-      const validPairs = questionPairs.filter(
-        (pair): pair is { question: QuestionItem; stimulus?: StimulusGroup } => pair !== null
-      );
+      const { pairs } = await resolveSessionQuestionPairs(repo, session);
 
       const allValidationErrors: string[] = [];
       const reviewResults: Record<string, MarkingResult[]> = {};
 
-      for (const { question } of validPairs) {
+      for (const { question } of pairs) {
         if (question.formatType === 'WRIT_TYPED_TASK') {
           reviewResults[question.questionId] = [];
           continue;
@@ -604,16 +781,16 @@ async function buildApp() {
         return;
       }
 
-      const studentId = session.studentId || req.auth!.studentId;
       const nowIso = new Date().toISOString();
-      const [configData, skillStates, questionMemory, pastAttempts] = await Promise.all([
+      const [configData, skillStates, questionMemory, pastAttempts, evidenceMap] = await Promise.all([
         repo.getActiveConfig(),
-        repo.getSkillStates(studentId),
-        repo.getQuestionMemory(studentId),
-        repo.listPartAttempts(500, studentId),
+        repo.getSkillStates(ownerId),
+        repo.getQuestionMemory(ownerId),
+        repo.listPartAttempts(500, ownerId, false),
+        repo.getQuestionEvidence(ownerId),
       ]);
 
-      const totalPartsCount = validPairs.reduce((acc, p) => acc + p.question.parts.length, 0);
+      const totalPartsCount = pairs.reduce((acc, p) => acc + p.question.parts.length, 0);
       const perPartTimeSec = Math.max(
         5,
         Math.round((cp.elapsedSec || 60) / Math.max(1, totalPartsCount))
@@ -622,6 +799,20 @@ async function buildApp() {
       const newAttempts: PartAttemptRecord[] = [];
       const updatedSkillsMap = new Map<string, SkillState>();
       const updatedMemoryMap = new Map<string, QuestionMemoryState>();
+      const updatedEvidenceMap = new Map<string, QuestionMasteryEvidence>();
+      const writingSubmissionsToSave: {
+        submissionId: string;
+        studentId: string;
+        sessionId: string;
+        questionId: string;
+        planNotes: string;
+        responseText: string;
+        wordCount: number;
+        timeSpentSec: number;
+        deterministicMetricsJson: string;
+        submittedAt: string;
+      }[] = [];
+
       const writingReview: {
         submissionId: string;
         questionId: string;
@@ -631,23 +822,9 @@ async function buildApp() {
 
       let totalObjectiveSlots = 0;
       let correctObjectiveSlots = 0;
+      let savedWritingSubmission: SessionSubmissionPayload['writingSubmission'];
 
-      let savedWritingSubmission:
-        | {
-            submissionId: string;
-            sessionId: string;
-            questionId: string;
-            planNotes: string;
-            responseText: string;
-            wordCount: number;
-            timeSpentSec: number;
-            deterministicMetricsJson: string;
-            submittedAt: string;
-            evaluations: WritingEvaluationRecord[];
-          }
-        | undefined;
-
-      for (const { question } of validPairs) {
+      for (const { question, evidenceRevision } of pairs) {
         if (question.formatType === 'WRIT_TYPED_TASK') {
           const responseText = cp.writingDraft?.responseText || '';
           const planNotes = cp.writingDraft?.planNotes || '';
@@ -659,10 +836,10 @@ async function buildApp() {
             timeLimitSec: 1800,
           };
           const metrics = computeWritingMetrics(spec, responseText);
-          const submissionId = `wsub_${crypto.randomUUID().slice(0, 12)}`;
+          const submissionId = `wsub_${session.sessionId}_${question.questionId}`.slice(0, 120);
           const subRecord = {
             submissionId,
-            studentId: session.isSandbox ? `sandbox:${studentId}` : studentId,
+            studentId: ownerId,
             sessionId: session.sessionId,
             questionId: question.questionId,
             planNotes,
@@ -672,8 +849,8 @@ async function buildApp() {
             deterministicMetricsJson: JSON.stringify(metrics),
             submittedAt: nowIso,
           };
-          await repo.saveWritingSubmission(subRecord);
           if (!session.isSandbox) {
+            writingSubmissionsToSave.push(subRecord);
             savedWritingSubmission = {
               submissionId: subRecord.submissionId,
               sessionId: subRecord.sessionId,
@@ -709,11 +886,13 @@ async function buildApp() {
           if (isCorrect) correctObjectiveSlots++;
 
           newAttempts.push({
-            attemptId: `att_${crypto.randomUUID().slice(0, 12)}`,
-            studentId,
+            attemptId: `att_${session.sessionId}_${part.partId}`.slice(0, 120),
+            studentId: ownerId,
             sessionId: session.sessionId,
             questionId: question.questionId,
             questionFamilyId: question.questionFamilyId,
+            questionVersion: question.version,
+            evidenceRevision,
             partId: part.partId,
             skillId: part.skillId,
             difficultyAtAttempt: part.difficultyCalibrated ?? part.difficultyInitial,
@@ -722,24 +901,22 @@ async function buildApp() {
             timeSpentSec: perPartTimeSec,
             isSpacedReview,
             isSandbox: Boolean(session.isSandbox),
+            isLegacy: false,
+            assisted,
             createdAt: nowIso,
           });
 
           if (!session.isSandbox) {
             const prevSkill = updatedSkillsMap.get(part.skillId) || skillStates[part.skillId];
-            const { nextSkillState, nextMemory } = updateSkillAndMemory({
+            const nextSkillState = updateSkillState({
               prevSkillState: prevSkill,
-              prevMemory: updatedMemoryMap.get(question.questionFamilyId) || prevMem,
               skillId: part.skillId,
-              questionFamilyId: question.questionFamilyId,
               isCorrect,
-              allPartsCorrect,
               timeSpentSec: perPartTimeSec,
               targetTimeSec: part.targetTimeSec,
               config: configData.config,
               nowIso,
             });
-
             const recentForSkill = [
               isCorrect,
               ...pastAttempts.filter((a) => a.skillId === part.skillId).map((a) => a.isCorrect),
@@ -749,30 +926,46 @@ async function buildApp() {
               ewmaAccuracy: nextSkillState.ewmaAccuracy,
               config: configData.config,
             });
-
             updatedSkillsMap.set(part.skillId, nextSkillState);
-            updatedMemoryMap.set(question.questionFamilyId, nextMemory);
+          }
+        }
+
+        if (!session.isSandbox) {
+          // Spaced repetition memory advances strictly ONCE per question encounter (not per part)
+          const nextMemory = updateFamilyMemoryOnce({
+            prevMemory: prevMem,
+            questionFamilyId: question.questionFamilyId,
+            allPartsCorrect,
+            config: configData.config,
+            nowIso,
+          });
+          updatedMemoryMap.set(question.questionFamilyId, nextMemory);
+
+          // Certified mastery evidence updates cleanly for eligible objective questions (excluding holdout/inactive/writing)
+          if (question.poolType !== 'benchmark_holdout' && question.qcStatus === 'active') {
+            const evKey = buildEvidenceKey(question.questionFamilyId, evidenceRevision);
+            const prevEv = updatedEvidenceMap.get(evKey) || evidenceMap[evKey];
+            const nextEv = advanceQuestionEvidence({
+              prev: prevEv,
+              question,
+              evidenceRevision,
+              allPartsClean: allPartsCorrect,
+              assisted,
+              isSandbox: false,
+              submittedAtIso: nowIso,
+              policy: configData.config.masteryPolicy,
+            });
+            updatedEvidenceMap.set(evKey, nextEv);
           }
         }
       }
 
       const savedSkillStates = !session.isSandbox ? Array.from(updatedSkillsMap.values()) : [];
       const savedQuestionMemory = !session.isSandbox ? Array.from(updatedMemoryMap.values()) : [];
+      const savedEvidence = !session.isSandbox ? Array.from(updatedEvidenceMap.values()) : [];
       const savedAttempts = !session.isSandbox ? newAttempts : [];
 
-      if (!session.isSandbox) {
-        if (savedAttempts.length > 0) await repo.appendPartAttempts(savedAttempts);
-        if (savedSkillStates.length > 0) await repo.upsertSkillStates(savedSkillStates, studentId);
-        if (savedQuestionMemory.length > 0) await repo.upsertQuestionMemory(savedQuestionMemory, studentId);
-      }
-
-      await repo.completeSession(session.sessionId, {
-        correctSlots: correctObjectiveSlots,
-        totalSlots: totalObjectiveSlots,
-        completedAt: nowIso,
-      });
-
-      res.json({
+      const submissionSummary: SessionSubmissionPayload = {
         ok: true,
         correctSlots: correctObjectiveSlots,
         totalSlots: totalObjectiveSlots,
@@ -784,45 +977,83 @@ async function buildApp() {
         writingSubmission: savedWritingSubmission,
         reviewResults,
         writingReview,
+      };
+
+      const finalResult = await repo.finalizeSessionAtomically({
+        sessionId: session.sessionId,
+        studentId: ownerId,
+        checkpoint: cp,
+        correctSlots: correctObjectiveSlots,
+        totalSlots: totalObjectiveSlots,
+        completedAtIso: nowIso,
+        submissionSummary,
+        attempts: savedAttempts,
+        skillStates: savedSkillStates,
+        questionMemory: savedQuestionMemory,
+        evidenceUpdates: savedEvidence,
+        writingSubmissions: writingSubmissionsToSave,
+      });
+
+      res.json({
+        ...finalResult.submissionSummary,
+        alreadySubmitted: finalResult.alreadySubmitted,
       });
     } catch (err) {
+      if (err instanceof ForbiddenError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
       console.error('POST /api/student/sessions/:id/submit error:', err);
       res.status(500).json({ error: 'Failed to submit session.' });
     }
   });
 
-  app.post('/api/student/writing/:submissionId/evaluate', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
-    try {
-      await ensureSeeded();
-      const sub = await repo.getWritingSubmission(req.params.submissionId);
-      if (!sub) {
-        res.status(404).json({ error: 'Writing submission not found.' });
-        return;
+  app.post(
+    '/api/student/writing/:submissionId/evaluate',
+    requireStudentOrAdmin,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        await ensureSeeded();
+        const studentId = req.auth!.studentId;
+        const sub = await repo.getWritingSubmission(req.params.submissionId);
+        if (!sub) {
+          res.status(404).json({ error: 'Writing submission not found.' });
+          return;
+        }
+        if ((sub.studentId || 'default-student') !== studentId) {
+          res.status(403).json({ error: 'Forbidden: writing submission belongs to another user.' });
+          return;
+        }
+
+        const pair = await repo.getQuestionWithStimulus(sub.questionId);
+        if (!pair) {
+          res.status(404).json({ error: 'Question not found.' });
+          return;
+        }
+        const metrics = JSON.parse(sub.deterministicMetricsJson) as WritingDeterministicMetrics;
+        const evaluation = await evaluateWritingWithGemini({
+          submissionId: sub.submissionId,
+          question: pair.question,
+          stimulus: pair.stimulus,
+          planNotes: sub.planNotes,
+          responseText: sub.responseText,
+          metrics,
+        });
+        await repo.saveWritingEvaluation(evaluation, studentId);
+        const updated = await repo.getWritingSubmission(sub.submissionId, studentId);
+        res.json({ evaluation, evaluations: updated?.evaluations || [evaluation] });
+      } catch (err) {
+        console.error('POST /api/student/writing/:submissionId/evaluate error:', err);
+        res.status(502).json({
+          error: err instanceof Error ? err.message : 'Failed to evaluate writing with Gemini.',
+        });
       }
-      const pair = await repo.getQuestionWithStimulus(sub.questionId);
-      if (!pair) {
-        res.status(404).json({ error: 'Question not found.' });
-        return;
-      }
-      const metrics = JSON.parse(sub.deterministicMetricsJson) as WritingDeterministicMetrics;
-      const evaluation = await evaluateWritingWithGemini({
-        submissionId: sub.submissionId,
-        question: pair.question,
-        stimulus: pair.stimulus,
-        planNotes: sub.planNotes,
-        responseText: sub.responseText,
-        metrics,
-      });
-      await repo.saveWritingEvaluation(evaluation);
-      const updated = await repo.getWritingSubmission(sub.submissionId);
-      res.json({ evaluation, evaluations: updated?.evaluations || [evaluation] });
-    } catch (err) {
-      console.error('POST /api/student/writing/:submissionId/evaluate error:', err);
-      res.status(502).json({
-        error: err instanceof Error ? err.message : 'Failed to evaluate writing with Gemini.',
-      });
     }
-  });
+  );
 
   app.post('/api/student/flags', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
@@ -857,13 +1088,21 @@ async function buildApp() {
     try {
       await ensureSeeded();
       const studentId = req.auth!.studentId;
-      const [attempts, skillStates, sessions, writingSubmissions, questions] = await Promise.all([
-        repo.listPartAttempts(2000, studentId),
-        repo.getSkillStates(studentId),
-        repo.listSessions(100, studentId),
-        repo.listWritingSubmissions(studentId),
-        repo.listQuestions(),
-      ]);
+      const [attempts, skillStates, sessions, writingSubmissions, questions, evidenceMap, configData] =
+        await Promise.all([
+          repo.listPartAttempts(5000, studentId, false),
+          repo.getSkillStates(studentId),
+          repo.listSessions(200, studentId, false),
+          repo.listWritingSubmissions(studentId),
+          repo.listQuestions(),
+          repo.getQuestionEvidence(studentId),
+          repo.getActiveConfig(),
+        ]);
+
+      const stimIds = Array.from(
+        new Set(questions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
+      );
+      const stimuliById = await repo.listStimuliByIds(stimIds);
 
       const questionMap = new Map(questions.map((q) => [q.questionId, q]));
       const partTargetMap = new Map<string, { section: SectionCode; targetTimeSec: number }>();
@@ -890,9 +1129,17 @@ async function buildApp() {
         WRIT: { spent: 0, target: 0 },
       };
 
+      const holdoutAttempts: PartAttemptRecord[] = [];
+      let legacyAttemptsCount = 0;
+
       for (const a of attempts) {
+        if (a.isLegacy) legacyAttemptsCount++;
+        const q = questionMap.get(a.questionId);
+        if (q?.poolType === 'benchmark_holdout') {
+          holdoutAttempts.push(a);
+        }
         const meta = partTargetMap.get(a.partId);
-        const sec = meta?.section || questionMap.get(a.questionId)?.section || 'MATH';
+        const sec = meta?.section || q?.section || 'MATH';
         sectionStats[sec].attempts++;
         if (a.isCorrect) sectionStats[sec].correct++;
         secTimeSums[sec].spent += a.timeSpentSec;
@@ -914,12 +1161,24 @@ async function buildApp() {
         state: skillStates[def.skillId] || null,
       }));
 
+      const masterySummary = computeBankMasterySummary({
+        questions,
+        stimuliById,
+        evidenceMap,
+        legacyAttemptsCount,
+        holdoutAttempts,
+        writingSubmissionsCount: writingSubmissions.length,
+        writingEvaluatedCount: writingSubmissions.filter((w) => w.evaluations.length > 0).length,
+        policyVersion: configData.config.masteryPolicy?.policyVersion,
+      });
+
       res.json({
         sectionStats,
         skills,
         sessions: sessions.filter((s) => !s.isSandbox),
         writingSubmissions,
         totalAttempts: attempts.length,
+        masterySummary,
       });
     } catch (err) {
       console.error('GET /api/student/progress error:', err);
@@ -932,17 +1191,44 @@ async function buildApp() {
       await ensureSeeded();
       const studentId = req.auth!.studentId;
       const format = String(req.query.format || 'json');
-      const [attempts, skillStates, sessions, writingSubmissions] = await Promise.all([
-        repo.listPartAttempts(5000, studentId),
+      const [attempts, skillStates, sessions, writingSubmissions, evidenceMap] = await Promise.all([
+        repo.listPartAttempts(5000, studentId, false),
         repo.getSkillStates(studentId),
-        repo.listSessions(500, studentId),
+        repo.listSessions(500, studentId, false),
         repo.listWritingSubmissions(studentId),
+        repo.getQuestionEvidence(studentId),
       ]);
 
       if (format === 'csv') {
-        const headers = ['attemptId', 'sessionId', 'questionId', 'partId', 'skillId', 'selectedAnswer', 'isCorrect', 'timeSpentSec', 'createdAt'];
+        const headers = [
+          'attemptId',
+          'sessionId',
+          'questionId',
+          'questionVersion',
+          'evidenceRevision',
+          'partId',
+          'skillId',
+          'selectedAnswer',
+          'isCorrect',
+          'timeSpentSec',
+          'isLegacy',
+          'createdAt',
+        ];
         const rows = attempts.map((a) =>
-          [a.attemptId, a.sessionId, a.questionId, a.partId, a.skillId, a.selectedAnswer ?? '', a.isCorrect, a.timeSpentSec, a.createdAt]
+          [
+            a.attemptId,
+            a.sessionId,
+            a.questionId,
+            a.questionVersion ?? '',
+            a.evidenceRevision ?? '',
+            a.partId,
+            a.skillId,
+            a.selectedAnswer ?? '',
+            a.isCorrect,
+            a.timeSpentSec,
+            Boolean(a.isLegacy),
+            a.createdAt,
+          ]
             .map((v) => `"${String(v).replace(/"/g, '""')}"`)
             .join(',')
         );
@@ -954,7 +1240,21 @@ async function buildApp() {
 
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', 'attachment; filename="selective-lab-progress.json"');
-      res.send(JSON.stringify({ exportedAt: new Date().toISOString(), studentId, sessions, skillStates, attempts, writingSubmissions }, null, 2));
+      res.send(
+        JSON.stringify(
+          {
+            exportedAt: new Date().toISOString(),
+            studentId,
+            sessions,
+            skillStates,
+            questionEvidence: Object.values(evidenceMap),
+            attempts,
+            writingSubmissions,
+          },
+          null,
+          2
+        )
+      );
     } catch (err) {
       console.error('GET /api/student/export error:', err);
       res.status(500).json({ error: 'Failed to export progress.' });
@@ -962,16 +1262,17 @@ async function buildApp() {
   });
 
   // ---------------------------------------------------------------------------
-  // Admin APIs (/api/admin/*) — Strictly 403 for student cookies!
+  // Admin APIs (/api/admin/*) — Strictly 403 for student cookies/tokens!
   // ---------------------------------------------------------------------------
   app.get('/api/admin/status', requireAdmin, async (_req, res) => {
     try {
       await ensureSeeded();
-      const [questions, configData, flags, sessions] = await Promise.all([
+      const [questions, configData, flags, sessions, batches] = await Promise.all([
         repo.listQuestions(),
         repo.getActiveConfig(),
         repo.listQuestionFlags(),
         repo.listSessions(500),
+        repo.listImportBatches(),
       ]);
 
       const holdoutIds = new Set(questions.filter((q) => q.poolType === 'benchmark_holdout').map((q) => q.questionId));
@@ -1005,6 +1306,7 @@ async function buildApp() {
         leakedCount,
         openFlagsCount: flags.filter((f) => f.status === 'open').length,
         activeConfigVersion: configData.versionNumber,
+        batchesCount: batches.length,
       });
     } catch (err) {
       console.error('GET /api/admin/status error:', err);
@@ -1015,23 +1317,54 @@ async function buildApp() {
   app.get('/api/admin/questions', requireAdmin, async (req, res) => {
     try {
       await ensureSeeded();
-      const questions = await repo.listQuestions({
+      const result = await repo.listQuestionsPaginated({
+        search: req.query.search ? String(req.query.search) : undefined,
         section: req.query.section ? String(req.query.section) : undefined,
         poolType: req.query.poolType ? String(req.query.poolType) : undefined,
         qcStatus: req.query.qcStatus ? String(req.query.qcStatus) : undefined,
+        formatType: req.query.formatType ? String(req.query.formatType) : undefined,
+        batchId: req.query.batchId ? String(req.query.batchId) : undefined,
+        batchTag: req.query.batchTag ? String(req.query.batchTag) : undefined,
+        skillId: req.query.skillId ? String(req.query.skillId) : undefined,
+        includeHistorical: req.query.includeHistorical === 'true',
+        flaggedOnly: req.query.flaggedOnly === 'true',
+        missingVisual: req.query.missingVisual === 'true',
+        missingExplanation: req.query.missingExplanation === 'true',
+        sort: (req.query.sort as 'id_asc' | 'updated_desc' | 'version_desc') || 'id_asc',
+        page: req.query.page ? Number(req.query.page) : 1,
+        pageSize: req.query.pageSize ? Number(req.query.pageSize) : 50,
       });
-      const stimulusIds = new Set(questions.map((q) => q.stimulusId).filter((x): x is string => Boolean(x)));
-      const stimuliMap: Record<string, StimulusGroup> = {};
-      for (const q of questions) {
-        if (q.stimulusId && !stimuliMap[q.stimulusId] && stimulusIds.has(q.stimulusId)) {
-          const pair = await repo.getQuestionWithStimulus(q.questionId);
-          if (pair?.stimulus) stimuliMap[q.stimulusId] = pair.stimulus;
-        }
-      }
-      res.json({ questions, stimuliById: stimuliMap });
+      res.json(result);
     } catch (err) {
       console.error('GET /api/admin/questions error:', err);
       res.status(500).json({ error: 'Failed to load admin questions.' });
+    }
+  });
+
+  app.get('/api/admin/questions/:id/versions', requireAdmin, async (req, res) => {
+    try {
+      await ensureSeeded();
+      const target = await repo.getQuestionWithStimulus(req.params.id);
+      if (!target) {
+        res.status(404).json({ error: 'Question not found.' });
+        return;
+      }
+      const versions = await repo.listQuestionVersions(target.question.questionFamilyId);
+      res.json({ questionFamilyId: target.question.questionFamilyId, versions });
+    } catch (err) {
+      console.error('GET /api/admin/questions/:id/versions error:', err);
+      res.status(500).json({ error: 'Failed to load question versions.' });
+    }
+  });
+
+  app.get('/api/admin/batches', requireAdmin, async (_req, res) => {
+    try {
+      await ensureSeeded();
+      const batches = await repo.listImportBatches();
+      res.json({ batches });
+    } catch (err) {
+      console.error('GET /api/admin/batches error:', err);
+      res.status(500).json({ error: 'Failed to load import batches.' });
     }
   });
 
@@ -1047,6 +1380,10 @@ async function buildApp() {
       await repo.updateQuestionStatus(req.params.id, qcStatus);
       res.json({ ok: true });
     } catch (err) {
+      if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
       console.error('PATCH /api/admin/questions/:id/status error:', err);
       res.status(500).json({ error: 'Failed to update question QC status.' });
     }
@@ -1061,20 +1398,18 @@ async function buildApp() {
 
       let visual: VisualSpec | null = null;
       if (req.body?.imageBase64 && req.body?.filename) {
-        await fs.mkdir(UPLOADS_DIR, { recursive: true });
-        const safeExt = path.extname(String(req.body.filename)).toLowerCase() || '.png';
-        if (!['.png', '.jpg', '.jpeg', '.webp', '.svg'].includes(safeExt)) {
-          res.status(400).json({ error: 'Unsupported image file extension.' });
-          return;
-        }
-        const outName = `${questionId.replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}${safeExt}`;
-        const rawB64 = String(req.body.imageBase64).replace(/^data:[^;]+;base64,/, '');
-        await fs.writeFile(path.join(UPLOADS_DIR, outName), Buffer.from(rawB64, 'base64'));
+        const asset = await storeMediaUpload({
+          questionId,
+          filename: String(req.body.filename),
+          imageBase64: String(req.body.imageBase64),
+          uploadsDir: UPLOADS_DIR,
+        });
+        await repo.saveMediaAsset(asset);
         visual = {
           visualType: 'image_asset',
           altText,
           caption,
-          imageUrl: `/assets/uploads/${outName}`,
+          imageUrl: asset.url,
         };
       } else if (req.body?.visual) {
         visual = req.body.visual as VisualSpec;
@@ -1089,40 +1424,119 @@ async function buildApp() {
       const updatedPair = await repo.getQuestionWithStimulus(questionId);
       res.json({ ok: true, visual, qcStatus: updatedPair?.question.qcStatus || 'active' });
     } catch (err) {
+      if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'Failed to attach visual asset.';
+      const status =
+        message.includes('Unsupported') || message.includes('exceeds') || message.includes('Empty') ? 400 : 500;
       console.error('POST /api/admin/questions/:id/visual error:', err);
-      res.status(500).json({ error: 'Failed to attach visual asset.' });
+      res.status(status).json({ error: message });
+    }
+  });
+
+  app.post('/api/admin/media/upload', requireAdmin, async (req, res) => {
+    try {
+      await ensureSeeded();
+      const filename = String(req.body?.filename || '').trim();
+      const imageBase64 = String(req.body?.imageBase64 || '');
+      const questionId = req.body?.questionId ? String(req.body.questionId).trim() : undefined;
+      if (!filename || !imageBase64) {
+        res.status(400).json({ error: 'filename and imageBase64 are required.' });
+        return;
+      }
+      const asset = await storeMediaUpload({
+        questionId,
+        filename,
+        imageBase64,
+        uploadsDir: UPLOADS_DIR,
+      });
+      await repo.saveMediaAsset(asset);
+      res.status(201).json({ ok: true, asset });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Media upload failed.';
+      const status = msg.includes('Unsupported') || msg.includes('exceeds') || msg.includes('Empty') ? 400 : 500;
+      res.status(status).json({ error: msg });
+    }
+  });
+
+  app.get('/api/admin/media/migration-manifest', requireAdmin, async (_req, res) => {
+    try {
+      await ensureSeeded();
+      const [questions, mediaAssets] = await Promise.all([
+        repo.listQuestions({ includeHistorical: true }),
+        repo.listMediaAssets(),
+      ]);
+      const stimIds = Array.from(
+        new Set(questions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
+      );
+      const stimuliMap = await repo.listStimuliByIds(stimIds);
+      const manifest = await buildMediaMigrationManifest({
+        questions,
+        stimuli: Object.values(stimuliMap),
+        mediaAssets,
+        uploadsDir: UPLOADS_DIR,
+      });
+      res.json({ manifest });
+    } catch (err) {
+      console.error('GET /api/admin/media/migration-manifest error:', err);
+      res.status(500).json({ error: 'Failed to generate media migration manifest.' });
     }
   });
 
   app.post('/api/admin/calibration/session', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const [configData, allQuestions] = await Promise.all([
-        repo.getActiveConfig(),
-        repo.listQuestions(),
-      ]);
+      const configData = await repo.getActiveConfig();
+      const explicitIds: string[] = Array.isArray(req.body?.questionIds)
+        ? req.body.questionIds.map((x: unknown) => String(x).trim()).filter(Boolean)
+        : Array.isArray(req.body?.items)
+          ? req.body.items
+              .map((item: { questionId?: string }) => String(item?.questionId || '').trim())
+              .filter(Boolean)
+          : [];
 
-      const selected = selectAdminCalibrationQuestions({
-        questions: allQuestions,
-        section: req.body?.section || undefined,
-        poolType: req.body?.poolType || undefined,
-        qcStatus: req.body?.qcStatus || undefined,
-        formatType: req.body?.formatType || undefined,
-        skillFamily: req.body?.skillFamily || undefined,
-        skillId: req.body?.skillId || undefined,
-        batch: req.body?.batch || undefined,
-        limit: req.body?.limit ? Number(req.body.limit) : 15,
-      });
+      let selected: QuestionItem[] = [];
+      if (explicitIds.length > 0) {
+        const allQuestions = await repo.listQuestions({ includeHistorical: true });
+        const byId = new Map(allQuestions.map((q) => [q.questionId, q]));
+        const missingIds = explicitIds.filter((id) => !byId.has(id));
+        if (missingIds.length > 0) {
+          res.status(400).json({
+            error: `Unknown questionIds in calibration request: ${missingIds.join(', ')}`,
+          });
+          return;
+        }
+        selected = explicitIds.map((id) => byId.get(id)!);
+      } else {
+        const allQuestions = await repo.listQuestions({
+          includeHistorical: Boolean(req.body?.includeHistorical),
+        });
+        selected = selectAdminCalibrationQuestions({
+          questions: allQuestions,
+          section: req.body?.section || undefined,
+          poolType: req.body?.poolType || undefined,
+          qcStatus: req.body?.qcStatus || undefined,
+          formatType: req.body?.formatType || undefined,
+          skillFamily: req.body?.skillFamily || undefined,
+          skillId: req.body?.skillId || undefined,
+          batch: req.body?.batch || undefined,
+          batchId: req.body?.batchId || undefined,
+          limit: req.body?.limit ? Number(req.body.limit) : 15,
+        });
+      }
 
       if (selected.length === 0) {
         res.status(400).json({ error: 'No questions matched your calibration filters.' });
         return;
       }
 
+      const snapshots = await buildQuestionSnapshots(repo, selected);
       const customTimeLimitSec =
         req.body?.customTimeLimitSec !== undefined ? Number(req.body.customTimeLimitSec) : 0;
       const isSandbox = req.body?.isSandbox !== undefined ? Boolean(req.body.isSandbox) : true;
-      const totalSlots = selected.reduce((sum, q) => sum + q.parts.length, 0);
+      const totalSlots = snapshots.reduce((sum, s) => sum + s.question.parts.length, 0);
 
       const session: SessionRecord = {
         sessionId: `cal_${crypto.randomUUID().slice(0, 12)}`,
@@ -1130,10 +1544,11 @@ async function buildApp() {
         configVersionId: configData.configVersionId,
         mode: 'admin_calibration',
         sectionFilter: req.body?.section || undefined,
-        title: `Admin Calibration (${selected.length} Qs${isSandbox ? ' · Sandbox' : ''})`,
+        title: `Admin Calibration (${snapshots.length} Qs${isSandbox ? ' · Sandbox' : ''})`,
         isSandbox,
         status: 'in_progress',
-        plannedQuestionIds: selected.map((q) => q.questionId),
+        plannedQuestionIds: snapshots.map((s) => s.questionId),
+        checkpointRevision: 1,
         checkpoint: {
           currentIndex: 0,
           elapsedSec: 0,
@@ -1149,8 +1564,8 @@ async function buildApp() {
         startedAt: new Date().toISOString(),
       };
 
-      await repo.createSession(session);
-      res.status(201).json({ sessionId: session.sessionId, count: selected.length, session });
+      await repo.createSession(session, snapshots);
+      res.status(201).json({ sessionId: session.sessionId, count: snapshots.length, session });
     } catch (err) {
       console.error('POST /api/admin/calibration/session error:', err);
       res.status(500).json({ error: 'Failed to create calibration session.' });
@@ -1165,12 +1580,10 @@ async function buildApp() {
         res.status(404).json({ error: 'Calibration session not found.' });
         return;
       }
-      const pairs = await Promise.all(
-        session.plannedQuestionIds.map((qid) => repo.getQuestionWithStimulus(qid))
-      );
+      const { pairs } = await resolveSessionQuestionPairs(repo, session);
       const inspectorByQuestionId: Record<string, QuestionItem> = {};
       for (const pair of pairs) {
-        if (pair) inspectorByQuestionId[pair.question.questionId] = pair.question;
+        inspectorByQuestionId[pair.question.questionId] = pair.question;
       }
       res.json({ inspectorByQuestionId });
     } catch (err) {
@@ -1182,8 +1595,12 @@ async function buildApp() {
   app.post('/api/admin/import/dry-run', requireAdmin, async (req, res) => {
     try {
       await ensureSeeded();
-      const existing = await repo.listQuestions();
-      const { report } = validateAndDryRunManifest(req.body?.manifest, existing);
+      const existing = await repo.listQuestions({ includeHistorical: true });
+      const stimIds = Array.from(
+        new Set(existing.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
+      );
+      const existingStimuli = await repo.listStimuliByIds(stimIds);
+      const { report } = validateAndDryRunManifest(req.body?.manifest, existing, existingStimuli);
       res.json({ report });
     } catch (err) {
       console.error('POST /api/admin/import/dry-run error:', err);
@@ -1191,16 +1608,21 @@ async function buildApp() {
     }
   });
 
-  app.post('/api/admin/import/commit', requireAdmin, async (req, res) => {
+  app.post('/api/admin/import/commit', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const existing = await repo.listQuestions();
-      const { manifest, report } = validateAndDryRunManifest(req.body?.manifest, existing);
+      const existing = await repo.listQuestions({ includeHistorical: true });
+      const stimIds = Array.from(
+        new Set(existing.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
+      );
+      const existingStimuli = await repo.listStimuliByIds(stimIds);
+      const { manifest, report } = validateAndDryRunManifest(req.body?.manifest, existing, existingStimuli);
       if (!manifest || !report.valid) {
         res.status(400).json({ error: 'Manifest failed validation.', report });
         return;
       }
-      const result = await repo.importManifest(manifest);
+      const importedBy = req.auth?.email || req.auth?.studentId || 'admin';
+      const result = await repo.importManifest(manifest, importedBy);
       const allLatest = await repo.listQuestions();
       const committedFamilies = new Set(manifest.questions.map((q) => q.questionFamilyId));
       const committedQuestions = allLatest.filter((q) => committedFamilies.has(q.questionFamilyId));
@@ -1208,7 +1630,7 @@ async function buildApp() {
         ...manifest,
         questions: committedQuestions.length > 0 ? committedQuestions : manifest.questions,
       };
-      res.json({ ok: true, result, report, manifest: committedManifest });
+      res.json({ ok: true, result, batch: result.batch, report, manifest: committedManifest });
     } catch (err) {
       console.error('POST /api/admin/import/commit error:', err);
       res.status(500).json({ error: 'Manifest import failed.' });
@@ -1301,7 +1723,10 @@ async function buildApp() {
       await ensureSeeded();
       const backup = await repo.exportFullBackup();
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename="selective-lab-backup-${new Date().toISOString().slice(0, 10)}.json"`);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="selective-lab-backup-${new Date().toISOString().slice(0, 10)}.json"`
+      );
       res.send(JSON.stringify(backup, null, 2));
     } catch (err) {
       console.error('GET /api/admin/backup error:', err);
@@ -1309,29 +1734,125 @@ async function buildApp() {
     }
   });
 
+  app.post('/api/admin/restore', requireAdmin, async (req, res) => {
+    try {
+      await ensureSeeded();
+      const dryRun = req.body?.dryRun !== undefined ? Boolean(req.body.dryRun) : true;
+      const bundle = req.body?.backup !== undefined ? req.body.backup : req.body;
+      const report = await repo.restoreFullBackup(bundle, { dryRun });
+      if (!report.valid) {
+        res.status(400).json({ error: report.errors.join(' '), report });
+        return;
+      }
+      res.json({ ok: true, report });
+    } catch (err) {
+      console.error('POST /api/admin/restore error:', err);
+      res.status(500).json({ error: 'Backup restore failed.' });
+    }
+  });
+
+  app.get('/api/admin/migrate/preflight', requireAdmin, async (_req, res) => {
+    try {
+      await ensureSeeded();
+      const report = await repo.runMigrationPreflight(UPLOADS_DIR);
+      res.json({ report });
+    } catch (err) {
+      console.error('GET /api/admin/migrate/preflight error:', err);
+      res.status(500).json({ error: 'Migration preflight check failed.' });
+    }
+  });
+
+  app.post('/api/admin/migrate/apply', requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ensureSeeded();
+      const dryRun = req.body?.dryRun !== undefined ? Boolean(req.body.dryRun) : true;
+      const payload = req.body?.payload;
+      if (!payload || typeof payload !== 'object') {
+        res.status(400).json({ error: 'Migration payload object is required.' });
+        return;
+      }
+
+      if ((payload as { schemaVersion?: string }).schemaVersion === 'v3_canonical_1.0') {
+        const report = await repo.restoreFullBackup(payload, { dryRun });
+        if (!report.valid) {
+          res.status(400).json({ error: report.errors.join(' '), report });
+          return;
+        }
+        res.json({ ok: true, mode: 'canonical_restore', report });
+        return;
+      }
+
+      // Legacy SyncHydratePayload privileged import with dry-run summary
+      const legacy = payload as SyncHydratePayload;
+      const targetStudentId = String(req.body?.studentId || req.auth!.studentId);
+      const summary = {
+        stimuli: Array.isArray(legacy.stimuli) ? legacy.stimuli.length : 0,
+        questions: Array.isArray(legacy.questions) ? legacy.questions.length : 0,
+        sessions: Array.isArray(legacy.sessions) ? legacy.sessions.length : 0,
+        attempts: Array.isArray(legacy.attempts) ? legacy.attempts.length : 0,
+        writingSubmissions: Array.isArray(legacy.writingSubmissions) ? legacy.writingSubmissions.length : 0,
+        flags: Array.isArray(legacy.flags) ? legacy.flags.length : 0,
+      };
+      if (dryRun) {
+        res.json({
+          ok: true,
+          mode: 'legacy_hydrate',
+          dryRun: true,
+          targetStudentId,
+          counts: summary,
+        });
+        return;
+      }
+      await repo.hydrateSyncData(targetStudentId, legacy);
+      res.json({
+        ok: true,
+        mode: 'legacy_hydrate',
+        dryRun: false,
+        targetStudentId,
+        counts: summary,
+      });
+    } catch (err) {
+      console.error('POST /api/admin/migrate/apply error:', err);
+      res.status(500).json({ error: 'Privileged migration failed.' });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Frontend Serving (Vite dev middleware in dev, dist/ in production)
   // ---------------------------------------------------------------------------
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distDir = path.join(ROOT_DIR, 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
-    });
+  if (!options.skipVite) {
+    if (process.env.NODE_ENV !== 'production') {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distDir = path.join(ROOT_DIR, 'dist');
+      app.use(express.static(distDir));
+      app.get('*', (_req, res) => {
+        res.sendFile(path.join(distDir, 'index.html'));
+      });
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Selective Lab server listening on http://0.0.0.0:${PORT} (${repo.backendName})`);
-  });
+  return { app, repo };
 }
 
-buildApp().catch((err) => {
-  console.error('Fatal server startup error:', err);
-  process.exit(1);
-});
+const isEntrypoint =
+  typeof process !== 'undefined' &&
+  Array.isArray(process.argv) &&
+  Boolean(process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js'));
+
+if (isEntrypoint) {
+  createApp()
+    .then(({ app, repo }) => {
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Selective Lab server listening on http://0.0.0.0:${PORT} (${repo.backendName})`);
+      });
+    })
+    .catch((err) => {
+      console.error('Fatal server startup error:', err);
+      process.exit(1);
+    });
+}

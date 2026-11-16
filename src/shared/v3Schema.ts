@@ -157,6 +157,23 @@ export const V3_MANIFEST_JSON_SCHEMA = {
                   type: 'object',
                   additionalProperties: { type: 'string' },
                 },
+                evidenceRefs: {
+                  type: 'array',
+                  description: 'Optional anchored text spans in the linked stimulus justifying the answer',
+                  items: {
+                    type: 'object',
+                    required: ['refId', 'stimulusRevision', 'targetKind', 'startOffset', 'endOffset', 'quote'],
+                    properties: {
+                      refId: { type: 'string' },
+                      stimulusRevision: { type: 'integer', minimum: 1 },
+                      targetKind: { type: 'string', enum: ['mainText', 'extract'] },
+                      extractLabel: { type: 'string' },
+                      startOffset: { type: 'integer', minimum: 0 },
+                      endOffset: { type: 'integer', minimum: 1 },
+                      quote: { type: 'string' },
+                    },
+                  },
+                },
               },
             },
           },

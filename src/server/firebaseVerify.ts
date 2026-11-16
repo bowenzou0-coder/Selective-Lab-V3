@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
-import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
+import { getPublicFirebaseConfig } from '../shared/firebaseConfig.ts';
+import {
+  getAdminAuth,
+  hasExplicitServiceCredentials,
+  isCloudRunOrGcpRuntime,
+  isFirebaseEmulatorActive,
+} from './firebaseAdmin.ts';
 
 export interface VerifiedFirebaseUser {
   uid: string;
@@ -34,7 +40,7 @@ function decodeBase64UrlJson<T>(segment: string): T {
   return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T;
 }
 
-export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFirebaseUser> {
+async function verifyJwtWithGoogleCerts(idToken: string): Promise<VerifiedFirebaseUser> {
   const parts = idToken.split('.');
   if (parts.length !== 3) {
     throw new Error('Malformed Firebase ID token.');
@@ -55,7 +61,7 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFi
   if (header.alg !== 'RS256' || !header.kid) {
     throw new Error('Unsupported Firebase token header.');
   }
-  const expectedProjectId = firebaseConfig.projectId;
+  const expectedProjectId = getPublicFirebaseConfig().projectId;
   const nowSec = Math.floor(Date.now() / 1000);
   if (payload.aud !== expectedProjectId) {
     throw new Error('Firebase token audience mismatch.');
@@ -98,6 +104,42 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFi
     emailVerified: true,
     name: payload.name,
   };
+}
+
+export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFirebaseUser> {
+  // In emulator or Admin-credentialed server runtimes, verify through Firebase Admin Auth SDK
+  // (skip for mocked tests that pass a unit-test RS256 token handled via global fetch mock)
+  const useAdminVerify =
+    isFirebaseEmulatorActive() ||
+    (process.env.NODE_ENV !== 'test' &&
+      (hasExplicitServiceCredentials() || isCloudRunOrGcpRuntime()));
+
+  if (useAdminVerify) {
+    try {
+      const decoded = await getAdminAuth().verifyIdToken(idToken, true);
+      if (!decoded.email || !decoded.email_verified) {
+        throw new Error('Verified email address required.');
+      }
+      return {
+        uid: decoded.uid,
+        email: decoded.email,
+        emailVerified: true,
+        name: typeof decoded.name === 'string' ? decoded.name : undefined,
+      };
+    } catch (err) {
+      // Allow Auth Emulator unsigned tokens in emulator mode where verifyIdToken handles them directly;
+      // if Admin verify explicitly rejected an invalid/revoked token, rethrow.
+      if (isFirebaseEmulatorActive() || process.env.NODE_ENV === 'production') {
+        throw err instanceof Error ? err : new Error('Firebase ID token verification failed.');
+      }
+    }
+  }
+
+  return verifyJwtWithGoogleCerts(idToken);
+}
+
+export function getBootstrappedAdminEmail(): string {
+  return (process.env.BOOTSTRAPPED_ADMIN_EMAIL || 'bowenzou0@gmail.com').trim();
 }
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'bowenzou0@gmail.com';

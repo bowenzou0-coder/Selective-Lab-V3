@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-test('firestore.rules covers every collection declared in firebase-blueprint.json with zero-trust defaults', async () => {
+test('firestore.rules covers every collection in firebase-blueprint.json with server-authoritative zero-client-write rules', async () => {
   const [rulesRaw, blueprintRaw] = await Promise.all([
     fs.readFile(path.join(process.cwd(), 'firestore.rules'), 'utf8'),
     fs.readFile(path.join(process.cwd(), 'firebase-blueprint.json'), 'utf8'),
@@ -24,8 +24,9 @@ test('firestore.rules covers every collection declared in firebase-blueprint.jso
     );
   }
 
-  // Dirty Dozen structural assertions in rules
-  assert.match(rulesRaw, /existing\(\)\.status == 'in_progress'/); // Terminal state lock on submitted sessions
-  assert.match(rulesRaw, /allow get: if isValidId\(questionId\) && isAdmin\(\);/); // Answer keys locked to admin
-  assert.match(rulesRaw, /incoming\(\)\.role == 'student'/); // Prevents self-assigned admin role escalation
+  // Server-authoritative invariants
+  assert.match(rulesRaw, /match \/bank_questions\/\{questionId\}\s*\{\s*allow read, write: if false;/);
+  assert.match(rulesRaw, /match \/snapshots\/\{snapId\}\s*\{\s*allow read, write: if false;/);
+  assert.match(rulesRaw, /match \/question_evidence\/\{evidenceDocId\}/);
+  assert.match(rulesRaw, /allow create, update, delete: if false;/);
 });

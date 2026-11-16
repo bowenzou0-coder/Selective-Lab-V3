@@ -1,28 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronDown,
+  CloudCheck,
+  CloudOff,
   Eye,
   EyeOff,
   Flag,
   Grid,
+  RefreshCw,
   ShieldAlert,
-  X,
 } from 'lucide-react';
-import { api, type SessionDetailResponse } from '../api';
+import { api, type ApiError, type SessionDetailResponse } from '../api';
 import type {
   MarkingResult,
   QuestionItem,
+  SessionCheckpoint,
   SessionRecord,
   StudentQuestionView,
 } from '../../shared/contracts';
 import { SKILLS_TAXONOMY } from '../../shared/skills';
 import { PostSubmissionReview } from './PostSubmissionReview';
-import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
-import { VisualRenderer } from './VisualRenderer';
-import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
+import { QuestionWorkspace } from './QuestionWorkspace';
 
 const SKILL_NAME_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayName]));
 
@@ -37,26 +38,51 @@ function formatTimer(totalSec: number): string {
   return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }
 
-const SECTION_LABELS: Record<string, string> = {
-  READ: 'Reading',
-  MATH: 'Mathematical Reasoning',
-  THINK: 'Thinking Skills',
-  WRIT: 'Writing',
-};
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
 
-const FORMAT_LABELS: Record<string, string> = {
-  READ_FICTION_MCQ: 'Literary Comprehension',
-  READ_VOCAB_CLOZE: 'Vocabulary Cloze',
-  READ_POETRY_MCQ: 'Poetry Analysis',
-  READ_GAPPED_TEXT: 'Gapped Text',
-  READ_MULTIPLE_MATCH: 'Multiple Matching',
-  MATH_MCQ_5: '5-Option MCQ',
-  THINK_MCQ_4: '4-Option MCQ',
-  WRIT_TYPED_TASK: 'Typed Response',
-};
+interface LocalDraftRecord {
+  checkpoint: SessionCheckpoint;
+  savedAtMs: number;
+}
+
+function getDraftStorageKey(studentId: string, sessionId: string): string {
+  return `selective_lab_draft:${studentId}:${sessionId}`;
+}
+
+function readLocalDraft(key: string): LocalDraftRecord | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LocalDraftRecord;
+    if (parsed && parsed.checkpoint && typeof parsed.savedAtMs === 'number') {
+      return parsed;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return null;
+}
+
+function writeLocalDraft(key: string, cp: SessionCheckpoint): void {
+  try {
+    const record: LocalDraftRecord = { checkpoint: cp, savedAtMs: Date.now() };
+    window.localStorage.setItem(key, JSON.stringify(record));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function clearLocalDraft(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore storage errors
+  }
+}
 
 interface SessionPlayerViewProps {
   sessionId: string;
+  studentId?: string;
   isAdmin: boolean;
   onNavigate: (path: string) => void;
   onActiveSessionCleared?: () => void;
@@ -64,6 +90,7 @@ interface SessionPlayerViewProps {
 
 export function SessionPlayerView({
   sessionId,
+  studentId = 'default-student',
   isAdmin,
   onNavigate,
   onActiveSessionCleared,
@@ -85,12 +112,20 @@ export function SessionPlayerView({
     responseText: '',
   });
 
+  // Concurrency + recoverable unsent draft UI state
+  const checkpointRevisionRef = useRef<number>(1);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
+  const [conflictState, setConflictState] = useState<{
+    currentRevision: number;
+    serverCheckpoint: SessionCheckpoint;
+  } | null>(null);
+  const [recoverableDraft, setRecoverableDraft] = useState<LocalDraftRecord | null>(null);
+
   // UI toggles
   const [timerHidden, setTimerHidden] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [activeGapIndex, setActiveGapIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const [saveStateLabel, setSaveStateLabel] = useState('');
   const autoSubmittedRef = useRef(false);
 
   // Submission Review
@@ -102,7 +137,9 @@ export function SessionPlayerView({
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
   const dirtyRef = useRef(false);
-  const checkpointRef = useRef<NonNullable<SessionRecord['checkpoint']>>({
+  const draftStorageKey = getDraftStorageKey(studentId, sessionId);
+
+  const checkpointRef = useRef<SessionCheckpoint>({
     currentIndex: 0,
     elapsedSec: 0,
     answersByPartId: {},
@@ -111,6 +148,20 @@ export function SessionPlayerView({
     passageHighlightsByStimulusId: {},
     writingDraft: { planNotes: '', responseText: '' },
   });
+
+  const applyCheckpointToState = useCallback(
+    (cp: SessionCheckpoint, maxLen: number) => {
+      setCurrentIndex(Math.min(cp.currentIndex || 0, Math.max(0, maxLen - 1)));
+      setElapsedSec(cp.elapsedSec || 0);
+      setAnswersByPartId(cp.answersByPartId || {});
+      setFlaggedQuestionIds(cp.flaggedQuestionIds || []);
+      setEliminatedByPartId(cp.eliminatedOptionsByPartId || {});
+      setHighlightsByStimulusId(cp.passageHighlightsByStimulusId || {});
+      setWritingDraft(cp.writingDraft || { planNotes: '', responseText: '' });
+      checkpointRef.current = cp;
+    },
+    []
+  );
 
   useEffect(() => {
     checkpointRef.current = {
@@ -132,27 +183,47 @@ export function SessionPlayerView({
     writingDraft,
   ]);
 
-  // Load session
+  // Load authoritative session from server
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
+    setConflictState(null);
+    setRecoverableDraft(null);
     api
       .getSession(sessionId)
       .then(async (res) => {
         if (!active) return;
         setSession(res.session);
         setQuestions(res.questions);
+        checkpointRevisionRef.current = res.session.checkpointRevision ?? 1;
+
         const cp = res.session.checkpoint;
         if (cp) {
-          setCurrentIndex(Math.min(cp.currentIndex || 0, Math.max(0, res.questions.length - 1)));
-          setElapsedSec(cp.elapsedSec || 0);
-          setAnswersByPartId(cp.answersByPartId || {});
-          setFlaggedQuestionIds(cp.flaggedQuestionIds || []);
-          setEliminatedByPartId(cp.eliminatedOptionsByPartId || {});
-          setHighlightsByStimulusId(cp.passageHighlightsByStimulusId || {});
-          setWritingDraft(cp.writingDraft || { planNotes: '', responseText: '' });
+          applyCheckpointToState(cp, res.questions.length);
         }
+
+        if (res.session.status === 'in_progress') {
+          const localDraft = readLocalDraft(draftStorageKey);
+          if (localDraft) {
+            const serverAnswers = JSON.stringify(cp?.answersByPartId || {});
+            const localAnswers = JSON.stringify(localDraft.checkpoint.answersByPartId || {});
+            const serverWriting = cp?.writingDraft?.responseText || '';
+            const localWriting = localDraft.checkpoint.writingDraft?.responseText || '';
+            if (serverAnswers !== localAnswers || serverWriting !== localWriting) {
+              setRecoverableDraft(localDraft);
+              setSaveStatus('unsent');
+            } else {
+              clearLocalDraft(draftStorageKey);
+              setSaveStatus('saved');
+            }
+          } else {
+            setSaveStatus('saved');
+          }
+        } else {
+          clearLocalDraft(draftStorageKey);
+        }
+
         if (res.reviewResults) setReviewResults(res.reviewResults);
         if (res.writingReview) setWritingReview(res.writingReview);
 
@@ -164,7 +235,7 @@ export function SessionPlayerView({
               setInspectorOpen(true);
             }
           } catch {
-            // ignore if not admin
+            // ignore
           }
         }
       })
@@ -177,18 +248,41 @@ export function SessionPlayerView({
     return () => {
       active = false;
     };
-  }, [sessionId, isAdmin]);
+  }, [sessionId, isAdmin, draftStorageKey, applyCheckpointToState]);
 
-  const flushCheckpoint = useCallback(async () => {
-    if (!session || session.status !== 'in_progress') return;
-    try {
-      await api.saveCheckpoint(session.sessionId, checkpointRef.current);
-      dirtyRef.current = false;
-      setSaveStateLabel('Saved');
-    } catch {
-      // silent retry on next tick
-    }
-  }, [session]);
+  const flushCheckpoint = useCallback(
+    async (overrideExpectedRevision?: number) => {
+      if (!session || session.status !== 'in_progress') return;
+      if (conflictState && overrideExpectedRevision === undefined) return;
+      const payload = checkpointRef.current;
+      writeLocalDraft(draftStorageKey, payload);
+      setSaveStatus('saving');
+      try {
+        const res = await api.saveCheckpoint(
+          session.sessionId,
+          payload,
+          overrideExpectedRevision ?? checkpointRevisionRef.current
+        );
+        checkpointRevisionRef.current = res.revision;
+        dirtyRef.current = false;
+        setConflictState(null);
+        clearLocalDraft(draftStorageKey);
+        setSaveStatus('saved');
+      } catch (err) {
+        const apiErr = err as ApiError;
+        if (apiErr.status === 409 && apiErr.serverCheckpoint && typeof apiErr.currentRevision === 'number') {
+          setConflictState({
+            currentRevision: apiErr.currentRevision,
+            serverCheckpoint: apiErr.serverCheckpoint,
+          });
+          setSaveStatus('conflict');
+        } else {
+          setSaveStatus('failed');
+        }
+      }
+    },
+    [session, conflictState, draftStorageKey]
+  );
 
   // Elapsed timer + 30s periodic autosave
   useEffect(() => {
@@ -225,40 +319,59 @@ export function SessionPlayerView({
 
   const currentQuestion = questions[currentIndex];
 
-  const handleSelectAnswer = useCallback((partId: string, key: string | null) => {
+  const markLocalDirty = useCallback(() => {
     dirtyRef.current = true;
-    setSaveStateLabel('Saving...');
-    setAnswersByPartId((prev) => ({ ...prev, [partId]: key }));
-  }, []);
+    setSaveStatus('unsent');
+    writeLocalDraft(draftStorageKey, checkpointRef.current);
+  }, [draftStorageKey]);
 
-  const handleToggleEliminate = useCallback((partId: string, key: string) => {
-    dirtyRef.current = true;
-    setEliminatedByPartId((prev) => {
-      const list = prev[partId] || [];
-      const next = list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
-      return { ...prev, [partId]: next };
-    });
-  }, []);
+  const handleSelectAnswer = useCallback(
+    (partId: string, key: string | null) => {
+      dirtyRef.current = true;
+      setSaveStatus('unsent');
+      setAnswersByPartId((prev) => {
+        const next = { ...prev, [partId]: key };
+        writeLocalDraft(draftStorageKey, { ...checkpointRef.current, answersByPartId: next });
+        return next;
+      });
+    },
+    [draftStorageKey]
+  );
 
-  const handleToggleFlag = useCallback((questionId: string) => {
-    dirtyRef.current = true;
-    setFlaggedQuestionIds((prev) =>
-      prev.includes(questionId) ? prev.filter((id) => id !== questionId) : [...prev, questionId]
-    );
-  }, []);
+  const handleToggleEliminate = useCallback(
+    (partId: string, key: string) => {
+      markLocalDirty();
+      setEliminatedByPartId((prev) => {
+        const list = prev[partId] || [];
+        const next = list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+        return { ...prev, [partId]: next };
+      });
+    },
+    [markLocalDirty]
+  );
+
+  const handleToggleFlag = useCallback(
+    (questionId: string) => {
+      markLocalDirty();
+      setFlaggedQuestionIds((prev) =>
+        prev.includes(questionId) ? prev.filter((id) => id !== questionId) : [...prev, questionId]
+      );
+    },
+    [markLocalDirty]
+  );
 
   const handleGoIndex = useCallback(
     (nextIdx: number) => {
       const bounded = Math.max(0, Math.min(questions.length - 1, nextIdx));
-      dirtyRef.current = true;
+      markLocalDirty();
       setCurrentIndex(bounded);
       setActiveGapIndex(0);
       setNavOpen(false);
     },
-    [questions.length]
+    [questions.length, markLocalDirty]
   );
 
-  // Keyboard shortcuts (1-5 / A-E, N / P, F)
+  // Keyboard shortcuts (1-8 / A-H, N / P, F)
   useEffect(() => {
     if (!session || session.status !== 'in_progress' || !currentQuestion) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -314,16 +427,16 @@ export function SessionPlayerView({
       !session.isSandbox
   );
 
-  // Warn on tab close/refresh while locked into a student test
+  // Warn on tab close/refresh when unsent draft exists or while locked in timed test
   useEffect(() => {
-    if (!isLockedStudentSession) return;
+    if (!isLockedStudentSession && saveStatus !== 'unsent' && saveStatus !== 'failed') return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [isLockedStudentSession]);
+  }, [isLockedStudentSession, saveStatus]);
 
   const handleSubmit = useCallback(async () => {
     if (!session || submitting) return;
@@ -331,6 +444,7 @@ export function SessionPlayerView({
     setError('');
     try {
       const res = await api.submitSession(session.sessionId, checkpointRef.current);
+      clearLocalDraft(draftStorageKey);
       setSession((prev) =>
         prev
           ? {
@@ -338,7 +452,7 @@ export function SessionPlayerView({
               status: 'submitted',
               correctSlots: res.correctSlots,
               totalSlots: res.totalSlots,
-              completedAt: new Date().toISOString(),
+              completedAt: res.completedAt || new Date().toISOString(),
             }
           : prev
       );
@@ -350,9 +464,9 @@ export function SessionPlayerView({
     } finally {
       setSubmitting(false);
     }
-  }, [session, submitting, onActiveSessionCleared]);
+  }, [session, submitting, onActiveSessionCleared, draftStorageKey]);
 
-  // Auto-submit when a timed locked student session hits 00:00
+  // Auto-submit when timed locked student session hits 00:00
   useEffect(() => {
     if (!isLockedStudentSession || !session?.timeLimitSec || autoSubmittedRef.current) return;
     if (elapsedSec >= session.timeLimitSec) {
@@ -440,13 +554,9 @@ export function SessionPlayerView({
   const currentStimId = currentQuestion.stimulus?.stimulusId || currentQuestion.questionId;
   const activeInspectorQ = inspectorMap[currentQuestion.questionId];
 
-  const isReading = currentQuestion.section === 'READ';
-  const isWriting = currentQuestion.formatType === 'WRIT_TYPED_TASK';
-  const activePart = currentQuestion.parts[0];
-
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[var(--bg-canvas)]">
-      {/* Janison-Style Minimalist Exam Top Bar with Large Centered Timer */}
+      {/* Janison-Style Minimalist Exam Top Bar with Large Centered Timer + Authoritative Save Status */}
       <header className="sticky top-0 z-30 border-b border-[var(--border-hairline)] bg-[var(--bg-elevated)]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-2.5 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -467,8 +577,50 @@ export function SessionPlayerView({
               <div className="text-sm font-bold text-[var(--text-primary)] truncate">
                 {session.title || session.mode.replace(/_/g, ' ')}
               </div>
-              <div className="text-xs text-[var(--text-muted)] truncate">
-                {isLockedStudentSession ? 'Locked exam session' : 'Calibration workspace'} · {saveStateLabel || 'Autosave active'}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+                <span>{isLockedStudentSession ? 'Locked exam session' : 'Calibration workspace'}</span>
+                <span aria-hidden="true">·</span>
+                {saveStatus === 'saving' && (
+                  <span className="text-[var(--text-secondary)] font-medium">Saving...</span>
+                )}
+                {saveStatus === 'saved' && (
+                  <span className="inline-flex items-center gap-1 text-[var(--status-success)] font-medium">
+                    <CloudCheck className="w-3.5 h-3.5" />
+                    <span>Saved</span>
+                  </span>
+                )}
+                {saveStatus === 'unsent' && (
+                  <span className="inline-flex items-center gap-1 text-[var(--status-warn)] font-medium">
+                    <span>Unsent local draft</span>
+                    <button
+                      type="button"
+                      onClick={() => flushCheckpoint()}
+                      className="underline hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      Save now
+                    </button>
+                  </span>
+                )}
+                {saveStatus === 'failed' && (
+                  <span className="inline-flex items-center gap-1.5 text-[var(--status-error)] font-medium">
+                    <CloudOff className="w-3.5 h-3.5" />
+                    <span>Save failed</span>
+                    <button
+                      type="button"
+                      onClick={() => flushCheckpoint()}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--status-error)] text-[11px] hover:bg-[var(--status-error-bg)] cursor-pointer"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      Retry
+                    </button>
+                  </span>
+                )}
+                {saveStatus === 'conflict' && (
+                  <span className="inline-flex items-center gap-1 text-[var(--status-warn)] font-semibold">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Newer save on another device</span>
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -502,12 +654,10 @@ export function SessionPlayerView({
           </div>
 
           <div className="flex items-center justify-start md:justify-end gap-2.5 flex-wrap">
-            {/* Slot Progress Counter */}
             <div className="text-xs font-medium text-[var(--text-secondary)] tabular-nums whitespace-nowrap">
               Q {currentIndex + 1}/{questions.length} · {answeredSlotsCount}/{totalSlotsCount} answered
             </div>
 
-            {/* Flag Button */}
             <button
               type="button"
               onClick={() => handleToggleFlag(currentQuestion.questionId)}
@@ -522,7 +672,6 @@ export function SessionPlayerView({
               <span>{isFlagged ? 'Flagged' : 'Flag'}</span>
             </button>
 
-            {/* Question Navigator Toggle */}
             <button
               type="button"
               onClick={() => setNavOpen((v) => !v)}
@@ -534,7 +683,6 @@ export function SessionPlayerView({
               <ChevronDown className="w-3.5 h-3.5" />
             </button>
 
-            {/* Admin Inspector Toggle (strictly in admin calibration mode) */}
             {session.mode === 'admin_calibration' && isAdmin && activeInspectorQ && (
               <button
                 type="button"
@@ -606,6 +754,79 @@ export function SessionPlayerView({
         )}
       </header>
 
+      {/* Recoverable Unsent Local Draft Banner */}
+      {recoverableDraft && !conflictState && (
+        <div className="border-b border-[var(--status-warn)]/40 bg-[var(--status-warn-bg)] px-6 py-2.5">
+          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--status-warn)]">
+            <span>
+              An unsent local draft from {new Date(recoverableDraft.savedAtMs).toLocaleTimeString()} was found in this browser.
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  applyCheckpointToState(recoverableDraft.checkpoint, questions.length);
+                  setRecoverableDraft(null);
+                  dirtyRef.current = true;
+                  flushCheckpoint();
+                }}
+                className="px-3 py-1 rounded-[var(--radius-sm)] bg-[var(--text-primary)] text-white font-semibold cursor-pointer"
+              >
+                Restore &amp; Save Draft
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearLocalDraft(draftStorageKey);
+                  setRecoverableDraft(null);
+                  setSaveStatus('saved');
+                }}
+                className="px-3 py-1 rounded-[var(--radius-sm)] border border-[var(--status-warn)] font-semibold cursor-pointer"
+              >
+                Discard Unsent Draft
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Optimistic Concurrency Conflict Resolution Banner (409) */}
+      {conflictState && (
+        <div role="alert" className="border-b border-[var(--status-error)]/40 bg-[var(--status-error-bg)] px-6 py-2.5">
+          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--status-error)]">
+            <span>
+              Checkpoint conflict detected (another device saved revision v{conflictState.currentRevision}).
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  checkpointRevisionRef.current = conflictState.currentRevision;
+                  applyCheckpointToState(conflictState.serverCheckpoint, questions.length);
+                  clearLocalDraft(draftStorageKey);
+                  dirtyRef.current = false;
+                  setConflictState(null);
+                  setSaveStatus('saved');
+                }}
+                className="px-3 py-1 rounded-[var(--radius-sm)] bg-[var(--text-primary)] text-white font-semibold cursor-pointer"
+              >
+                Load Server State
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  checkpointRevisionRef.current = conflictState.currentRevision;
+                  flushCheckpoint(conflictState.currentRevision);
+                }}
+                className="px-3 py-1 rounded-[var(--radius-sm)] border border-[var(--status-error)] font-semibold cursor-pointer"
+              >
+                Overwrite With Local Draft
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div role="alert" className="max-w-[1440px] mx-auto w-full px-6 pt-4">
           <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--status-error-bg)] text-[var(--status-error)] text-xs font-medium">
@@ -620,15 +841,18 @@ export function SessionPlayerView({
           <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs">
             <div className="space-y-1">
               <div className="font-bold text-[var(--text-primary)] tabular-nums">
-                Admin Inspector · {activeInspectorQ.questionId} · Pool: {activeInspectorQ.poolType} · QC: {activeInspectorQ.qcStatus}
-                {activeInspectorQ.provenance.sourceReference ? ` · ${activeInspectorQ.provenance.sourceReference}` : ''}
+                Admin Inspector · {activeInspectorQ.questionId} · Pool: {activeInspectorQ.poolType} · QC:{' '}
+                {activeInspectorQ.qcStatus}
+                {activeInspectorQ.provenance.sourceReference
+                  ? ` · ${activeInspectorQ.provenance.sourceReference}`
+                  : ''}
               </div>
               <div className="text-[var(--text-secondary)]">
                 {activeInspectorQ.parts.map((p, idx) => (
                   <span key={p.partId} className="mr-4">
                     {activeInspectorQ.parts.length > 1 ? `P${idx + 1}: ` : ''}
-                    <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> · Diff: {p.difficultyInitial} ·{' '}
-                    {SKILL_NAME_MAP.get(p.skillId) || p.skillId}
+                    <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> · Diff:{' '}
+                    {p.difficultyInitial} · {SKILL_NAME_MAP.get(p.skillId) || p.skillId}
                   </span>
                 ))}
               </div>
@@ -666,173 +890,38 @@ export function SessionPlayerView({
         </div>
       )}
 
-      {/* Janison-Style Left/Right Split Exam Workspace */}
-      <main className="flex-1 min-h-0 max-w-[1440px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 items-stretch">
-        {/* LEFT PANE: Stimulus / Passage / Problem Stem / Diagram */}
-        <section
-          aria-label="Question stimulus and problem context"
-          className={`${
-            isReading ? 'lg:col-span-7' : 'lg:col-span-6'
-          } p-6 lg:p-8 border-b lg:border-b-0 lg:border-r border-[var(--border-hairline)] bg-[var(--bg-elevated)] lg:h-full lg:overflow-y-auto`}
-        >
-          <div className="text-xs font-medium text-[var(--text-muted)] mb-3 tabular-nums">
-            {SECTION_LABELS[currentQuestion.section] || currentQuestion.section} ·{' '}
-            {FORMAT_LABELS[currentQuestion.formatType] || currentQuestion.formatType.replace(/_/g, ' ')}
-          </div>
-
-          {isReading && (
-            <ReadingStimulusPane
-              question={currentQuestion}
-              answersByPartId={answersByPartId}
-              onSelectAnswer={handleSelectAnswer}
-              activeGapIndex={activeGapIndex}
-              onSelectGapIndex={setActiveGapIndex}
-              highlights={highlightsByStimulusId[currentStimId] || []}
-              onAddHighlight={(text) => {
-                dirtyRef.current = true;
-                setHighlightsByStimulusId((prev) => ({
-                  ...prev,
-                  [currentStimId]: Array.from(new Set([...(prev[currentStimId] || []), text])),
-                }));
-              }}
-              onClearHighlights={() => {
-                dirtyRef.current = true;
-                setHighlightsByStimulusId((prev) => ({ ...prev, [currentStimId]: [] }));
-              }}
-            />
-          )}
-
-          {isWriting && <WritingStimulusPane question={currentQuestion} />}
-
-          {!isReading && !isWriting && (
-            <div className="space-y-5">
-              {currentQuestion.stemPrefix && (
-                <p className="text-base text-[var(--text-primary)] leading-relaxed bg-[var(--bg-surface)] p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)]">
-                  {currentQuestion.stemPrefix}
-                </p>
-              )}
-              {activePart && (
-                <div className="text-base font-medium text-[var(--text-primary)] leading-relaxed">
-                  {activePart.promptText}
-                </div>
-              )}
-              <VisualRenderer visual={currentQuestion.visual} />
-            </div>
-          )}
-        </section>
-
-        {/* RIGHT PANE: Interactive Answers */}
-        <section
-          aria-label="Answer selection panel"
-          className={`${
-            isReading ? 'lg:col-span-5' : 'lg:col-span-6'
-          } p-6 lg:p-8 bg-[var(--bg-canvas)] flex flex-col justify-between gap-6 lg:h-full lg:overflow-y-auto`}
-        >
-          <div className="space-y-5">
-            {isReading && (
-              <ReadingRightAnswerPane
-                question={currentQuestion}
-                answersByPartId={answersByPartId}
-                eliminatedByPartId={eliminatedByPartId}
-                onSelectAnswer={handleSelectAnswer}
-                onToggleEliminate={handleToggleEliminate}
-                activeGapIndex={activeGapIndex}
-                onSelectGapIndex={setActiveGapIndex}
-              />
-            )}
-
-            {isWriting && (
-              <WritingAnswerPane
-                question={currentQuestion}
-                planNotes={writingDraft.planNotes}
-                responseText={writingDraft.responseText}
-                onChangePlan={(val) => {
-                  dirtyRef.current = true;
-                  setSaveStateLabel('Saving...');
-                  setWritingDraft((prev) => ({ ...prev, planNotes: val }));
-                }}
-                onChangeResponse={(val) => {
-                  dirtyRef.current = true;
-                  setSaveStateLabel('Saving...');
-                  setWritingDraft((prev) => ({ ...prev, responseText: val }));
-                }}
-              />
-            )}
-
-            {!isReading && !isWriting && activePart && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-                  <span>
-                    Select one answer ({activePart.options[0]?.key}–
-                    {activePart.options[activePart.options.length - 1]?.key})
-                  </span>
-                  <span>Shortcuts: 1–{activePart.options.length} · N/P · F</span>
-                </div>
-
-                <div className="space-y-2.5">
-                  {activePart.options.map((opt) => {
-                    const picked = answersByPartId[activePart.partId] === opt.key;
-                    const elim = (eliminatedByPartId[activePart.partId] || []).includes(opt.key);
-
-                    return (
-                      <div key={opt.key} className="flex items-stretch gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSelectAnswer(activePart.partId, picked ? null : opt.key)
-                          }
-                          className={`flex-1 text-left p-4 rounded-[var(--radius-md)] border transition-colors flex items-center gap-3.5 cursor-pointer ${
-                            picked
-                              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-                              : elim
-                                ? 'border-[var(--border-hairline)] bg-[var(--bg-surface)] opacity-55'
-                                : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
-                          }`}
-                        >
-                          <span
-                            className={`w-7 h-7 rounded-full border text-xs font-bold flex items-center justify-center shrink-0 ${
-                              picked
-                                ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
-                                : 'border-[var(--border-strong)] text-[var(--text-secondary)]'
-                            }`}
-                          >
-                            {picked ? <Check className="w-3.5 h-3.5" /> : opt.key}
-                          </span>
-                          <div className="flex-1 min-w-0 space-y-2">
-                            {opt.text && (
-                              <div
-                                className={`text-sm font-medium text-[var(--text-primary)] ${
-                                  elim ? 'line-through' : ''
-                                }`}
-                              >
-                                {opt.text}
-                              </div>
-                            )}
-                            {opt.visual && <VisualRenderer visual={opt.visual} compact />}
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Eliminate option ${opt.key}`}
-                          title="Cross out distractor"
-                          onClick={() => handleToggleEliminate(activePart.partId, opt.key)}
-                          className={`px-2.5 rounded-[var(--radius-md)] border cursor-pointer transition-colors ${
-                            elim
-                              ? 'border-[var(--border-strong)] bg-[var(--bg-hover)] text-[var(--text-primary)]'
-                              : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                          }`}
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Bottom Navigation Bar */}
+      {/* Shared Janison QuestionWorkspace in 'exam' mode */}
+      <QuestionWorkspace
+        mode="exam"
+        question={currentQuestion}
+        answersByPartId={answersByPartId}
+        eliminatedByPartId={eliminatedByPartId}
+        highlights={highlightsByStimulusId[currentStimId] || []}
+        activeGapIndex={activeGapIndex}
+        onSelectGapIndex={setActiveGapIndex}
+        onSelectAnswer={handleSelectAnswer}
+        onToggleEliminate={handleToggleEliminate}
+        onAddHighlight={(text) => {
+          markLocalDirty();
+          setHighlightsByStimulusId((prev) => ({
+            ...prev,
+            [currentStimId]: Array.from(new Set([...(prev[currentStimId] || []), text])),
+          }));
+        }}
+        onClearHighlights={() => {
+          markLocalDirty();
+          setHighlightsByStimulusId((prev) => ({ ...prev, [currentStimId]: [] }));
+        }}
+        writingDraft={writingDraft}
+        onChangeWritingPlan={(val) => {
+          markLocalDirty();
+          setWritingDraft((prev) => ({ ...prev, planNotes: val }));
+        }}
+        onChangeWritingResponse={(val) => {
+          markLocalDirty();
+          setWritingDraft((prev) => ({ ...prev, responseText: val }));
+        }}
+        footerNav={
           <div className="pt-4 border-t border-[var(--border-hairline)] flex items-center justify-between gap-3">
             <button
               type="button"
@@ -866,8 +955,8 @@ export function SessionPlayerView({
               )}
             </div>
           </div>
-        </section>
-      </main>
+        }
+      />
     </div>
   );
 }

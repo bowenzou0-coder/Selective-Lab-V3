@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Public account profile for a Selective Lab learner or admin without PII.",
+      "description": "Server-managed account profile for a Selective Lab learner or admin without PII.",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -37,7 +37,7 @@
     },
     "StudySession": {
       "title": "StudySession",
-      "description": "Locked or completed practice/mock exam session with live checkpoint state.",
+      "description": "Locked or completed practice/mock exam session with optimistic checkpointRevision and immutable submissionSummary.",
       "type": "object",
       "properties": {
         "sessionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -53,6 +53,8 @@
         "status": { "type": "string", "enum": ["in_progress", "submitted"] },
         "plannedQuestionIds": { "type": "array" },
         "checkpoint": { "type": "object" },
+        "checkpointRevision": { "type": "integer" },
+        "submissionSummary": { "type": "object" },
         "timeLimitSec": { "type": "integer" },
         "totalSlots": { "type": "integer" },
         "correctSlots": { "type": "integer" },
@@ -73,14 +75,25 @@
         "checkpoint",
         "totalSlots",
         "correctSlots",
-        "startedAt",
-        "createdAt",
-        "updatedAt"
+        "startedAt"
       ]
+    },
+    "SessionSnapshot": {
+      "title": "SessionSnapshot",
+      "description": "Immutable question and stimulus snapshot frozen when a session starts (server-only access).",
+      "type": "object",
+      "properties": {
+        "questionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "snapshotIndex": { "type": "integer" },
+        "evidenceRevision": { "type": "string", "maxLength": 128 },
+        "question": { "type": "object" },
+        "stimulus": { "type": "object" }
+      },
+      "required": ["questionId", "snapshotIndex", "evidenceRevision", "question"]
     },
     "PartAttempt": {
       "title": "PartAttempt",
-      "description": "Immutable per-question-part attempt record for analytics and SM-2 updates.",
+      "description": "Immutable server-graded per-question-part attempt record with questionVersion and evidenceRevision.",
       "type": "object",
       "properties": {
         "attemptId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -88,6 +101,8 @@
         "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "questionId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "questionFamilyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "questionVersion": { "type": "integer" },
+        "evidenceRevision": { "type": "string", "maxLength": 128 },
         "partId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "skillId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "difficultyAtAttempt": { "type": "number" },
@@ -95,8 +110,9 @@
         "isCorrect": { "type": "boolean" },
         "timeSpentSec": { "type": "number" },
         "isSpacedReview": { "type": "boolean" },
-        "createdAtIso": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "isLegacy": { "type": "boolean" },
+        "assisted": { "type": "boolean" },
+        "createdAtIso": { "type": "string", "maxLength": 64 }
       },
       "required": [
         "attemptId",
@@ -107,196 +123,181 @@
         "partId",
         "skillId",
         "difficultyAtAttempt",
-        "selectedAnswer",
         "isCorrect",
         "timeSpentSec",
-        "isSpacedReview",
-        "createdAtIso",
-        "createdAt"
+        "isSpacedReview"
       ]
+    },
+    "QuestionEvidence": {
+      "title": "QuestionEvidence",
+      "description": "Per-question-revision timed mastery certification record (unseen -> correct_once -> awaiting_review -> retained / needs_repair).",
+      "type": "object",
+      "properties": {
+        "evidenceKey": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "questionFamilyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "questionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "evidenceRevision": { "type": "string", "maxLength": 128 },
+        "section": { "type": "string", "enum": ["READ", "MATH", "THINK", "WRIT"] },
+        "status": { "type": "string", "enum": ["unseen", "correct_once", "awaiting_review", "retained", "needs_repair"] },
+        "cleanPassesCount": { "type": "integer" },
+        "passTimestampsIso": { "type": "array" },
+        "everCleanPassed": { "type": "boolean" },
+        "firstSubmissionCleanPass": { "type": "boolean" },
+        "attemptsCount": { "type": "integer" },
+        "resetCount": { "type": "integer" },
+        "policyVersion": { "type": "string" },
+        "updatedAtIso": { "type": "string" }
+      },
+      "required": ["evidenceKey", "questionFamilyId", "evidenceRevision", "status", "cleanPassesCount"]
     },
     "UserSkillState": {
       "title": "UserSkillState",
-      "description": "SM-2 and mastery telemetry for one skill belonging to a learner.",
+      "description": "EWMA and SM-2 scheduling telemetry for one skill belonging to a learner.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "skillId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "masteryScore": { "type": "number" },
-        "confidence": { "type": "number" },
-        "ewmaAccuracy": { "type": "number" },
-        "ewmaSpeedRatio": { "type": "number" },
         "attemptsCount": { "type": "integer" },
-        "lastPracticedAt": { "type": "string", "maxLength": 64 },
-        "nextReviewDueAt": { "type": "string", "maxLength": 64 },
         "reviewIntervalDays": { "type": "number" },
         "easeFactor": { "type": "number" },
-        "plateauStatus": { "type": "string", "enum": ["none", "watch", "detected"] },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "plateauStatus": { "type": "string", "enum": ["none", "watch", "detected"] }
       },
-      "required": [
-        "userId",
-        "skillId",
-        "masteryScore",
-        "confidence",
-        "ewmaAccuracy",
-        "ewmaSpeedRatio",
-        "attemptsCount",
-        "reviewIntervalDays",
-        "easeFactor",
-        "plateauStatus",
-        "updatedAt"
-      ]
+      "required": ["userId", "skillId", "masteryScore", "attemptsCount", "reviewIntervalDays", "easeFactor", "plateauStatus"]
     },
     "QuestionMemoryEntry": {
       "title": "QuestionMemoryEntry",
-      "description": "Per-question-family spaced repetition state for a learner.",
+      "description": "Per-question-family spaced repetition state updated once per question encounter.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "questionFamilyId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "lastSeenAt": { "type": "string", "maxLength": 64 },
-        "nextDueAt": { "type": "string", "maxLength": 64 },
+        "lastSeenAt": { "type": "string" },
+        "nextDueAt": { "type": "string" },
         "intervalDays": { "type": "number" },
-        "easeFactor": { "type": "number" },
-        "streak": { "type": "integer" },
-        "lapseCount": { "type": "integer" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "lapseCount": { "type": "integer" }
       },
-      "required": [
-        "userId",
-        "questionFamilyId",
-        "lastSeenAt",
-        "nextDueAt",
-        "intervalDays",
-        "easeFactor",
-        "streak",
-        "lapseCount",
-        "updatedAt"
-      ]
+      "required": ["userId", "questionFamilyId", "lastSeenAt", "nextDueAt", "intervalDays", "lapseCount"]
     },
     "WritingSubmission": {
       "title": "WritingSubmission",
       "description": "Typed writing submission and rubric evaluation history.",
       "type": "object",
       "properties": {
-        "submissionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "studentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "submissionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "questionId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "planNotes": { "type": "string", "maxLength": 10000 },
         "responseText": { "type": "string", "maxLength": 30000 },
         "wordCount": { "type": "integer" },
-        "timeSpentSec": { "type": "integer" },
-        "deterministicMetrics": { "type": "object" },
         "evaluations": { "type": "array" },
-        "submittedAt": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "submittedAt": { "type": "string" }
       },
-      "required": [
-        "submissionId",
-        "userId",
-        "studentId",
-        "sessionId",
-        "questionId",
-        "planNotes",
-        "responseText",
-        "wordCount",
-        "timeSpentSec",
-        "deterministicMetrics",
-        "evaluations",
-        "submittedAt",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["submissionId", "userId", "sessionId", "questionId", "responseText", "submittedAt"]
     },
     "AdminConfigVersion": {
       "title": "AdminConfigVersion",
       "description": "Immutable LearningConfig version managed by admin.",
       "type": "object",
       "properties": {
-        "configVersionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "configVersionId": { "type": "string" },
         "versionNumber": { "type": "integer" },
-        "notes": { "type": "string", "maxLength": 400 },
+        "notes": { "type": "string" },
         "config": { "type": "object" },
-        "createdAtIso": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAtIso": { "type": "string" }
       },
-      "required": ["configVersionId", "versionNumber", "config", "createdAtIso", "createdAt"]
+      "required": ["configVersionId", "versionNumber", "config", "createdAtIso"]
     },
     "BankStimulus": {
       "title": "BankStimulus",
-      "description": "Admin-managed passage/stimulus group for custom imported questions.",
+      "description": "Server-managed passage/stimulus group for question bank items.",
       "type": "object",
       "properties": {
-        "stimulusId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "stimulusFamilyId": { "type": "string", "maxLength": 128 },
+        "stimulusId": { "type": "string" },
+        "stimulusFamilyId": { "type": "string" },
         "version": { "type": "integer" },
         "section": { "type": "string", "enum": ["READ", "MATH", "THINK", "WRIT"] },
-        "genreOrTextType": { "type": "string", "maxLength": 80 },
-        "payload": { "type": "object" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "payload": { "type": "object" }
       },
-      "required": ["stimulusId", "stimulusFamilyId", "version", "section", "genreOrTextType", "payload", "updatedAt"]
+      "required": ["stimulusId", "stimulusFamilyId", "version", "section", "payload"]
     },
     "BankQuestion": {
       "title": "BankQuestion",
-      "description": "Admin-only full question definition (including answer keys and rationales).",
+      "description": "Server-only full question definition (including answer keys and evidenceRefs).",
       "type": "object",
       "properties": {
-        "questionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "questionFamilyId": { "type": "string", "maxLength": 128 },
+        "questionId": { "type": "string" },
+        "questionFamilyId": { "type": "string" },
         "version": { "type": "integer" },
         "section": { "type": "string", "enum": ["READ", "MATH", "THINK", "WRIT"] },
-        "formatType": { "type": "string", "maxLength": 64 },
-        "poolType": { "type": "string", "maxLength": 64 },
+        "formatType": { "type": "string" },
+        "poolType": { "type": "string" },
         "qcStatus": { "type": "string", "enum": ["draft", "verified", "active", "quarantined", "retired"] },
-        "payload": { "type": "object" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "payload": { "type": "object" }
       },
-      "required": ["questionId", "questionFamilyId", "version", "section", "formatType", "poolType", "qcStatus", "payload", "updatedAt"]
+      "required": ["questionId", "questionFamilyId", "version", "section", "formatType", "poolType", "qcStatus", "payload"]
+    },
+    "ImportBatch": {
+      "title": "ImportBatch",
+      "description": "Audit record of an imported manifest batch with provenance.",
+      "type": "object",
+      "properties": {
+        "batchId": { "type": "string" },
+        "batchLabel": { "type": "string" },
+        "createdAtIso": { "type": "string" },
+        "importedBy": { "type": "string" },
+        "questionsCount": { "type": "integer" }
+      },
+      "required": ["batchId", "batchLabel", "createdAtIso", "importedBy"]
+    },
+    "MediaAsset": {
+      "title": "MediaAsset",
+      "description": "Content-addressed media metadata stored in Cloud Storage.",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "objectKey": { "type": "string" },
+        "url": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "sizeBytes": { "type": "integer" },
+        "sha256": { "type": "string" },
+        "storageProvider": { "type": "string", "enum": ["gcs", "local_temp"] }
+      },
+      "required": ["assetId", "objectKey", "url", "mimeType", "sizeBytes", "sha256", "storageProvider"]
     },
     "BankQuestionOverride": {
       "title": "BankQuestionOverride",
       "description": "Public-safe QC status and visual overrides without answer keys.",
       "type": "object",
       "properties": {
-        "questionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "qcStatus": { "type": "string", "enum": ["draft", "verified", "active", "quarantined", "retired"] },
-        "visual": { "type": "object" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "questionId": { "type": "string" },
+        "qcStatus": { "type": "string" },
+        "visual": { "type": "object" }
       },
-      "required": ["questionId", "qcStatus", "updatedAt"]
+      "required": ["questionId", "qcStatus"]
     },
     "QuestionFlag": {
       "title": "QuestionFlag",
       "description": "Issue report submitted by a learner and resolved by admin.",
       "type": "object",
       "properties": {
-        "flagId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "questionId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "sessionId": { "type": "string", "maxLength": 128 },
-        "reason": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "notes": { "type": "string", "maxLength": 1000 },
-        "status": { "type": "string", "enum": ["open", "resolved"] },
-        "createdAtIso": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "flagId": { "type": "string" },
+        "userId": { "type": "string" },
+        "questionId": { "type": "string" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "resolved"] }
       },
-      "required": ["flagId", "userId", "questionId", "reason", "status", "createdAtIso", "createdAt", "updatedAt"]
+      "required": ["flagId", "userId", "questionId", "reason", "status"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "User profile document (no PII) keyed by Firebase UID."
+      "description": "User profile document keyed by Firebase UID."
     },
     "/users/{userId}/private/{docId}": {
       "schema": { "$ref": "#/entities/UserPrivateInfo" },
-      "description": "Isolated user PII document (email)."
+      "description": "Isolated user PII document."
     },
     "/admins/{userId}": {
       "schema": { "$ref": "#/entities/AdminMarker" },
@@ -306,17 +307,25 @@
       "schema": { "$ref": "#/entities/StudySession" },
       "description": "User practice and mock test sessions."
     },
+    "/users/{userId}/sessions/{sessionId}/snapshots/{snapId}": {
+      "schema": { "$ref": "#/entities/SessionSnapshot" },
+      "description": "Immutable session question snapshots (server-only)."
+    },
     "/users/{userId}/attempts/{attemptId}": {
       "schema": { "$ref": "#/entities/PartAttempt" },
-      "description": "Immutable question part attempts for progress and SM-2."
+      "description": "Immutable server-graded question part attempts."
     },
     "/users/{userId}/skill_states/{skillDocId}": {
       "schema": { "$ref": "#/entities/UserSkillState" },
-      "description": "Per-skill SM-2 mastery states."
+      "description": "Per-skill EWMA & SM-2 scheduling states."
     },
     "/users/{userId}/question_memory/{familyDocId}": {
       "schema": { "$ref": "#/entities/QuestionMemoryEntry" },
       "description": "Per-family spaced repetition tracking."
+    },
+    "/users/{userId}/question_evidence/{evidenceDocId}": {
+      "schema": { "$ref": "#/entities/QuestionEvidence" },
+      "description": "3-stage timed question mastery certification state."
     },
     "/users/{userId}/writing_submissions/{submissionId}": {
       "schema": { "$ref": "#/entities/WritingSubmission" },
@@ -328,19 +337,27 @@
     },
     "/bank_stimuli/{stimulusId}": {
       "schema": { "$ref": "#/entities/BankStimulus" },
-      "description": "Admin-managed custom reading stimuli."
+      "description": "Authoritative reading stimuli (server-only)."
     },
     "/bank_questions/{questionId}": {
       "schema": { "$ref": "#/entities/BankQuestion" },
-      "description": "Admin-only custom imported questions with answer keys."
+      "description": "Authoritative full questions with answer keys (server-only)."
+    },
+    "/import_batches/{batchId}": {
+      "schema": { "$ref": "#/entities/ImportBatch" },
+      "description": "Manifest import batch history (server-only)."
+    },
+    "/media_assets/{assetId}": {
+      "schema": { "$ref": "#/entities/MediaAsset" },
+      "description": "Validated uploaded media metadata (server-only)."
     },
     "/bank_question_overrides/{questionId}": {
       "schema": { "$ref": "#/entities/BankQuestionOverride" },
-      "description": "QC status and visual asset overrides without answer keys."
+      "description": "Legacy override metadata."
     },
     "/question_flags/{flagId}": {
       "schema": { "$ref": "#/entities/QuestionFlag" },
-      "description": "Question issue reports created by learners and resolved by admin."
+      "description": "Question issue reports."
     }
   }
 }

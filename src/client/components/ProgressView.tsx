@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download } from 'lucide-react';
+import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
 import { api, type ProgressResponse } from '../api';
 import type { SectionCode } from '../../shared/contracts';
 
@@ -76,13 +76,16 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
     );
   }
 
+  const ms = data.masterySummary;
+
   return (
     <main className="max-w-6xl mx-auto px-6 py-10 space-y-10">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Progress &amp; Mastery</h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1 tabular-nums">
-            {data.totalAttempts} recorded part attempts · {data.sessions.length} sessions · {data.writingSubmissions.length} writing pieces
+            {data.totalAttempts} recorded part attempts · {data.sessions.length} sessions ·{' '}
+            {data.writingSubmissions.length} writing pieces
           </p>
         </div>
         <div className="flex items-center gap-2.5 shrink-0">
@@ -111,6 +114,171 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
         </div>
       </div>
 
+      {/* Bank-Wide Retained Mastery Dashboard */}
+      {ms && (
+        <section className="p-6 rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] border border-[var(--border-hairline)] space-y-6">
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--accent-primary)]">
+                <Award className="w-4 h-4" />
+                <span>Certified Mastery Policy · {ms.policyVersion}</span>
+              </div>
+              <h2 className="text-xl font-bold text-[var(--text-primary)]">Bank-Wide Retained Mastery</h2>
+              <p className="text-xs text-[var(--text-secondary)] max-w-2xl">
+                Requires 3 clean, unassisted passes across spacing gates (Initial → ≥24 hours → ≥7 days). An incorrect, unanswered, or assisted attempt resets certification on that question revision.
+              </p>
+            </div>
+            <div className="text-xs text-[var(--text-secondary)] bg-[var(--bg-surface)] px-3.5 py-2 rounded-[var(--radius-sm)] border border-[var(--border-hairline)] tabular-nums shrink-0">
+              Denominator: <strong className="text-[var(--text-primary)]">{ms.eligibleCount}</strong> active eligible questions
+              <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                Excluded: {ms.excludedHoldoutCount} PT3 holdout · {ms.excludedWritingCount} writing · {ms.excludedInactiveCount} inactive
+              </div>
+            </div>
+          </div>
+
+          {/* Headline Mastery Percentages */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 rounded-[var(--radius-md)] border border-[var(--status-success)]/40 bg-[var(--status-success-bg)]/50 space-y-1">
+              <div className="text-xs font-semibold text-[var(--status-success)]">
+                Retained Mastery (Certified)
+              </div>
+              <div className="text-3xl font-bold text-[var(--text-primary)] tabular-nums">
+                {ms.retainedPercentDisplay}
+              </div>
+              <div className="text-xs text-[var(--text-secondary)] tabular-nums">
+                {ms.retainedCount} / {ms.eligibleCount} eligible questions (3 spaced clean passes)
+              </div>
+            </div>
+
+            <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-1">
+              <div className="text-xs font-semibold text-[var(--text-secondary)]">
+                Answered Cleanly ≥1×
+              </div>
+              <div className="text-3xl font-bold text-[var(--text-primary)] tabular-nums">
+                {ms.correctOncePercentDisplay}
+              </div>
+              <div className="text-xs text-[var(--text-muted)] tabular-nums">
+                {ms.correctOnceOrMoreCount} / {ms.eligibleCount} active questions currently in pass streak
+              </div>
+            </div>
+
+            <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-1">
+              <div className="text-xs font-semibold text-[var(--text-secondary)]">
+                First-Pass Clean Rate
+              </div>
+              <div className="text-3xl font-bold text-[var(--text-primary)] tabular-nums">
+                {ms.firstPassPercentDisplay}
+              </div>
+              <div className="text-xs text-[var(--text-muted)] tabular-nums">
+                {ms.firstPassCleanCount} / {ms.eligibleCount} clean on initial encounter
+              </div>
+            </div>
+          </div>
+
+          {/* 5 Explicit Mutually Exclusive Buckets */}
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-[var(--text-secondary)]">
+              Question Status Breakdown (Mutually Exclusive · Sums to {ms.eligibleCount})
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 tabular-nums">
+              {[
+                { label: 'Unseen', count: ms.unseenCount, cls: 'bg-[var(--bg-canvas)] border-[var(--border-hairline)] text-[var(--text-primary)]' },
+                { label: 'Correct Once (Stage 1)', count: ms.correctOnceCount, cls: 'bg-[var(--bg-surface)] border-[var(--border-strong)] text-[var(--text-primary)]' },
+                { label: 'Awaiting Final Review (Stage 2)', count: ms.awaitingReviewCount, cls: 'bg-sky-50 border-sky-200 text-sky-900' },
+                { label: 'Retained Mastery (Certified)', count: ms.retainedCount, cls: 'bg-[var(--status-success-bg)] border-[var(--status-success)]/40 text-[var(--status-success)]' },
+                { label: 'Needs Repair', count: ms.needsRepairCount, cls: 'bg-[var(--status-warn-bg)] border-[var(--status-warn)]/40 text-[var(--status-warn)]' },
+              ].map((b) => (
+                <div key={b.label} className={`p-3 rounded-[var(--radius-sm)] border ${b.cls}`}>
+                  <div className="text-[11px] font-medium leading-tight">{b.label}</div>
+                  <div className="text-xl font-bold mt-1">{b.count}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Per-Section Breakdown Table */}
+          <div className="overflow-x-auto border border-[var(--border-hairline)] rounded-[var(--radius-md)]">
+            <table className="w-full text-xs text-left tabular-nums">
+              <thead className="bg-[var(--bg-surface)] border-b border-[var(--border-hairline)] text-[var(--text-secondary)]">
+                <tr>
+                  <th className="px-3.5 py-2.5 font-semibold">Section</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Eligible</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Retained</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Clean ≥1×</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Unseen</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Stage 1</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Stage 2</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Needs Repair</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-hairline)] bg-[var(--bg-elevated)]">
+                {(['READ', 'MATH', 'THINK'] as SectionCode[]).map((sec) => {
+                  const s = ms.bySection[sec];
+                  return (
+                    <tr key={sec}>
+                      <td className="px-3.5 py-2.5 font-semibold text-[var(--text-primary)]">
+                        {SECTION_LABELS[sec]}
+                      </td>
+                      <td className="px-3.5 py-2.5">{s.eligible}</td>
+                      <td className="px-3.5 py-2.5 font-bold text-[var(--status-success)]">
+                        {s.retainedPercentDisplay} ({s.retained})
+                      </td>
+                      <td className="px-3.5 py-2.5">{s.correctOncePercentDisplay}</td>
+                      <td className="px-3.5 py-2.5">{s.unseen}</td>
+                      <td className="px-3.5 py-2.5">{s.correctOnce}</td>
+                      <td className="px-3.5 py-2.5">{s.awaitingReview}</td>
+                      <td className="px-3.5 py-2.5 text-[var(--status-warn)]">{s.needsRepair}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Separate Excluded Benchmark / Writing / Legacy Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)]">
+                <ShieldCheck className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>Benchmark Holdout (PT3)</span>
+              </div>
+              <div className="text-lg font-bold text-[var(--text-primary)] tabular-nums">
+                {ms.holdoutSummary.accuracyDisplay}
+              </div>
+              <div className="text-xs text-[var(--text-muted)] tabular-nums">
+                {ms.holdoutSummary.attemptedQuestions} / {ms.holdoutSummary.totalQuestions} holdout questions attempted (isolated from mastery certification)
+              </div>
+            </div>
+
+            <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)]">
+                <PenTool className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>Writing Rubric Progress</span>
+              </div>
+              <div className="text-lg font-bold text-[var(--text-primary)] tabular-nums">
+                {ms.writingSummary.submissionsCount} submitted · {ms.writingSummary.evaluatedCount} graded
+              </div>
+              <div className="text-xs text-[var(--text-muted)] tabular-nums">
+                Across {ms.writingSummary.totalPrompts} active writing prompts (evaluated separately via rubric)
+              </div>
+            </div>
+
+            <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)]">
+                <BookOpen className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+                <span>Legacy History (Pre-Certification)</span>
+              </div>
+              <div className="text-lg font-bold text-[var(--text-primary)] tabular-nums">
+                {ms.legacyAttemptsCount} historical attempts
+              </div>
+              <div className="text-xs text-[var(--text-muted)]">
+                Pre-V3 attempts are archived outside certified mastery buckets.
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Section Accuracy & Pace vs Target */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => {
@@ -135,10 +303,17 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
         })}
       </section>
 
-      {/* Skill Mastery Grouped by Family */}
+      {/* Recent Accuracy Estimate (Scheduling) Grouped by Family */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-bold text-[var(--text-primary)]">Skill Mastery by Family</h2>
+          <div>
+            <h2 className="text-lg font-bold text-[var(--text-primary)]">
+              Recent accuracy estimate (scheduling)
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Recency-weighted EWMA signals used by the adaptive scheduler to target weak skill families (separate from certified retention).
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1 p-1 bg-[var(--bg-surface)] rounded-[var(--radius-sm)]">
               {(['ALL', 'READ', 'MATH', 'THINK', 'WRIT'] as const).map((sec) => (

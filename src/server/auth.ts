@@ -6,6 +6,8 @@ export type AuthRole = 'student' | 'admin';
 export interface UserIdentity {
   role: AuthRole;
   studentId: string;
+  email?: string;
+  authMethod?: 'firebase' | 'local_pin' | 'local_admin';
   exp: number;
 }
 
@@ -15,9 +17,35 @@ export interface AuthenticatedRequest extends Request {
 
 export const AUTH_COOKIE_NAME = 'selective_lab_session';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const DEV_SESSION_SECRET = 'selective-lab-dev-session-secret-v1';
+
+export function isLocalDevPinAuthEnabled(): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.ALLOW_LOCAL_DEV_LOGIN === 'true';
+  }
+  return process.env.ALLOW_LOCAL_DEV_LOGIN !== 'false';
+}
+
+export function assertAuthRuntimeConfig(): void {
+  if (process.env.NODE_ENV === 'production') {
+    const secret = (process.env.SESSION_SECRET || '').trim();
+    if (!secret || secret === DEV_SESSION_SECRET || secret === 'change-me-in-production' || secret.length < 16) {
+      throw new Error(
+        'Production configuration error: SESSION_SECRET must be set to a strong secret (>= 16 chars).'
+      );
+    }
+  }
+}
 
 function getSessionSecret(): string {
-  return (process.env.SESSION_SECRET || '').trim() || 'selective-lab-dev-session-secret-v1';
+  const secret = (process.env.SESSION_SECRET || '').trim();
+  if (process.env.NODE_ENV === 'production') {
+    if (!secret || secret === DEV_SESSION_SECRET || secret === 'change-me-in-production') {
+      throw new Error('SESSION_SECRET is missing or insecure in production.');
+    }
+    return secret;
+  }
+  return secret || DEV_SESSION_SECRET;
 }
 
 export function getStudentPin(): string {
@@ -43,13 +71,15 @@ function base64UrlDecode(input: string): string {
 }
 
 export function signSessionToken(
-  payload: { role: AuthRole; studentId?: string },
+  payload: { role: AuthRole; studentId?: string; email?: string; authMethod?: UserIdentity['authMethod'] },
   ttlMs = THIRTY_DAYS_MS,
   secret = getSessionSecret()
 ): string {
   const identity: UserIdentity = {
     role: payload.role,
     studentId: payload.studentId || 'default-student',
+    email: payload.email,
+    authMethod: payload.authMethod,
     exp: Date.now() + ttlMs,
   };
   const encodedPayload = base64UrlEncode(JSON.stringify(identity));
@@ -90,6 +120,8 @@ export function verifySessionToken(
     return {
       role: parsed.role,
       studentId: parsed.studentId,
+      email: typeof parsed.email === 'string' ? parsed.email : undefined,
+      authMethod: parsed.authMethod,
       exp: parsed.exp,
     };
   } catch {
@@ -173,7 +205,7 @@ export function requireStudentOrAdmin(
   next: NextFunction
 ): void {
   if (!req.auth) {
-    res.status(401).json({ error: 'Authentication required. Please enter your PIN.' });
+    res.status(401).json({ error: 'Authentication required. Please sign in.' });
     return;
   }
   next();

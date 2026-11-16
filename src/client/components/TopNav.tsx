@@ -83,6 +83,56 @@ export function TopNav({ currentPath, onNavigate, onPrimaryAction, primaryLabel 
           </button>
         </div>
       </div>
+
+      {/* Mobile navigation strip */}
+      <nav
+        className="md:hidden border-t border-[var(--border-hairline)] px-4 py-2 flex items-center justify-around gap-3 bg-[var(--bg-surface)]"
+        aria-label="Mobile navigation"
+      >
+        <a
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigate('/');
+          }}
+          className={linkClass(currentPath === '/')}
+        >
+          Practice
+        </a>
+        <a
+          href="/#mock-simulator"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigate('/');
+            setTimeout(() => {
+              document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth' });
+            }, 50);
+          }}
+          className={linkClass(false)}
+        >
+          Mock Tests
+        </a>
+        <a
+          href="/progress"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigate('/progress');
+          }}
+          className={linkClass(currentPath.startsWith('/progress'))}
+        >
+          Progress
+        </a>
+        <a
+          href="/admin"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigate('/admin');
+          }}
+          className={linkClass(currentPath.startsWith('/admin'))}
+        >
+          Admin
+        </a>
+      </nav>
     </header>
   );
 }

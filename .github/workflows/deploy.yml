@@ -1,0 +1,58 @@
+name: Selective Lab CI & Manual Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Deploy target (none = CI only, staging_or_prod = deploy Cloud Run + Hosting)'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - staging_or_prod
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run lint:rules
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_target == 'staging_or_prod'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: npm ci && npm run build
+      - name: Deploy Node API to Cloud Run
+        run: |
+          gcloud run deploy selective-lab-api \
+            --source . \
+            --region australia-southeast1 \
+            --project inductive-setting-553bd \
+            --allow-unauthenticated \
+            --port 3000 \
+            --set-env-vars "NODE_ENV=production,FIREBASE_USE_ADC=true,USE_FIRESTORE_DB=true,FIREBASE_PROJECT_ID=inductive-setting-553bd,FIREBASE_DATABASE_ID=ai-studio-nswselectiveprac-b9b787e9-30e1-483b-b6a1-760d211f0835,FIREBASE_STORAGE_BUCKET=inductive-setting-553bd.firebasestorage.app"
+      - name: Deploy Firebase Hosting & Rules
+        run: npx firebase-tools deploy --project inductive-setting-553bd --only hosting,firestore,storage

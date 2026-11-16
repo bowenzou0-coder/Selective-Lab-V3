@@ -1,24 +1,13 @@
-# Selective Lab Firestore Security Specification (Phase 0)
+# Selective Lab Firestore & API Security Specification (V3)
 
-## 1. Data Invariants
-1. **Strict Account Isolation**: Every user document (`/users/{userId}` and subcollections `sessions`, `attempts`, `skill_states`, `question_memory`, `writing_submissions`) belongs strictly to the authenticated verified user whose `request.auth.uid == userId`, unless `isAdmin()`.
-2. **No Self-Assigned Admin Escalation**: Users creating `/users/{userId}` may only set `role: "student"` and cannot elevate `role` or write `/admins/{uid}`.
-3. **PII Isolation**: Email addresses live exclusively under `/users/{userId}/private/info` readable only by the owner or verified admin.
-4. **Master Gate Relational Sync**: Subcollections under `/users/{userId}/...` verify parent `/users/{userId}` existence on `get`, `create`, and `update` (and enforce `resource.data.userId == request.auth.uid` on `list` without `get()`/`exists()` reads).
-5. **Exam Integrity (Zero Answer-Key Leakage)**: Custom bank items with `correctAnswerKey` (`/bank_questions` and `/bank_stimuli`) are readable/writable strictly by verified admins (`isAdmin()`). Students cannot read `correctAnswerKey` from Firestore.
-6. **Terminal State Lock on Submitted Sessions**: Once `/users/{userId}/sessions/{sessionId}` transitions `status: "in_progress" -> "submitted"`, no subsequent student update can reopen or mutate scores or answers.
-7. **Server Timestamps & Strict Keys**: Every `create` requires `hasAll` + `hasOnly` with `createdAt == request.time`; every `update` uses `affectedKeys().hasOnly(...)`, preserves immutable IDs/`createdAt`, and sets `updatedAt == request.time`.
+## 1. Server-Authoritative Architecture
+- **Node/Express API as Sole Writer & Grader**: All mutations to bank content, `import_batches`, `media_assets`, `sessions`, `snapshots`, `attempts`, `skill_states`, `question_memory`, `question_evidence`, `writing_submissions`, `admin_configs`, and `question_flags` are performed exclusively by the authenticated Express server via Firebase Admin SDK.
+- **Zero Client Writes in `firestore.rules` & `storage.rules`**: Direct Firestore SDK and Cloud Storage SDK client writes (`create`, `update`, `delete`) are explicitly denied (`if false`).
+- **Pre-Submission Answer-Key Isolation**: `/bank_questions`, `/bank_stimuli`, `/import_batches`, `/media_assets`, and `/users/{uid}/sessions/{sessionId}/snapshots` have `allow read, write: if false;` on Firestore client rules. Students receive strictly stripped `StudentQuestionView` payloads during active exams and `MarkingResult` payloads only after authorized submission.
 
-## 2. The "Dirty Dozen" Adversarial Payloads (Expected: PERMISSION_DENIED)
-1. **Unverified email token** creating `/users/{uid}` -> denied by `request.auth.token.email_verified == true`.
-2. **Self-assigned privilege escalation** creating `/users/{uid}` with `{ role: "admin" }` -> denied by `data.role == 'student'`.
-3. **Shadow ghost field injection** creating session with `{ extraAdminFlag: true }` -> denied by `keys().hasOnly([...])`.
-4. **Cross-user session read/list** querying `/users/otherUid/sessions` -> denied by `resource.data.userId == request.auth.uid`.
-5. **Cross-user PII read** fetching `/users/otherUid/private/info` -> denied by `isOwner(userId)`.
-6. **Student reading answer keys** querying `/bank_questions` -> denied by `isAdmin()`.
-7. **Submitted session tampering** updating `/users/{uid}/sessions/{id}` when `existing().status == 'submitted'` -> denied by terminal state lock.
-8. **Score forgery during checkpoint** updating `correctSlots` during an `in_progress` checkpoint save -> denied by action `affectedKeys().hasOnly(['checkpoint', 'updatedAt'])`.
-9. **Spoofed timestamp** creating `/users/{uid}/attempts/{id}` with backdated `createdAt` (`!= request.time`) -> denied by temporal integrity rule.
-10. **ID poisoning** creating document with `sessionId` containing `../` or length > 128 chars -> denied by `isValidId()`.
-11. **Oversized essay / Denial-of-Wallet payload** writing `responseText.size() > 30000` -> denied by string boundary guard.
-12. **Student modifying LearningConfig or QC status** updating `/admin_configs/{id}` or `/bank_question_overrides/{id}` -> denied by `isAdmin()`.
+## 2. API Handler Authorization Invariants
+1. **Verified Identity & Trusted Role Derivation**: `/api/auth/firebase-login` verifies the Firebase ID token server-side (`getAdminAuth().verifyIdToken(..., true)`) and derives `role` strictly from `/admins/{uid}` or `BOOTSTRAPPED_ADMIN_EMAIL`.
+2. **Strict Session Ownership**: Every `/api/student/sessions/:id*` and `/api/student/writing/:submissionId/evaluate` endpoint verifies `ownerId === req.auth.studentId`, returning `403 Forbidden` on mismatch.
+3. **Immutable Snapshots & Optimistic Concurrency**: `PATCH /api/student/sessions/:id/checkpoint` requires matching `checkpointRevision`, returning `409 Conflict` with authoritative server state when a stale device saves.
+4. **Idempotent Atomic Finalization**: `POST /api/student/sessions/:id/submit` executes transactionally via `finalizeSessionAtomically` with deterministic attempt/writing IDs so retries return the original `submissionSummary` without double-counting mastery or memory.
+5. **Retired Browser Hydration**: `/api/sync/hydrate` returns `410 Gone`; legacy/canonical migrations run only via privileged admin tooling (`/api/admin/migrate/preflight`, `/api/admin/migrate/apply`, `/api/admin/restore`).

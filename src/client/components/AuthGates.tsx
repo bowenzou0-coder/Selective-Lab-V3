@@ -31,10 +31,12 @@ export function StudentPinGate({
   onAuthenticated,
   onGoogleAuthenticated,
   onGoAdmin,
+  localDevPinEnabled = true,
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onGoogleAuthenticated: (user: User) => Promise<void>;
   onGoAdmin: () => void;
+  localDevPinEnabled?: boolean;
 }) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -96,46 +98,56 @@ export function StudentPinGate({
           <span>{googleLoading ? 'Syncing with Google...' : 'Sign in with Google'}</span>
         </button>
 
-        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
-          <div className="flex-1 h-px bg-[var(--border-hairline)]" />
-          <span>or local student pin</span>
-          <div className="flex-1 h-px bg-[var(--border-hairline)]" />
-        </div>
+        {!localDevPinEnabled && error && (
+          <p role="alert" className="mt-4 text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+            {error}
+          </p>
+        )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="student-pin-input" className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">
-              Student PIN
-            </label>
-            <input
-              id="student-pin-input"
-              type="password"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="Enter PIN (default: 1234)"
-              className="w-full px-3.5 py-2.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-primary)] tabular-nums text-base focus:outline-none focus:border-[var(--accent-primary)]"
-            />
-          </div>
+        {localDevPinEnabled && (
+          <>
+            <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
+              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
+              <span>or local dev student pin</span>
+              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
+            </div>
 
-          {error && (
-            <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
-              {error}
-            </p>
-          )}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="student-pin-input" className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">
+                  Student PIN
+                </label>
+                <input
+                  id="student-pin-input"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  placeholder="Enter PIN (default: 1234)"
+                  className="w-full px-3.5 py-2.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-primary)] tabular-nums text-base focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+              </div>
 
-          <button
-            type="submit"
-            disabled={loading || googleLoading}
-            className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
-          >
-            {loading ? 'Verifying...' : 'Unlock with Student PIN'}
-          </button>
-        </form>
+              {error && (
+                <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || googleLoading}
+                className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
+              >
+                {loading ? 'Verifying...' : 'Unlock with Student PIN'}
+              </button>
+            </form>
+          </>
+        )}
 
         <div className="mt-6 pt-4 border-t border-[var(--border-hairline)] flex items-center justify-between text-xs text-[var(--text-muted)]">
-          <span>Cross-device cloud sync enabled</span>
+          <span>Server-authoritative sync</span>
           <button
             type="button"
             onClick={onGoAdmin}
@@ -153,10 +165,12 @@ export function AdminPasswordGate({
   onAuthenticated,
   onGoogleAuthenticated,
   onBackHome,
+  localDevPinEnabled = true,
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onGoogleAuthenticated: (user: User) => Promise<void>;
   onBackHome: () => void;
+  localDevPinEnabled?: boolean;
 }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -203,7 +217,7 @@ export function AdminPasswordGate({
         </div>
         <h1 className="text-xl font-bold text-[var(--text-primary)] mb-2">Admin Sign In</h1>
         <p className="text-sm text-[var(--text-secondary)] mb-6">
-          Authenticate to access the Calibration Simulator, Question QC, Manifest Importer, and Config Versioning.
+          Authenticate with an authorized Admin Google account to access the Question Browser, Calibration Simulator, Manifest Importer, and Config Versioning.
         </p>
 
         <button
@@ -216,50 +230,71 @@ export function AdminPasswordGate({
           <span>{googleLoading ? 'Syncing with Google...' : 'Sign in with Admin Google'}</span>
         </button>
 
-        <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
-          <div className="flex-1 h-px bg-[var(--border-hairline)]" />
-          <span>or admin password</span>
-          <div className="flex-1 h-px bg-[var(--border-hairline)]" />
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="admin-password-input" className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">
-              Admin Password
-            </label>
-            <input
-              id="admin-password-input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter admin password"
-              className="w-full px-3.5 py-2.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
-            />
-          </div>
-
-          {error && (
-            <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
-              {error}
-            </p>
-          )}
-
-          <div className="flex items-center gap-3">
-            <button
-              type="submit"
-              disabled={loading || googleLoading}
-              className="flex-1 py-2.5 px-4 rounded-[var(--radius-sm)] bg-[var(--text-primary)] hover:opacity-90 text-white font-semibold text-sm transition-opacity disabled:opacity-60 cursor-pointer"
-            >
-              {loading ? 'Signing in...' : 'Open Admin Console'}
-            </button>
+        {!localDevPinEnabled && (
+          <div className="mt-4 space-y-3">
+            {error && (
+              <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+                {error}
+              </p>
+            )}
             <button
               type="button"
               onClick={onBackHome}
-              className="py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               Back
             </button>
           </div>
-        </form>
+        )}
+
+        {localDevPinEnabled && (
+          <>
+            <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
+              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
+              <span>or local dev admin password</span>
+              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="admin-password-input" className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">
+                  Admin Password
+                </label>
+                <input
+                  id="admin-password-input"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter admin password"
+                  className="w-full px-3.5 py-2.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+              </div>
+
+              {error && (
+                <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+                  {error}
+                </p>
+              )}
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={loading || googleLoading}
+                  className="flex-1 py-2.5 px-4 rounded-[var(--radius-sm)] bg-[var(--text-primary)] hover:opacity-90 text-white font-semibold text-sm transition-opacity disabled:opacity-60 cursor-pointer"
+                >
+                  {loading ? 'Signing in...' : 'Open Admin Console'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onBackHome}
+                  className="py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  Back
+                </button>
+              </div>
+            </form>
+          </>
+        )}
       </div>
     </main>
   );

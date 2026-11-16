@@ -1,15 +1,17 @@
 import type {
   BankImportManifest,
+  BankMasterySummary,
+  ImportBatchRecord,
   LearningConfig,
   MarkingResult,
+  MediaAssetRecord,
   MockTestBatch,
-  PartAttemptRecord,
   QuestionFlagRecord,
   QuestionItem,
-  QuestionMemoryState,
   SectionCode,
   SessionMode,
   SessionRecord,
+  SessionSubmissionPayload,
   SkillState,
   StimulusGroup,
   StudentQuestionView,
@@ -17,24 +19,24 @@ import type {
   WritingDeterministicMetrics,
   WritingEvaluationRecord,
 } from '../shared/contracts';
-import {
-  pushConfigVersionToFirestore,
-  pushFlagToFirestore,
-  pushManifestToFirestore,
-  pushQuestionOverrideToFirestore,
-  pushSessionCheckpointToFirestore,
-  pushSessionCreateToFirestore,
-  pushSubmissionToFirestore,
-  pushWritingEvaluationsToFirestore,
-  resolveFlagInFirestore,
-  type SyncHydratePayload,
-} from './firestoreSync';
 
 export interface AuthState {
   authenticated: boolean;
   role: 'student' | 'admin' | null;
   studentId: string | null;
+  email?: string;
   activeSessionId?: string | null;
+  backendName?: string;
+  isDisposableDemo?: boolean;
+  localDevPinEnabled?: boolean;
+}
+
+export interface HealthResponse {
+  ok: boolean;
+  backendName: string;
+  isDisposableDemo: boolean;
+  emulatorActive: boolean;
+  localDevPinEnabled: boolean;
 }
 
 export interface DashboardResponse {
@@ -91,6 +93,7 @@ export interface ProgressResponse {
     evaluations: WritingEvaluationRecord[];
   }[];
   totalAttempts: number;
+  masterySummary: BankMasterySummary;
 }
 
 export interface AdminStatusResponse {
@@ -105,6 +108,61 @@ export interface AdminStatusResponse {
   leakedCount: number;
   openFlagsCount: number;
   activeConfigVersion: number;
+  batchesCount?: number;
+}
+
+export interface PaginatedQuestionsResponse {
+  questions: QuestionItem[];
+  stimuliById: Record<string, StimulusGroup>;
+  totalMatching: number;
+  page: number;
+  pageSize: number;
+  openFlagsByQuestionId: Record<string, number>;
+  batches: ImportBatchRecord[];
+}
+
+export interface RestoreReport {
+  valid: boolean;
+  dryRun: boolean;
+  checksumVerified: boolean;
+  errors: string[];
+  warnings: string[];
+  wouldCreate: Record<string, number>;
+  wouldSkipExisting: Record<string, number>;
+  applied: Record<string, number>;
+}
+
+export interface MediaMigrationManifest {
+  generatedAtIso: string;
+  uploadsDir: string;
+  totalLocalFiles: number;
+  totalReferencedUploadUrls: number;
+  missingFilesCount: number;
+  needsUploadCount: number;
+  alreadyGcsCount: number;
+  items: {
+    sourcePath: string;
+    referencedByIds: string[];
+    existsLocally: boolean;
+    sizeBytes?: number;
+    sha256?: string;
+    suggestedObjectKey: string;
+    status: 'needs_upload' | 'missing_file' | 'already_gcs';
+  }[];
+}
+
+export interface MigrationPreflightReport {
+  checkedAtIso: string;
+  backendName: string;
+  totalQuestions: number;
+  totalSessions: number;
+  totalPartAttempts: number;
+  sessionsMissingSnapshots: number;
+  attemptsMissingEvidenceRevision: number;
+  questionsMissingEvidenceRevision: number;
+  legacyUntaggedAttempts: number;
+  mediaNeedsUploadCount: number;
+  mediaMissingFilesCount: number;
 }
 
 const TOKEN_STORAGE_KEY = 'selective_lab_auth_token';
@@ -119,7 +177,7 @@ function getStoredToken(): string | null {
       return val;
     }
   } catch {
-    // ignore storage errors in restricted iframes
+    // ignore storage errors
   }
   return null;
 }
@@ -133,9 +191,16 @@ function setStoredToken(token: string | null): void {
       window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   } catch {
-    // ignore storage errors in restricted iframes
+    // ignore storage errors
   }
 }
+
+export type ApiError = Error & {
+  status?: number;
+  activeSessionId?: string;
+  currentRevision?: number;
+  serverCheckpoint?: SessionRecord['checkpoint'];
+};
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getStoredToken();
@@ -162,13 +227,17 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       setStoredToken(null);
       window.dispatchEvent(new CustomEvent('nsw-auth-expired'));
     }
-    const payload = data as { error?: string; activeSessionId?: string };
-    const err = new Error(payload?.error || `Request failed (${res.status})`) as Error & {
+    const payload = data as {
+      error?: string;
       activeSessionId?: string;
+      currentRevision?: number;
+      serverCheckpoint?: SessionRecord['checkpoint'];
     };
-    if (payload?.activeSessionId) {
-      err.activeSessionId = payload.activeSessionId;
-    }
+    const err = new Error(payload?.error || `Request failed (${res.status})`) as ApiError;
+    err.status = res.status;
+    if (payload?.activeSessionId) err.activeSessionId = payload.activeSessionId;
+    if (typeof payload?.currentRevision === 'number') err.currentRevision = payload.currentRevision;
+    if (payload?.serverCheckpoint) err.serverCheckpoint = payload.serverCheckpoint;
     throw err;
   }
   return data as T;
@@ -195,6 +264,7 @@ async function downloadFile(url: string, fallbackFilename: string): Promise<void
 }
 
 export const api = {
+  getHealth: () => request<HealthResponse>('/api/health'),
   getMe: () => request<AuthState>('/api/auth/me'),
   studentLogin: async (pin: string) => {
     const res = await request<AuthState & { token?: string }>('/api/auth/student-login', {
@@ -220,11 +290,6 @@ export const api = {
     if (res.token) setStoredToken(res.token);
     return res;
   },
-  hydrateSync: (payload: SyncHydratePayload) =>
-    request<{ ok: boolean; activeSessionId: string | null }>('/api/sync/hydrate', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
   logout: async () => {
     setStoredToken(null);
     return request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
@@ -232,130 +297,125 @@ export const api = {
   downloadFile,
 
   getDashboard: () => request<DashboardResponse>('/api/student/dashboard'),
-  createSession: async (payload: {
+  createSession: (payload: {
     mode: SessionMode;
     sectionFilter?: SectionCode;
     mockBatch?: MockTestBatch;
     timeMultiplier?: number;
     customTimeLimitSec?: number;
-  }) => {
-    const res = await request<{ sessionId: string; session: SessionRecord }>('/api/student/sessions', {
+  }) =>
+    request<{ sessionId: string; session: SessionRecord }>('/api/student/sessions', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
-    await pushSessionCreateToFirestore(res.session).catch(() => undefined);
-    return res;
-  },
-  getSession: (id: string) => request<SessionDetailResponse>(`/api/student/sessions/${encodeURIComponent(id)}`),
-  saveCheckpoint: async (id: string, checkpoint: NonNullable<SessionRecord['checkpoint']>) => {
-    const res = await request<{ ok: boolean }>(`/api/student/sessions/${encodeURIComponent(id)}/checkpoint`, {
-      method: 'PATCH',
-      body: JSON.stringify({ checkpoint }),
-    });
-    await pushSessionCheckpointToFirestore(id, checkpoint).catch(() => undefined);
-    return res;
-  },
-  submitSession: async (id: string, checkpoint?: SessionRecord['checkpoint']) => {
-    const res = await request<{
-      ok: boolean;
-      correctSlots: number;
-      totalSlots: number;
-      completedAt: string;
-      checkpoint: NonNullable<SessionRecord['checkpoint']>;
-      attempts?: PartAttemptRecord[];
-      skillStates?: SkillState[];
-      questionMemory?: QuestionMemoryState[];
-      writingSubmission?: {
-        submissionId: string;
-        sessionId: string;
-        questionId: string;
-        planNotes: string;
-        responseText: string;
-        wordCount: number;
-        timeSpentSec: number;
-        deterministicMetricsJson: string;
-        submittedAt: string;
-        evaluations: WritingEvaluationRecord[];
-      };
-      reviewResults: Record<string, MarkingResult[]>;
-      writingReview: SessionDetailResponse['writingReview'];
-    }>(`/api/student/sessions/${encodeURIComponent(id)}/submit`, {
-      method: 'POST',
-      body: JSON.stringify({ checkpoint }),
-    });
-    await pushSubmissionToFirestore({
-      sessionId: id,
-      checkpoint: res.checkpoint,
-      correctSlots: res.correctSlots,
-      totalSlots: res.totalSlots,
-      completedAt: res.completedAt,
-      attempts: res.attempts,
-      skillStates: res.skillStates,
-      questionMemory: res.questionMemory,
-      writingSubmission: res.writingSubmission,
-    }).catch(() => undefined);
-    return res;
-  },
-  evaluateWriting: async (submissionId: string) => {
-    const res = await request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
+    }),
+  getSession: (id: string) =>
+    request<SessionDetailResponse>(`/api/student/sessions/${encodeURIComponent(id)}`),
+  saveCheckpoint: (
+    id: string,
+    checkpoint: NonNullable<SessionRecord['checkpoint']>,
+    expectedRevision?: number
+  ) =>
+    request<{ ok: boolean; revision: number }>(
+      `/api/student/sessions/${encodeURIComponent(id)}/checkpoint`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ checkpoint, expectedRevision }),
+      }
+    ),
+  submitSession: (
+    id: string,
+    checkpoint?: SessionRecord['checkpoint'],
+    assisted?: boolean
+  ) =>
+    request<SessionSubmissionPayload & { alreadySubmitted?: boolean }>(
+      `/api/student/sessions/${encodeURIComponent(id)}/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ checkpoint, assisted }),
+      }
+    ),
+  evaluateWriting: (submissionId: string) =>
+    request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
       `/api/student/writing/${encodeURIComponent(submissionId)}/evaluate`,
       { method: 'POST' }
-    );
-    await pushWritingEvaluationsToFirestore(
-      submissionId,
-      res.evaluations || [res.evaluation]
-    ).catch(() => undefined);
-    return res;
-  },
-  flagQuestion: async (payload: { questionId: string; sessionId: string; reason: string; notes?: string }) => {
-    const res = await request<{ flag: QuestionFlagRecord }>('/api/student/flags', {
+    ),
+  flagQuestion: (payload: { questionId: string; sessionId: string; reason: string; notes?: string }) =>
+    request<{ flag: QuestionFlagRecord }>('/api/student/flags', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
-    await pushFlagToFirestore(res.flag).catch(() => undefined);
-    return res;
-  },
+    }),
   getProgress: () => request<ProgressResponse>('/api/student/progress'),
 
   // Admin APIs
   getAdminStatus: () => request<AdminStatusResponse>('/api/admin/status'),
-  getAdminQuestions: (params?: { section?: string; poolType?: string; qcStatus?: string }) => {
+  getAdminQuestions: (params?: {
+    search?: string;
+    section?: string;
+    poolType?: string;
+    qcStatus?: string;
+    formatType?: string;
+    batchId?: string;
+    batchTag?: string;
+    skillId?: string;
+    includeHistorical?: boolean;
+    flaggedOnly?: boolean;
+    missingVisual?: boolean;
+    missingExplanation?: boolean;
+    sort?: 'id_asc' | 'updated_desc' | 'version_desc';
+    page?: number;
+    pageSize?: number;
+  }) => {
     const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
     if (params?.section) qs.set('section', params.section);
     if (params?.poolType) qs.set('poolType', params.poolType);
     if (params?.qcStatus) qs.set('qcStatus', params.qcStatus);
+    if (params?.formatType) qs.set('formatType', params.formatType);
+    if (params?.batchId) qs.set('batchId', params.batchId);
+    if (params?.batchTag) qs.set('batchTag', params.batchTag);
+    if (params?.skillId) qs.set('skillId', params.skillId);
+    if (params?.includeHistorical) qs.set('includeHistorical', 'true');
+    if (params?.flaggedOnly) qs.set('flaggedOnly', 'true');
+    if (params?.missingVisual) qs.set('missingVisual', 'true');
+    if (params?.missingExplanation) qs.set('missingExplanation', 'true');
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    return request<{ questions: QuestionItem[]; stimuliById: Record<string, StimulusGroup> }>(
-      `/api/admin/questions${suffix}`
-    );
+    return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`);
   },
-  updateQuestionStatus: async (questionId: string, qcStatus: QuestionItem['qcStatus']) => {
-    const res = await request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
+  getQuestionVersions: (questionId: string) =>
+    request<{
+      questionFamilyId: string;
+      versions: { question: QuestionItem; stimulus?: StimulusGroup }[];
+    }>(`/api/admin/questions/${encodeURIComponent(questionId)}/versions`),
+  getImportBatches: () => request<{ batches: ImportBatchRecord[] }>('/api/admin/batches'),
+  updateQuestionStatus: (questionId: string, qcStatus: QuestionItem['qcStatus']) =>
+    request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ qcStatus }),
-    });
-    await pushQuestionOverrideToFirestore(questionId, qcStatus).catch(() => undefined);
-    return res;
-  },
-  attachQuestionVisual: async (
+    }),
+  attachQuestionVisual: (
     questionId: string,
     payload: { altText: string; caption?: string; imageBase64?: string; filename?: string; visual?: VisualSpec }
-  ) => {
-    const res = await request<{ ok: boolean; visual: VisualSpec; qcStatus?: QuestionItem['qcStatus'] }>(
+  ) =>
+    request<{ ok: boolean; visual: VisualSpec; qcStatus?: QuestionItem['qcStatus'] }>(
       `/api/admin/questions/${encodeURIComponent(questionId)}/visual`,
       {
         method: 'POST',
         body: JSON.stringify(payload),
       }
-    );
-    await pushQuestionOverrideToFirestore(
-      questionId,
-      res.qcStatus || 'active',
-      res.visual
-    ).catch(() => undefined);
-    return res;
-  },
-  createCalibrationSession: async (payload: {
+    ),
+  uploadMedia: (payload: { filename: string; imageBase64: string; questionId?: string }) =>
+    request<{ ok: boolean; asset: MediaAssetRecord }>('/api/admin/media/upload', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getMediaMigrationManifest: () =>
+    request<{ manifest: MediaMigrationManifest }>('/api/admin/media/migration-manifest'),
+  createCalibrationSession: (payload: {
+    questionIds?: string[];
+    items?: { questionId: string }[];
     section?: string;
     poolType?: string;
     qcStatus?: string;
@@ -363,20 +423,19 @@ export const api = {
     skillFamily?: string;
     skillId?: string;
     batch?: string;
+    batchId?: string;
+    includeHistorical?: boolean;
     limit?: number;
     customTimeLimitSec?: number;
     isSandbox?: boolean;
-  }) => {
-    const res = await request<{ sessionId: string; count: number; session: SessionRecord }>(
+  }) =>
+    request<{ sessionId: string; count: number; session: SessionRecord }>(
       '/api/admin/calibration/session',
       {
         method: 'POST',
         body: JSON.stringify(payload),
       }
-    );
-    await pushSessionCreateToFirestore(res.session).catch(() => undefined);
-    return res;
-  },
+    ),
   getCalibrationInspector: (sessionId: string) =>
     request<{ inspectorByQuestionId: Record<string, QuestionItem> }>(
       `/api/admin/calibration/session/${encodeURIComponent(sessionId)}`
@@ -398,27 +457,30 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ manifest }),
     }),
-  commitManifest: async (manifest: BankImportManifest) => {
-    const res = await request<{
+  commitManifest: (manifest: BankImportManifest) =>
+    request<{
       ok: boolean;
       result: { imported: number; skipped: number; versionBumped: number };
-      manifest?: BankImportManifest;
+      batch?: ImportBatchRecord;
     }>('/api/admin/import/commit', {
       method: 'POST',
       body: JSON.stringify({ manifest }),
-    });
-    await pushManifestToFirestore(res.manifest || manifest).catch(() => undefined);
-    return res;
-  },
+    }),
   getImportSchema: () =>
     request<{ schema: unknown; starterExample: unknown }>('/api/admin/import/schema'),
   getAdminConfig: () =>
     request<{
       active: { configVersionId: string; versionNumber: number; config: LearningConfig };
-      history: { configVersionId: string; versionNumber: number; notes?: string; createdAt: string; config: LearningConfig }[];
+      history: {
+        configVersionId: string;
+        versionNumber: number;
+        notes?: string;
+        createdAt: string;
+        config: LearningConfig;
+      }[];
     }>('/api/admin/config'),
-  saveAdminConfig: async (config: LearningConfig, notes?: string) => {
-    const res = await request<{
+  saveAdminConfig: (config: LearningConfig, notes?: string) =>
+    request<{
       ok: boolean;
       configVersionId: string;
       versionNumber: number;
@@ -428,22 +490,25 @@ export const api = {
     }>('/api/admin/config', {
       method: 'POST',
       body: JSON.stringify({ config, notes }),
-    });
-    await pushConfigVersionToFirestore({
-      configVersionId: res.configVersionId,
-      versionNumber: res.versionNumber,
-      notes: res.notes ?? notes,
-      config: res.config || config,
-      createdAtIso: res.createdAtIso || new Date().toISOString(),
-    }).catch(() => undefined);
-    return res;
-  },
+    }),
   getAdminFlags: () => request<{ flags: QuestionFlagRecord[] }>('/api/admin/flags'),
-  resolveFlag: async (flagId: string) => {
-    const res = await request<{ ok: boolean }>(`/api/admin/flags/${encodeURIComponent(flagId)}/resolve`, {
+  resolveFlag: (flagId: string) =>
+    request<{ ok: boolean }>(`/api/admin/flags/${encodeURIComponent(flagId)}/resolve`, {
       method: 'POST',
-    });
-    await resolveFlagInFirestore(flagId).catch(() => undefined);
-    return res;
-  },
+    }),
+  restoreBackup: (backup: unknown, dryRun = true) =>
+    request<{ ok: boolean; report: RestoreReport }>('/api/admin/restore', {
+      method: 'POST',
+      body: JSON.stringify({ backup, dryRun }),
+    }),
+  getMigrationPreflight: () =>
+    request<{ report: MigrationPreflightReport }>('/api/admin/migrate/preflight'),
+  applyMigration: (payload: unknown, dryRun = true, studentId?: string) =>
+    request<{ ok: boolean; mode: string; report?: RestoreReport; counts?: Record<string, number> }>(
+      '/api/admin/migrate/apply',
+      {
+        method: 'POST',
+        body: JSON.stringify({ payload, dryRun, studentId }),
+      }
+    ),
 };

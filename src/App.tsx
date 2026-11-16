@@ -1,24 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import { api, type AuthState } from './client/api';
+import { api, type AuthState, type HealthResponse } from './client/api';
 import { AdminView } from './client/components/AdminView';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
 import { HomeView } from './client/components/HomeView';
 import { ProgressView } from './client/components/ProgressView';
 import { SessionPlayerView } from './client/components/SessionPlayerView';
 import { TopNav } from './client/components/TopNav';
-import { ensureUserDocuments, pullFirestoreSyncState } from './client/firestoreSync';
 import { auth as firebaseAuth } from './lib/firebase';
-
-const BOOTSTRAPPED_ADMIN_EMAIL = 'bowenzou0@gmail.com';
 
 export default function App() {
   const [path, setPath] = useState<string>(() => window.location.pathname || '/');
   const [auth, setAuth] = useState<AuthState | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const inFlightSyncRef = useRef<Map<string, Promise<AuthState>>>(new Map());
 
   useEffect(() => {
+    api.getHealth().then(setHealth).catch(() => undefined);
     const onPopState = () => {
       setPath(window.location.pathname || '/');
     };
@@ -31,19 +30,10 @@ export default function App() {
     if (existing) return existing;
 
     const task = (async () => {
-      const isAdmin =
-        (user.email || '').toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
-      await ensureUserDocuments(user, isAdmin);
       const idToken = await user.getIdToken();
       const loginState = await api.firebaseLogin(idToken);
-      const syncPayload = await pullFirestoreSyncState(user.uid, loginState.role === 'admin');
-      const hydrated = await api.hydrateSync(syncPayload);
-      const mergedAuth: AuthState = {
-        ...loginState,
-        activeSessionId: hydrated.activeSessionId ?? loginState.activeSessionId ?? null,
-      };
-      setAuth(mergedAuth);
-      return mergedAuth;
+      setAuth(loginState);
+      return loginState;
     })().finally(() => {
       inFlightSyncRef.current.delete(user.uid);
     });
@@ -60,7 +50,7 @@ export default function App() {
         try {
           await syncFirebaseUser(user);
         } catch (err) {
-          console.error('Firebase session sync failed:', err);
+          console.error('Firebase session auth failed:', err);
           const fallback = await api.getMe().catch(() => ({
             authenticated: false,
             role: null,
@@ -97,10 +87,12 @@ export default function App() {
   }, [syncFirebaseUser]);
 
   const navigate = useCallback((nextPath: string) => {
-    if (window.location.pathname !== nextPath) {
-      window.history.pushState({}, '', nextPath);
+    const nextUrl = nextPath.startsWith('/') ? nextPath : `/${nextPath}`;
+    const [pathnameOnly] = nextUrl.split('?');
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState({}, '', nextUrl);
     }
-    setPath(nextPath);
+    setPath(pathnameOnly || '/');
     window.scrollTo({ top: 0, behavior: 'auto' });
   }, []);
 
@@ -134,30 +126,50 @@ export default function App() {
     );
   }
 
+  const localDevPinEnabled = auth?.localDevPinEnabled ?? health?.localDevPinEnabled ?? true;
+  const isDisposableDemo = Boolean(auth?.isDisposableDemo || health?.isDisposableDemo);
+
   const isAdminRoute = path.startsWith('/admin');
   const sessionMatch = path.match(/^\/session\/([^/]+)$/);
+
+  const demoBanner = isDisposableDemo ? (
+    <div
+      role="status"
+      className="w-full bg-[var(--status-warn-bg)] border-b border-[var(--status-warn)]/30 px-4 py-1.5 text-center text-xs font-medium text-[var(--status-warn)]"
+    >
+      Disposable In-Memory Preview Mode ({health?.backendName || auth?.backendName || 'memory_preview'}) — data resets on server restart. Configure Firestore or Emulator for persistent storage.
+    </div>
+  ) : null;
 
   // Gate unauthenticated visitors
   if (!auth?.authenticated) {
     if (isAdminRoute) {
       return (
-        <AdminPasswordGate
+        <>
+          {demoBanner}
+          <AdminPasswordGate
+            localDevPinEnabled={localDevPinEnabled}
+            onAuthenticated={(next) => setAuth(next)}
+            onGoogleAuthenticated={async (user) => {
+              await syncFirebaseUser(user);
+            }}
+            onBackHome={() => navigate('/')}
+          />
+        </>
+      );
+    }
+    return (
+      <>
+        {demoBanner}
+        <StudentPinGate
+          localDevPinEnabled={localDevPinEnabled}
           onAuthenticated={(next) => setAuth(next)}
           onGoogleAuthenticated={async (user) => {
             await syncFirebaseUser(user);
           }}
-          onBackHome={() => navigate('/')}
+          onGoAdmin={() => navigate('/admin')}
         />
-      );
-    }
-    return (
-      <StudentPinGate
-        onAuthenticated={(next) => setAuth(next)}
-        onGoogleAuthenticated={async (user) => {
-          await syncFirebaseUser(user);
-        }}
-        onGoAdmin={() => navigate('/admin')}
-      />
+      </>
     );
   }
 
@@ -165,6 +177,7 @@ export default function App() {
   if (isAdminRoute && auth.role !== 'admin') {
     return (
       <div className="min-h-screen bg-[var(--bg-canvas)]">
+        {demoBanner}
         <TopNav
           currentPath={path}
           onNavigate={navigate}
@@ -172,6 +185,7 @@ export default function App() {
           primaryLabel="Sign Out"
         />
         <AdminPasswordGate
+          localDevPinEnabled={localDevPinEnabled}
           onAuthenticated={(next) => setAuth(next)}
           onGoogleAuthenticated={async (user) => {
             const nextAuth = await syncFirebaseUser(user);
@@ -187,19 +201,24 @@ export default function App() {
 
   if (sessionMatch) {
     return (
-      <SessionPlayerView
-        sessionId={decodeURIComponent(sessionMatch[1])}
-        isAdmin={auth.role === 'admin'}
-        onNavigate={navigate}
-        onActiveSessionCleared={() =>
-          setAuth((prev) => (prev ? { ...prev, activeSessionId: null } : prev))
-        }
-      />
+      <>
+        {demoBanner}
+        <SessionPlayerView
+          sessionId={decodeURIComponent(sessionMatch[1])}
+          studentId={auth.studentId || 'default-student'}
+          isAdmin={auth.role === 'admin'}
+          onNavigate={navigate}
+          onActiveSessionCleared={() =>
+            setAuth((prev) => (prev ? { ...prev, activeSessionId: null } : prev))
+          }
+        />
+      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)]">
+      {demoBanner}
       <TopNav
         currentPath={path}
         onNavigate={navigate}
