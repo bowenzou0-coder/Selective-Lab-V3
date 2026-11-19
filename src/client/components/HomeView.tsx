@@ -316,7 +316,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
               </div>
               <span className="text-[11px] text-[var(--text-muted)] font-medium">
                 {focusPlan.source === 'gemini'
-                  ? `AI-prioritised · ${focusPlan.modelId || 'gemini-4-hydrogen'}`
+                  ? `AI-prioritised${focusPlan.modelId ? ` · ${focusPlan.modelId}` : ''}`
                   : 'Deterministic adaptive plan'}
               </span>
             </div>
@@ -511,7 +511,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                 </div>
                 <button
                   type="button"
-                  onClick={() => onOpenSession(s.sessionId)}
+                  onClick={() => onOpenSession(s.sessionId, s.status === 'in_progress')}
                   className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-sm)] border border-[var(--border-strong)] hover:bg-[var(--bg-surface)] text-[var(--text-primary)] cursor-pointer whitespace-nowrap shrink-0"
                 >
                   {s.status === 'submitted' ? 'Review' : 'Resume'}

@@ -8,13 +8,40 @@ import {
   XCircle,
 } from 'lucide-react';
 import { api, type SessionDetailResponse } from '../api';
-import type {
-  EvidenceCitationRef,
-  MarkingResult,
-  StudentQuestionView,
-  WritingDeterministicMetrics,
-  WritingEvaluationRecord,
+import {
+  WRITING_BAND_DESCRIPTORS,
+  WRITING_CRITERION_MAX_MARKS,
+  type EvidenceCitationRef,
+  type MarkingResult,
+  type StudentQuestionView,
+  type WritingBandLetter,
+  type WritingDeterministicMetrics,
+  type WritingEvaluationRecord,
 } from '../../shared/contracts';
+
+function legacyEstimateToBand(est: WritingEvaluationRecord['overallBandEstimate']): WritingBandLetter {
+  if (est === 'top_band') return 'A';
+  if (est === 'strong') return 'B';
+  if (est === 'solid') return 'C';
+  return 'D';
+}
+
+function scoreToBand(score: number): WritingBandLetter {
+  const s = Math.round(score);
+  if (s >= 5) return 'A';
+  if (s === 4) return 'B';
+  if (s === 3) return 'C';
+  if (s === 2) return 'D';
+  return 'E';
+}
+
+function bandBadgeClass(band: WritingBandLetter): string {
+  if (band === 'A') return 'bg-[var(--status-success-bg)] text-[var(--status-success)] border-[var(--status-success)]/40';
+  if (band === 'B') return 'bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]/40';
+  if (band === 'C') return 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-strong)]';
+  if (band === 'D') return 'bg-[var(--status-warn-bg)] text-[var(--status-warn)] border-[var(--status-warn)]/40';
+  return 'bg-[var(--status-error-bg)] text-[var(--status-error)] border-[var(--status-error)]/40';
+}
 import { SKILLS_TAXONOMY } from '../../shared/skills';
 import { QuestionWorkspace } from './QuestionWorkspace';
 
@@ -172,63 +199,100 @@ export function PostSubmissionReview({
     }
   };
 
-  const renderEvaluationCard = (ev: WritingEvaluationRecord) => (
-    <div
-      key={ev.evaluationId}
-      className="mt-4 p-5 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-4"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm font-bold text-[var(--text-primary)]">
-          Gemini Writing Assessment{ev.modelId ? ` (${ev.modelId})` : ''} · Band:{' '}
-          <span className="text-[var(--accent-primary)]">
-            {ev.overallBandEstimate.replace('_', ' ')}
-          </span>
-        </div>
-        <div className="text-xs font-medium text-[var(--text-secondary)]">
-          Topic adherence: {ev.topicAdherencePass ? 'Passed' : 'Needs attention'}
-        </div>
-      </div>
+  const renderEvaluationCard = (ev: WritingEvaluationRecord) => {
+    const totalMarks =
+      ev.totalMarks ?? ev.criteriaScores.reduce((sum, c) => sum + Math.round(c.score), 0);
+    const maxTotalMarks =
+      ev.maxTotalMarks ?? ev.criteriaScores.length * WRITING_CRITERION_MAX_MARKS;
+    const overallBand = ev.overallBand ?? legacyEstimateToBand(ev.overallBandEstimate);
+    const bandDescriptor =
+      ev.overallBandDescriptor ?? WRITING_BAND_DESCRIPTORS[overallBand].label;
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {ev.criteriaScores.map((c) => (
-          <div
-            key={c.criterionSkillId}
-            className="p-3 rounded-[var(--radius-sm)] border border-[var(--border-hairline)] bg-[var(--bg-elevated)] space-y-1"
-          >
-            <div className="flex items-center justify-between text-xs font-semibold">
-              <span className="text-[var(--text-primary)]">
-                {SKILL_NAME_MAP.get(c.criterionSkillId) || c.criterionSkillId}
-              </span>
-              <span className="tabular-nums text-[var(--accent-primary)]">{c.score}/5</span>
+    return (
+      <div
+        key={ev.evaluationId}
+        className="mt-4 p-5 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] border text-xs font-bold ${bandBadgeClass(overallBand)}`}
+            >
+              Band {overallBand} · {totalMarks} / {maxTotalMarks} marks
+            </span>
+            <div className="text-sm font-bold text-[var(--text-primary)]">
+              {bandDescriptor}
             </div>
-            <p className="text-xs text-[var(--text-secondary)]">{c.comment}</p>
-            {c.evidenceQuote && (
-              <p className="text-xs italic text-[var(--text-muted)]">&ldquo;{c.evidenceQuote}&rdquo;</p>
+            {ev.modelId && (
+              <span className="text-xs text-[var(--text-muted)]">({ev.modelId})</span>
             )}
           </div>
-        ))}
-      </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
+            {ev.bandCappedByTopicAdherence && (
+              <span className="px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--status-warn-bg)] text-[var(--status-warn)] font-semibold">
+                Capped at Band C (off-topic)
+              </span>
+            )}
+            <span className="text-[var(--text-secondary)]">
+              Topic adherence: {ev.topicAdherencePass ? 'Passed' : 'Needs attention'}
+            </span>
+          </div>
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-        <div>
-          <div className="font-semibold text-[var(--status-success)] mb-1">Top Strengths</div>
-          <ul className="list-disc pl-4 space-y-1 text-[var(--text-primary)]">
-            {ev.topStrengths.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ul>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {ev.criteriaScores.map((c) => {
+            const cBand = c.band ?? scoreToBand(c.score);
+            const cMax = c.maxMarks ?? WRITING_CRITERION_MAX_MARKS;
+            return (
+              <div
+                key={c.criterionSkillId}
+                className="p-3 rounded-[var(--radius-sm)] border border-[var(--border-hairline)] bg-[var(--bg-elevated)] space-y-1"
+              >
+                <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                  <span className="text-[var(--text-primary)]">
+                    {SKILL_NAME_MAP.get(c.criterionSkillId) || c.criterionSkillId}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 shrink-0">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${bandBadgeClass(cBand)}`}
+                    >
+                      Band {cBand}
+                    </span>
+                    <span className="tabular-nums text-[var(--accent-primary)]">
+                      {c.score}/{cMax}
+                    </span>
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--text-secondary)]">{c.comment}</p>
+                {c.evidenceQuote && (
+                  <p className="text-xs italic text-[var(--text-muted)]">&ldquo;{c.evidenceQuote}&rdquo;</p>
+                )}
+              </div>
+            );
+          })}
         </div>
-        <div>
-          <div className="font-semibold text-[var(--status-warn)] mb-1">Priority Fixes</div>
-          <ul className="list-disc pl-4 space-y-1 text-[var(--text-primary)]">
-            {ev.priorityFixes.map((f, i) => (
-              <li key={i}>{f}</li>
-            ))}
-          </ul>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div>
+            <div className="font-semibold text-[var(--status-success)] mb-1">Top Strengths</div>
+            <ul className="list-disc pl-4 space-y-1 text-[var(--text-primary)]">
+              {ev.topStrengths.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <div className="font-semibold text-[var(--status-warn)] mb-1">Priority Fixes</div>
+            <ul className="list-disc pl-4 space-y-1 text-[var(--text-primary)]">
+              {ev.priorityFixes.map((f, i) => (
+                <li key={i}>{f}</li>
+              ))}
+            </ul>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const activeStatus = activeQuestion ? itemStatusMap.get(activeQuestion.questionId) : undefined;
 

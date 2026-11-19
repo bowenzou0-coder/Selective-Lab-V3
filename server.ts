@@ -204,10 +204,40 @@ function getEffectiveDeadlineMs(session: SessionRecord): number | null {
   return null;
 }
 
+const SUBMIT_GRACE_MS = 5_000;
+
 function isSessionExpired(session: SessionRecord, nowMs = Date.now()): boolean {
   if (session.status !== 'in_progress' || session.isSandbox) return false;
   const deadlineMs = getEffectiveDeadlineMs(session);
   return deadlineMs !== null && nowMs >= deadlineMs;
+}
+
+async function findActiveSessionId(repo: AppRepository, studentId: string): Promise<string | null> {
+  const sessions = await repo.listSessions(100, studentId, false);
+  for (const s of sessions) {
+    if (s.status === 'in_progress' && !s.isSandbox) {
+      const resolved = await resolveOrExpireSession(repo, s);
+      if (resolved.status === 'in_progress') {
+        return resolved.sessionId;
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveSessionForCaller(
+  repo: AppRepository,
+  sessionId: string,
+  callerStudentId: string
+): Promise<{ session: SessionRecord | null; forbidden: boolean }> {
+  const own = await repo.getSession(sessionId, callerStudentId);
+  if (own) return { session: own, forbidden: false };
+  const anyOwner = await repo.getSession(sessionId);
+  if (!anyOwner) return { session: null, forbidden: false };
+  if ((anyOwner.studentId || 'default-student') !== callerStudentId) {
+    return { session: anyOwner, forbidden: true };
+  }
+  return { session: anyOwner, forbidden: false };
 }
 
 async function finalizeSessionRecord(input: {
@@ -609,16 +639,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     }
     try {
       await ensureSeeded();
-      const sessions = await repo.listSessions(50, req.auth.studentId, false);
-      let activeSessionId: string | null = null;
-      for (const s of sessions) {
-        if (s.status === 'in_progress' && !s.isSandbox) {
-          const resolved = await resolveOrExpireSession(repo, s);
-          if (resolved.status === 'in_progress' && !activeSessionId) {
-            activeSessionId = resolved.sessionId;
-          }
-        }
-      }
+      const activeSessionId = await findActiveSessionId(repo, req.auth.studentId);
       res.json({
         authenticated: true,
         role: req.auth.role,
@@ -629,17 +650,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         isDisposableDemo: repo.backendName === 'memory_preview',
         localDevPinEnabled: isLocalDevPinAuthEnabled(),
       });
-    } catch {
-      res.json({
-        authenticated: true,
-        role: req.auth.role,
-        studentId: req.auth.studentId,
-        email: req.auth.email,
-        activeSessionId: null,
-        backendName: repo.backendName,
-        isDisposableDemo: repo.backendName === 'memory_preview',
-        localDevPinEnabled: isLocalDevPinAuthEnabled(),
-      });
+    } catch (err) {
+      console.error('GET /api/auth/me active-session check failed:', err);
+      res.status(503).json({ error: 'Unable to verify active session lock right now.' });
     }
   });
 
@@ -661,22 +674,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     let activeSessionId: string | null = null;
     try {
       await ensureSeeded();
-      const sessions = await repo.listSessions(50, studentId, false);
-      for (const s of sessions) {
-        if (s.status === 'in_progress' && !s.isSandbox) {
-          const resolved = await resolveOrExpireSession(repo, s);
-          if (resolved.status === 'in_progress' && !activeSessionId) {
-            activeSessionId = resolved.sessionId;
-          }
-        }
-      }
+      activeSessionId = await findActiveSessionId(repo, studentId);
     } catch {
       // ignore
     }
     res.json({ authenticated: true, role: 'student', studentId, activeSessionId, token });
   });
 
-  app.post('/api/auth/admin-login', (req, res) => {
+  app.post('/api/auth/admin-login', async (req, res) => {
     if (!isLocalDevPinAuthEnabled()) {
       res.status(403).json({
         error: 'Local admin password sign-in is disabled in this environment. Use Firebase sign-in.',
@@ -688,9 +693,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       res.status(401).json({ error: 'Incorrect admin password.' });
       return;
     }
-    const token = signSessionToken({ role: 'admin', studentId: 'default-student', authMethod: 'local_admin' });
+    const studentId = 'default-student';
+    const token = signSessionToken({ role: 'admin', studentId, authMethod: 'local_admin' });
     setAuthCookie(res, token, req);
-    res.json({ authenticated: true, role: 'admin', studentId: 'default-student', activeSessionId: null, token });
+    let activeSessionId: string | null = null;
+    try {
+      await ensureSeeded();
+      activeSessionId = await findActiveSessionId(repo, studentId);
+    } catch {
+      // ignore
+    }
+    res.json({ authenticated: true, role: 'admin', studentId, activeSessionId, token });
   });
 
   app.post('/api/auth/firebase-login', async (req, res) => {
@@ -730,15 +743,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       let activeSessionId: string | null = null;
       try {
         await ensureSeeded();
-        const sessions = await repo.listSessions(50, studentId, false);
-        for (const s of sessions) {
-          if (s.status === 'in_progress' && !s.isSandbox) {
-            const resolved = await resolveOrExpireSession(repo, s);
-            if (resolved.status === 'in_progress' && !activeSessionId) {
-              activeSessionId = resolved.sessionId;
-            }
-          }
-        }
+        activeSessionId = await findActiveSessionId(repo, studentId);
       } catch (seedErr) {
         console.warn(
           'Post-login seed/session scan warning:',
@@ -800,7 +805,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       }
       const attempts = anyExpired ? await repo.listPartAttempts(500, studentId, false) : initialAttempts;
 
-      const dailyFocusPlan = await getOrCreateDailyFocusPlan({
+      const { plan: dailyFocusPlan } = await getOrCreateDailyFocusPlan({
         repo,
         studentId,
         skillStates,
@@ -936,7 +941,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         const dailyPlan =
           mode === 'writing_sprint'
             ? null
-            : await getOrCreateDailyFocusPlan({
+            : (await getOrCreateDailyFocusPlan({
                 repo,
                 studentId,
                 skillStates,
@@ -944,7 +949,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
                 questionMemory,
                 questions: allQuestions,
                 nowIso,
-              });
+              })).plan;
         const seed = Date.now() & 0xfffffff;
         if (mode === 'writing_sprint') {
           selected = selectPracticeSession({
@@ -1063,12 +1068,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.get('/api/student/sessions/:id', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const loaded = await repo.getSession(req.params.id);
+      const { session: loaded, forbidden } = await resolveSessionForCaller(
+        repo,
+        req.params.id,
+        req.auth!.studentId
+      );
       if (!loaded) {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
-      if ((loaded.studentId || 'default-student') !== req.auth!.studentId) {
+      if (forbidden) {
         res.status(403).json({ error: 'Forbidden: session belongs to another user.' });
         return;
       }
@@ -1099,6 +1108,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           const answers = session.checkpoint?.answersByPartId ?? {};
           reviewResults = {};
           for (const pair of pairs) {
+            if (pair.question.formatType === 'WRIT_TYPED_TASK') {
+              reviewResults[pair.question.questionId] = [];
+              continue;
+            }
             const { results } = gradeSubmission(pair.question, answers);
             reviewResults[pair.question.questionId] = results;
           }
@@ -1133,20 +1146,32 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.patch('/api/student/sessions/:id/checkpoint', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const session = await repo.getSession(req.params.id);
+      const { session, forbidden } = await resolveSessionForCaller(
+        repo,
+        req.params.id,
+        req.auth!.studentId
+      );
       if (!session) {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
-      if ((session.studentId || 'default-student') !== req.auth!.studentId) {
+      if (forbidden) {
         res.status(403).json({ error: 'Forbidden: session belongs to another user.' });
         return;
       }
-      if (isSessionExpired(session)) {
+      const nowMs = Date.now();
+      const deadlineMs = getEffectiveDeadlineMs(session);
+      const expiredPastGrace =
+        session.status === 'in_progress' &&
+        !session.isSandbox &&
+        deadlineMs !== null &&
+        nowMs > deadlineMs + SUBMIT_GRACE_MS;
+      if (expiredPastGrace) {
         const finalized = await resolveOrExpireSession(repo, session);
         res.status(409).json({
           error: 'Time expired — this test has been auto-submitted.',
           expiredAutoSubmitted: true,
+          alreadySubmitted: true,
           currentRevision: finalized.checkpointRevision ?? 1,
           serverCheckpoint: finalized.checkpoint,
         });
@@ -1156,6 +1181,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         res.status(409).json({
           error: 'Session already submitted.',
           expiredAutoSubmitted: Boolean(session.expiredAutoSubmitted),
+          alreadySubmitted: session.status === 'submitted',
           currentRevision: session.checkpointRevision ?? 1,
           serverCheckpoint: session.checkpoint,
         });
@@ -1168,6 +1194,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       }
       const expectedRevision =
         req.body?.expectedRevision !== undefined ? Number(req.body.expectedRevision) : undefined;
+      if (!session.isSandbox && (expectedRevision === undefined || Number.isNaN(expectedRevision))) {
+        res.status(400).json({ error: 'expectedRevision is required for checkpoint updates.' });
+        return;
+      }
       if (expectedRevision !== undefined && Number.isNaN(expectedRevision)) {
         res.status(400).json({ error: 'Invalid expectedRevision.' });
         return;
@@ -1205,13 +1235,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.post('/api/student/sessions/:id/submit', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const session = await repo.getSession(req.params.id);
+      const { session, forbidden } = await resolveSessionForCaller(
+        repo,
+        req.params.id,
+        req.auth!.studentId
+      );
       if (!session) {
         res.status(404).json({ error: 'Session not found.' });
         return;
       }
-      const ownerId = session.studentId || 'default-student';
-      if (ownerId !== req.auth!.studentId) {
+      if (forbidden) {
         res.status(403).json({ error: 'Forbidden: cannot submit another user session.' });
         return;
       }
@@ -1228,19 +1261,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       const nowMs = Date.now();
       const expired = isSessionExpired(session, nowMs);
       const deadlineMs = getEffectiveDeadlineMs(session);
+      const withinGrace = deadlineMs === null || nowMs <= deadlineMs + SUBMIT_GRACE_MS;
       const completedAtIso =
         expired && deadlineMs !== null
           ? session.deadlineAt || new Date(deadlineMs).toISOString()
           : new Date(nowMs).toISOString();
 
       const incomingCheckpoint = req.body?.checkpoint as SessionRecord['checkpoint'] | undefined;
-      const baseCp: SessionCheckpoint = incomingCheckpoint ||
-        session.checkpoint || {
-          currentIndex: 0,
-          elapsedSec: 0,
-          answersByPartId: {},
-          flaggedQuestionIds: [],
-        };
+      const fallbackCp: SessionCheckpoint = session.checkpoint || {
+        currentIndex: 0,
+        elapsedSec: 0,
+        answersByPartId: {},
+        flaggedQuestionIds: [],
+      };
+      const baseCp: SessionCheckpoint =
+        (!expired || withinGrace) && incomingCheckpoint ? incomingCheckpoint : fallbackCp;
       const cp: SessionCheckpoint = expired
         ? {
             ...baseCp,
@@ -2114,6 +2149,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     } else {
       const distDir = path.join(ROOT_DIR, 'dist');
       app.use(express.static(distDir));
+      app.all('/api/*', (_req, res) => {
+        res.status(404).json({ error: 'API endpoint not found.' });
+      });
       app.get('*', (_req, res) => {
         res.sendFile(path.join(distDir, 'index.html'));
       });

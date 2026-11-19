@@ -120,8 +120,11 @@ export function computeWritingMetrics(
     words.map((w) => w.toLowerCase().replace(/[^a-z0-9']/g, '')).filter(Boolean)
   );
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-  const matchedMandatoryStarter = spec.mandatoryOpeningLine
-    ? norm(clean).startsWith(norm(spec.mandatoryOpeningLine))
+  const starterPrefix = spec.mandatoryOpeningLine
+    ? norm(spec.mandatoryOpeningLine).replace(/(?:\.{3}|…)+$/g, '').trim()
+    : '';
+  const matchedMandatoryStarter = starterPrefix
+    ? norm(clean).startsWith(starterPrefix)
     : true;
 
   return {

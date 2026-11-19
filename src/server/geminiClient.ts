@@ -2,16 +2,31 @@ import { GoogleGenAI } from '@google/genai';
 
 /**
  * Gemini Decisions 1 ('gemini-decision-1'): System 1 calibrated Decisions API model
- * powering daily focus skill ranking, algorithm weights, session question selection,
- * and calibrated writing rubric scoring (zero generated output tokens).
+ * powering daily focus skill ranking, algorithm weights and session question selection.
+ * This closed-set decision model does not generate written coaching feedback.
  */
 export const GEMINI_DECISION_MODEL = 'gemini-decision-1';
 
 /**
  * Gemini 4 Hydrogen ('gemini-4-hydrogen'): LLM used alongside gemini-decision-1
- * to author qualitative writing coaching feedback, quotes, and priority fixes.
+ * for the separate writing assessment: rubric scores, coaching feedback, quotes,
+ * and priority fixes. It is not used for practice selection decisions.
  */
 export const GEMINI_WRITING_MODEL = 'gemini-4-hydrogen';
+export const GEMINI_WRITING_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
+
+export function getGeminiWritingModel(): string {
+  const configured = (process.env.GEMINI_WRITING_MODEL || '').trim();
+  return configured || GEMINI_WRITING_MODEL;
+}
+
+export function getGeminiWritingFallbackModel(): string | null {
+  const configured = (process.env.GEMINI_WRITING_FALLBACK_MODEL || '').trim();
+  if (configured.toLowerCase() === 'none' || configured.toLowerCase() === 'false') {
+    return null;
+  }
+  return configured || GEMINI_WRITING_FALLBACK_MODEL;
+}
 
 export function getGeminiApiKey(): string | null {
   const key = (process.env.GEMINI_API_KEY || '').trim();
@@ -70,7 +85,7 @@ export class GeminiServiceError extends Error {
   }
 }
 
-export function normalizeGeminiError(err: unknown): GeminiServiceError {
+export function normalizeGeminiError(err: unknown, modelId?: string): GeminiServiceError {
   if (err instanceof GeminiServiceError) return err;
   const rawMessage = err instanceof Error ? err.message : String(err || 'Gemini request failed.');
   const statusMatch = rawMessage.match(/\b(400|401|403|404|429|500|502|503|504)\b/);
@@ -108,13 +123,14 @@ export function normalizeGeminiError(err: unknown): GeminiServiceError {
     );
   }
   if (rawMessage.includes('NOT_FOUND') || statusFromErr === 404) {
+    const modelLabel = modelId || GEMINI_DECISION_MODEL;
     return new GeminiServiceError(
       502,
-      `Configured Gemini model (${GEMINI_DECISION_MODEL}) returned NOT_FOUND (404). Verify @google/genai >= 3.2.0 and apiVersion: v1beta.`
+      `Configured Gemini model (${modelLabel}) returned NOT_FOUND (404). Verify model ID and @google/genai configuration.`
     );
   }
   if ((err as { name?: string })?.name === 'AbortError' || rawMessage.toLowerCase().includes('abort')) {
-    return new GeminiServiceError(504, 'Gemini decision request timed out.');
+    return new GeminiServiceError(504, `Gemini request${modelId ? ` (${modelId})` : ''} timed out.`);
   }
   return new GeminiServiceError(statusFromErr >= 400 ? statusFromErr : 502, rawMessage);
 }
@@ -135,7 +151,8 @@ function isRetryableGeminiError(err: unknown): boolean {
 export async function withGeminiRetry<T>(
   fn: () => Promise<T>,
   maxAttempts = 2,
-  baseDelayMs = 300
+  baseDelayMs = 300,
+  modelId?: string
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -144,10 +161,10 @@ export async function withGeminiRetry<T>(
     } catch (err) {
       lastError = err;
       if (attempt >= maxAttempts || !isRetryableGeminiError(err)) {
-        throw normalizeGeminiError(err);
+        throw normalizeGeminiError(err, modelId);
       }
       await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
     }
   }
-  throw normalizeGeminiError(lastError);
+  throw normalizeGeminiError(lastError, modelId);
 }

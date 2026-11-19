@@ -154,8 +154,11 @@ export default function App() {
   const localDevPinEnabled = auth?.localDevPinEnabled ?? health?.localDevPinEnabled ?? true;
   const isDisposableDemo = Boolean(auth?.isDisposableDemo || health?.isDisposableDemo);
 
-  const isAdminRoute = path.startsWith('/admin');
-  const sessionMatch = path.match(/^\/session\/([^/]+)$/);
+  const lockedPath =
+    auth?.authenticated && auth.activeSessionId ? `/session/${auth.activeSessionId}` : null;
+  const effectivePath = lockedPath ?? path;
+  const isAdminRoute = effectivePath.startsWith('/admin');
+  const sessionMatch = effectivePath.match(/^\/session\/([^/]+)$/);
 
   const demoBanner = isDisposableDemo ? (
     <div

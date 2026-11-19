@@ -473,7 +473,7 @@ export async function generateGeminiFocusOverride(input: {
   };
 }
 
-export async function getOrCreateDailyFocusPlan(input: {
+type DailyFocusPlanInput = {
   repo: AppRepository;
   studentId: string;
   skillStates: Record<string, SkillState>;
@@ -482,12 +482,38 @@ export async function getOrCreateDailyFocusPlan(input: {
   questions: QuestionItem[];
   nowIso?: string;
   decideFn?: DecisionsExecutor;
-}): Promise<{ plan: DailyFocusPlan; error?: string }> {
+};
+
+type DailyFocusPlanResult = { plan: DailyFocusPlan; error?: string };
+const dailyFocusInFlight = new WeakMap<AppRepository, Map<string, Promise<DailyFocusPlanResult>>>();
+
+export async function getOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<DailyFocusPlanResult> {
+  let requests = dailyFocusInFlight.get(input.repo);
+  if (!requests) {
+    requests = new Map();
+    dailyFocusInFlight.set(input.repo, requests);
+  }
+  const key = `${input.studentId}:${(input.nowIso ?? new Date().toISOString()).slice(0, 10)}`;
+  const existing = requests.get(key);
+  if (existing) return existing;
+  const pending = loadOrCreateDailyFocusPlan(input);
+  requests.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    requests.delete(key);
+  }
+}
+
+async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<DailyFocusPlanResult> {
   const nowIso = input.nowIso ?? new Date().toISOString();
   const planDate = nowIso.slice(0, 10);
 
   const cached = await input.repo.getDailyFocusPlan(input.studentId, planDate).catch(() => null);
-  if (cached && cached.focusSkillIds.length > 0 && cached.source === 'gemini') {
+  // A model migration gets one fresh plan; deterministic fallbacks are cached too,
+  // so a rejected/unavailable model is not retried on every dashboard load.
+  if (cached && cached.focusSkillIds.length > 0 &&
+    (cached.source === 'deterministic' || cached.modelId === GEMINI_DECISION_MODEL)) {
     return { plan: cached };
   }
 
@@ -528,7 +554,8 @@ export async function getOrCreateDailyFocusPlan(input: {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Gemini Decisions 1 focus planning failed.';
     console.error('Daily Gemini Decisions 1 focus plan failed:', message);
-    return { plan: cached || deterministic, error: message };
+    await input.repo.saveDailyFocusPlan(input.studentId, deterministic).catch(() => undefined);
+    return { plan: deterministic, error: message };
   }
 }
 
@@ -660,7 +687,12 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     };
   });
 
-  const answers = await runDecisionsApi(metadataPayload, questions, input.decideFn);
+  let answers: DecisionAnswerMap;
+  try {
+    answers = await runDecisionsApi(metadataPayload, questions, input.decideFn);
+  } catch {
+    return deterministicFallback('Selected by the adaptive scheduler because Gemini Decisions was unavailable.');
+  }
 
   const scoredCandidates = candidates
     .map((cand, idx) => {

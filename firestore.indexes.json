@@ -1,26 +1,4 @@
 {
-  "indexes": [
-    {
-      "collectionGroup": "sessions",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "startedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "import_batches",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "createdAtIso", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "admin_configs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "versionNumber", "order": "DESCENDING" }
-      ]
-    }
-  ],
+  "indexes": [],
   "fieldOverrides": []
 }

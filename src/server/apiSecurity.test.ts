@@ -540,6 +540,100 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     assert.equal(expPayload.session.correctSlots, 1);
     assert.ok(expPayload.serverNowIso);
 
+    // 3b. Missing expectedRevision on non-sandbox PATCH returns 400; sequential saves track checkpointRevision; late submit past grace uses server checkpoint
+    await srv.repo.reserveAndCreateSession(
+      {
+        sessionId: 'sess_late_submit_check',
+        studentId: 'uid_lock_tester',
+        configVersionId: 'cfg_v1',
+        mode: 'section_drill',
+        sectionFilter: 'MATH',
+        status: 'in_progress',
+        isSandbox: false,
+        plannedQuestionIds: [targetQ.question.questionId],
+        checkpointRevision: 1,
+        checkpoint: {
+          currentIndex: 0,
+          elapsedSec: 20,
+          answersByPartId: {
+            [targetQ.question.parts[0].partId]: 'Z', // wrong answer saved before expiry
+          },
+          flaggedQuestionIds: [],
+        },
+        timeLimitSec: 60,
+        startedAt: new Date(Date.now() - 120_000).toISOString(),
+        deadlineAt: new Date(Date.now() - 10_000).toISOString(), // 10s past deadline (> 5s grace)
+        totalSlots: targetQ.question.parts.length,
+        correctSlots: 0,
+      },
+      [
+        {
+          questionId: targetQ.question.questionId,
+          snapshotIndex: 0,
+          evidenceRevision: targetQ.question.evidenceRevision || 'er_late',
+          question: targetQ.question,
+          stimulus: targetQ.stimulus,
+        },
+      ]
+    );
+
+    const lateSubmitRes = await fetch(`${srv.baseUrl}/api/student/sessions/sess_late_submit_check/submit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({
+        checkpoint: {
+          currentIndex: 0,
+          elapsedSec: 59,
+          answersByPartId: {
+            [targetQ.question.parts[0].partId]: targetQ.question.parts[0].correctAnswerKey, // tamper attempt
+          },
+          flaggedQuestionIds: [],
+        },
+      }),
+    });
+    assert.equal(lateSubmitRes.status, 200);
+    const lateSubmitJson = (await lateSubmitRes.json()) as { correctSlots: number; expiredAutoSubmitted?: boolean };
+    assert.equal(lateSubmitJson.correctSlots, 0); // server checkpoint 'Z' used, NOT tampered late payload!
+    assert.equal(lateSubmitJson.expiredAutoSubmitted, true);
+
+    // Also verify missing expectedRevision returns 400 on active non-sandbox session
+    const activeCreate = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
+    });
+    assert.equal(activeCreate.status, 201);
+    const activeData = (await activeCreate.json()) as { sessionId: string };
+    const missingRevPatch = await fetch(`${srv.baseUrl}/api/student/sessions/${activeData.sessionId}/checkpoint`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({
+        checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+    assert.equal(missingRevPatch.status, 400);
+
+    // Submit it so student stays clean
+    await fetch(`${srv.baseUrl}/api/student/sessions/${activeData.sessionId}/submit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({
+        checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+
     // 4. Dashboard returns cached dailyFocusPlan (calling twice hits saved plan without changing timestamp)
     const dash1 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
       headers: { Authorization: `Bearer ${studentToken}` },
@@ -571,7 +665,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     };
     assert.equal(diagJson.sessionSecretConfigured, true);
     assert.equal(diagJson.geminiConfigured, true);
-    assert.equal(diagJson.geminiModel, 'gemini-4-hydrogen');
+    assert.equal(diagJson.geminiModel, 'gemini-decision-1');
     assert.equal(diagJson.configSource, 'firebase-applet-config.json');
   } finally {
     process.env = prevEnv;

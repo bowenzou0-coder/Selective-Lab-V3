@@ -4,6 +4,23 @@ import { Lock } from 'lucide-react';
 import { auth, googleAuthProvider } from '../../lib/firebase';
 import { api, type AuthState } from '../api';
 
+function formatFirebaseAuthError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err || 'Google sign-in failed.');
+  const code = typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : '';
+  const combined = `${code} ${msg}`;
+  if (combined.includes('auth/unauthorized-domain')) {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+    return `Google Sign-In is blocked for ${host}. Add this domain in Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (combined.includes('auth/popup-blocked')) {
+    return 'Sign-in pop-up was blocked by your browser. Allow pop-ups for this site and try again.';
+  }
+  if (combined.includes('auth/popup-closed-by-user')) {
+    return 'Sign-in pop-up was closed before completing.';
+  }
+  return msg;
+}
+
 function GoogleBadgeIcon() {
   return (
     <svg viewBox="0 0 24 24" className="w-4 h-4 shrink-0" aria-hidden="true">
@@ -53,7 +70,7 @@ export function StudentPinGate({
       const cred = await signInWithPopup(auth, googleAuthProvider);
       await onGoogleAuthenticated(cred.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+      setError(formatFirebaseAuthError(err));
     } finally {
       setGoogleLoading(false);
     }
@@ -190,7 +207,7 @@ export function AdminPasswordGate({
       const cred = await signInWithPopup(auth, googleAuthProvider);
       await onGoogleAuthenticated(cred.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+      setError(formatFirebaseAuthError(err));
     } finally {
       setGoogleLoading(false);
     }

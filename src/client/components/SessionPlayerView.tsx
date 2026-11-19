@@ -126,6 +126,7 @@ export function SessionPlayerView({
   const [navOpen, setNavOpen] = useState(false);
   const [activeGapIndex, setActiveGapIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const autoSubmittedRef = useRef(false);
   const onActiveSessionClearedRef = useRef(onActiveSessionCleared);
   useEffect(() => {
@@ -278,14 +279,21 @@ export function SessionPlayerView({
           payload,
           overrideExpectedRevision ?? checkpointRevisionRef.current
         );
-        checkpointRevisionRef.current = res.revision;
+        checkpointRevisionRef.current =
+          res.checkpointRevision ?? res.revision ?? checkpointRevisionRef.current + 1;
+        if (res.serverNowIso) {
+          const parsedServerMs = Date.parse(res.serverNowIso);
+          if (!Number.isNaN(parsedServerMs)) {
+            serverAnchorRef.current = { serverMs: parsedServerMs, perfMs: performance.now() };
+          }
+        }
         dirtyRef.current = false;
         setConflictState(null);
         clearLocalDraft(draftStorageKey);
         setSaveStatus('saved');
       } catch (err) {
         const apiErr = err as ApiError;
-        if (apiErr.status === 409 && apiErr.expiredAutoSubmitted) {
+        if (apiErr.status === 409 && (apiErr.expiredAutoSubmitted || apiErr.alreadySubmitted)) {
           clearLocalDraft(draftStorageKey);
           dirtyRef.current = false;
           try {
@@ -405,9 +413,38 @@ export function SessionPlayerView({
     [questions.length, markLocalDirty]
   );
 
-  // Keyboard shortcuts (1-8 / A-H, N / P, F)
+  const isLockedStudentSession = Boolean(
+    session &&
+      session.status === 'in_progress' &&
+      session.mode !== 'admin_calibration' &&
+      !session.isSandbox
+  );
+
+  const deadlineMs = session?.deadlineAt ? Date.parse(session.deadlineAt) : null;
+  let remainingSec: number | null = null;
+  if (deadlineMs !== null && !Number.isNaN(deadlineMs)) {
+    const anchor = serverAnchorRef.current;
+    const nowApproxMs = anchor
+      ? anchor.serverMs + (performance.now() - anchor.perfMs)
+      : Date.now();
+    remainingSec = Math.max(0, Math.ceil((deadlineMs - nowApproxMs) / 1000));
+  } else if (session?.timeLimitSec) {
+    remainingSec = Math.max(0, session.timeLimitSec - elapsedSec);
+  }
+  const isTimeUp = Boolean(isLockedStudentSession && remainingSec !== null && remainingSec <= 0);
+
+  // Keyboard shortcuts (1-8 / A-H, N / P, F) — blocked once time is up, submitting, or confirm dialog open
   useEffect(() => {
-    if (!session || session.status !== 'in_progress' || !currentQuestion) return;
+    if (
+      !session ||
+      session.status !== 'in_progress' ||
+      !currentQuestion ||
+      isTimeUp ||
+      submitting ||
+      submitConfirmOpen
+    ) {
+      return;
+    }
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -452,27 +489,47 @@ export function SessionPlayerView({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [session, currentQuestion, currentIndex, answersByPartId, handleGoIndex, handleToggleFlag, handleSelectAnswer]);
+  }, [
+    session,
+    currentQuestion,
+    currentIndex,
+    answersByPartId,
+    isTimeUp,
+    submitting,
+    submitConfirmOpen,
+    handleGoIndex,
+    handleToggleFlag,
+    handleSelectAnswer,
+  ]);
 
-  const isLockedStudentSession = Boolean(
-    session &&
-      session.status === 'in_progress' &&
-      session.mode !== 'admin_calibration' &&
-      !session.isSandbox
-  );
-
-  const deadlineMs = session?.deadlineAt ? Date.parse(session.deadlineAt) : null;
-  let remainingSec: number | null = null;
-  if (deadlineMs !== null && !Number.isNaN(deadlineMs)) {
-    const anchor = serverAnchorRef.current;
-    const nowApproxMs = anchor
-      ? anchor.serverMs + (performance.now() - anchor.perfMs)
-      : Date.now();
-    remainingSec = Math.max(0, Math.ceil((deadlineMs - nowApproxMs) / 1000));
-  } else if (session?.timeLimitSec) {
-    remainingSec = Math.max(0, session.timeLimitSec - elapsedSec);
-  }
-  const isTimeUp = Boolean(isLockedStudentSession && remainingSec !== null && remainingSec <= 0);
+  // Re-sync clock anchor and check remote submit/expiry after tab wake / OS sleep
+  useEffect(() => {
+    if (!session || session.status !== 'in_progress') return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      api
+        .getSession(session.sessionId)
+        .then((refreshed) => {
+          if (refreshed.serverNowIso) {
+            const parsedServerMs = Date.parse(refreshed.serverNowIso);
+            if (!Number.isNaN(parsedServerMs)) {
+              serverAnchorRef.current = { serverMs: parsedServerMs, perfMs: performance.now() };
+            }
+          }
+          if (refreshed.session.status === 'submitted') {
+            clearLocalDraft(draftStorageKey);
+            setSession(refreshed.session);
+            setQuestions(refreshed.questions);
+            if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
+            if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
+            onActiveSessionClearedRef.current?.();
+          }
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [session, draftStorageKey]);
 
   // Warn on tab close/refresh when unsent draft exists or while locked in timed test
   useEffect(() => {
@@ -487,6 +544,7 @@ export function SessionPlayerView({
 
   const handleSubmit = useCallback(async () => {
     if (!session || submitting) return;
+    setSubmitConfirmOpen(false);
     setSubmitting(true);
     setError('');
     try {
@@ -508,17 +566,23 @@ export function SessionPlayerView({
       onActiveSessionClearedRef.current?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to submit session.');
+      if (isTimeUp) {
+        window.setTimeout(() => {
+          autoSubmittedRef.current = false;
+          setClockTick((t) => (t + 1) % 100_000);
+        }, 2500);
+      }
     } finally {
       setSubmitting(false);
     }
-  }, [session, submitting, draftStorageKey]);
+  }, [session, submitting, draftStorageKey, isTimeUp]);
 
   // Auto-submit when timed locked student session hits 00:00 on server clock
   useEffect(() => {
-    if (!isTimeUp || autoSubmittedRef.current) return;
+    if (!isTimeUp || autoSubmittedRef.current || submitting) return;
     autoSubmittedRef.current = true;
     handleSubmit();
-  }, [isTimeUp, handleSubmit]);
+  }, [isTimeUp, submitting, handleSubmit]);
 
   const handleInspectorQcChange = async (questionId: string, nextStatus: QuestionItem['qcStatus']) => {
     try {
@@ -632,7 +696,7 @@ export function SessionPlayerView({
                     <span aria-hidden="true">·</span>
                     <span title={session.selectionDecision.rationale}>
                       {session.selectionDecision.source === 'gemini'
-                        ? `Gemini Decisions (${session.selectionDecision.modelId || 'gemini-4-hydrogen'})`
+                        ? `Gemini Decisions${session.selectionDecision.modelId ? ` (${session.selectionDecision.modelId})` : ''}`
                         : 'Adaptive engine'}
                     </span>
                   </>
@@ -759,7 +823,7 @@ export function SessionPlayerView({
             <button
               type="button"
               disabled={submitting}
-              onClick={handleSubmit}
+              onClick={() => setSubmitConfirmOpen(true)}
               className="px-4 py-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-xs font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60"
             >
               {submitting ? 'Submitting...' : 'Finish & Submit'}
@@ -1024,7 +1088,7 @@ export function SessionPlayerView({
                 <button
                   type="button"
                   disabled={submitting}
-                  onClick={handleSubmit}
+                  onClick={() => setSubmitConfirmOpen(true)}
                   className="px-5 py-2 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-sm font-semibold cursor-pointer disabled:opacity-60"
                 >
                   {submitting ? 'Submitting...' : 'Finish & Submit'}
@@ -1034,6 +1098,73 @@ export function SessionPlayerView({
           </div>
         }
       />
+
+      {/* Submit Confirmation Modal */}
+      {submitConfirmOpen && (
+        <div
+          role="presentation"
+          onClick={() => !submitting && setSubmitConfirmOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="submit-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] border border-[var(--border-strong)] p-6 space-y-4 shadow-xl"
+          >
+            <div className="space-y-1">
+              <div className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
+                Finish &amp; Submit
+              </div>
+              <h2 id="submit-confirm-title" className="text-lg font-bold text-[var(--text-primary)]">
+                Ready to submit this test?
+              </h2>
+            </div>
+            <dl className="grid grid-cols-3 gap-2.5 p-3 rounded-[var(--radius-md)] bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-xs text-center tabular-nums">
+              <div>
+                <dt className="text-[var(--text-muted)]">Answered</dt>
+                <dd className="mt-0.5 text-base font-bold text-[var(--status-success)]">
+                  {answeredSlotsCount}/{totalSlotsCount}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[var(--text-muted)]">Unanswered</dt>
+                <dd className="mt-0.5 text-base font-bold text-[var(--text-primary)]">
+                  {Math.max(0, totalSlotsCount - answeredSlotsCount)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[var(--text-muted)]">Flagged</dt>
+                <dd className="mt-0.5 text-base font-bold text-[var(--status-warn)]">
+                  {flaggedQuestionIds.length}
+                </dd>
+              </div>
+            </dl>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Submitting locks your answers and unlocks your account for review and progress analytics.
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setSubmitConfirmOpen(false)}
+                className="px-4 py-2 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-surface)] text-xs font-semibold text-[var(--text-primary)] cursor-pointer disabled:opacity-50"
+              >
+                Keep Working
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleSubmit}
+                className="px-5 py-2 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+              >
+                {submitting ? 'Submitting...' : 'Confirm & Submit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

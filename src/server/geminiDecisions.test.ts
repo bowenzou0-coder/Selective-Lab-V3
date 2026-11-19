@@ -11,10 +11,15 @@ import {
   computeRankedSkillCandidates,
   decidePracticeQuestionOrderWithGemini,
   generateGeminiFocusOverride,
+  getOrCreateDailyFocusPlan,
+  type DecisionAnswerMap,
 } from './geminiPlanner.ts';
+import { MemoryRepository } from './storage/memoryRepository.ts';
 import {
+  computeWritingBandSummary,
   evaluateWritingWithGemini,
   normalizeWritingEvaluationCriteria,
+  scoreToCriterionBand,
   WRITING_CRITERIA,
 } from './geminiWriting.ts';
 
@@ -66,8 +71,12 @@ function makeQuestion(
   };
 }
 
-test('Gemini client exports gemini-4-hydrogen and normalizes HTTP errors cleanly', () => {
-  assert.equal(GEMINI_DECISION_MODEL, 'gemini-4-hydrogen');
+function scoreAnswer(score: number): DecisionAnswerMap[string] {
+  return { type: 'score', score, confidence: 0.9, legend: {}, probabilities: {} };
+}
+
+test('Gemini client separates System 1 Decisions from writing generation and normalizes HTTP errors', () => {
+  assert.equal(GEMINI_DECISION_MODEL, 'gemini-decision-1');
   assert.equal(GEMINI_WRITING_MODEL, 'gemini-4-hydrogen');
 
   const e403 = normalizeGeminiError(new Error('403 PERMISSION_DENIED: invalid key'));
@@ -79,7 +88,7 @@ test('Gemini client exports gemini-4-hydrogen and normalizes HTTP errors cleanly
 
   const e404 = normalizeGeminiError(new Error('404 NOT_FOUND'));
   assert.equal(e404.statusCode, 502);
-  assert.match(e404.message, /gemini-4-hydrogen/);
+  assert.match(e404.message, /gemini-decision-1/);
 });
 
 test('computeRankedSkillCandidates preserves real repair/due/unseen counts and generateGeminiFocusOverride clamps multipliers', async () => {
@@ -144,34 +153,37 @@ test('computeRankedSkillCandidates preserves real repair/due/unseen counts and g
   const overridden = await generateGeminiFocusOverride({
     basePlan,
     candidates: ranked,
-    generateTextFn: async (payloadJson) => {
-      assert.equal(payloadJson.includes('"repairs":1'), true);
-      return JSON.stringify({
-        focusSkillIds: ['MATH.GEO2D.COMPOSITE_AREA', 'INVALID.SKILL.ID', 'READ.FIC.CHARACTER_INFERENCE'],
-        weights: [
-          { skillId: 'MATH.GEO2D.COMPOSITE_AREA', weight: 9.9 },
-          { skillId: 'READ.FIC.CHARACTER_INFERENCE', weight: 0.1 },
-        ],
-        algorithmAdjustments: {
-          spacedReviewWeightMultiplier: 3.0,
-          weakestSkillWeightMultiplier: 1.25,
-          noveltyCoverageWeightMultiplier: 0.2,
-          zpdDifficultyOffset: 2.5,
-        },
-        recommendedSection: 'MATH',
-        rationale: 'Focus on Composite Area repair items and Fiction Inference.',
+    decideFn: async ({ inputText, questions }) => {
+      assert.equal(inputText.includes('"repairs":1'), true);
+      const payload = JSON.parse(inputText) as { candidateSkills: { skillId: string }[] };
+      const answers: DecisionAnswerMap = {
+        review_emphasis: scoreAnswer(99),
+        weakness_emphasis: scoreAnswer(3),
+        novelty_emphasis: scoreAnswer(-99),
+        zpd_challenge_step: scoreAnswer(99),
+        recommended_section: { type: 'choice', choice: 'MATH', probabilities: {}, confidence: 0.9 },
+        'INVALID.SKILL.ID': scoreAnswer(99),
+      };
+      payload.candidateSkills.forEach((row, idx) => {
+        assert.equal(questions[`skill_${idx}`].type, 'score');
+        answers[`skill_${idx}`] = scoreAnswer(
+          row.skillId === 'MATH.GEO2D.COMPOSITE_AREA' ? 99 :
+            row.skillId === 'READ.FIC.CHARACTER_INFERENCE' ? -99 : 1
+        );
       });
+      return answers;
     },
   });
 
   assert.ok(overridden);
   assert.equal(overridden.source, 'gemini');
-  assert.equal(overridden.modelId, 'gemini-4-hydrogen');
-  assert.deepEqual(overridden.focusSkillIds, ['MATH.GEO2D.COMPOSITE_AREA', 'READ.FIC.CHARACTER_INFERENCE']);
+  assert.equal(overridden.modelId, 'gemini-decision-1');
+  assert.equal(overridden.focusSkillIds[0], 'MATH.GEO2D.COMPOSITE_AREA');
+  assert.equal(overridden.focusSkillIds.includes('INVALID.SKILL.ID'), false);
   assert.equal(overridden.skillWeights['MATH.GEO2D.COMPOSITE_AREA'], 1.35);
   assert.equal(overridden.skillWeights['READ.FIC.CHARACTER_INFERENCE'], 0.85);
   assert.equal(overridden.algorithmAdjustments?.spacedReviewWeightMultiplier, 1.35);
-  assert.equal(overridden.algorithmAdjustments?.weakestSkillWeightMultiplier, 1.25);
+  assert.equal(overridden.algorithmAdjustments?.weakestSkillWeightMultiplier, 1.2);
   assert.equal(overridden.algorithmAdjustments?.noveltyCoverageWeightMultiplier, 0.75);
   assert.equal(overridden.algorithmAdjustments?.zpdDifficultyOffset, 0.75);
   assert.equal(overridden.recommendedSection, 'MATH');
@@ -200,20 +212,20 @@ test('decidePracticeQuestionOrderWithGemini validates whitelist, blocks holdouts
     },
     nowIso: '2026-11-15T12:00:00Z',
     seed: 19,
-    generateTextFn: async (payloadJson) => {
-      capturedPayload = payloadJson;
-      return JSON.stringify({
-        selectedQuestionIds: [
-          'pt3_h_v1', // Holdout -> MUST be rejected!
-          'invented_fake_q_99', // Unknown -> MUST be rejected!
-          'r2_v1',
-          'r2_v1', // Duplicate -> MUST be rejected!
-          'm2_v1',
-          'm1_v1', // Exceeds MATH cap of 1 -> MUST be rejected!
-        ],
-        algorithmAdjustments: { weakestSkillWeightMultiplier: 1.2 },
-        selectionRationale: 'Balanced Reading poetry and Math composite area review.',
+    decideFn: async ({ inputText, questions }) => {
+      capturedPayload = inputText;
+      const payload = JSON.parse(inputText) as { candidates: { questionId: string }[] };
+      const answers: DecisionAnswerMap = {
+        pt3_h_v1: scoreAnswer(99),
+        invented_fake_q_99: scoreAnswer(99),
+      };
+      payload.candidates.forEach((row, idx) => {
+        assert.equal(questions[`q_${idx}`].type, 'score');
+        answers[`q_${idx}`] = scoreAnswer(
+          row.questionId === 'r2_v1' ? 4 : row.questionId === 'm2_v1' ? 3 : 0
+        );
       });
+      return answers;
     },
   });
 
@@ -224,8 +236,8 @@ test('decidePracticeQuestionOrderWithGemini validates whitelist, blocks holdouts
   assert.equal(capturedPayload.includes('pt3_h_v1'), false);
 
   assert.equal(result.decision.source, 'gemini');
-  assert.equal(result.decision.modelId, 'gemini-4-hydrogen');
-  // 2 READ + 1 MATH = 3 total; starts with r2_v1 and m2_v1 from Gemini, then backfills remaining READ item
+  assert.equal(result.decision.modelId, 'gemini-decision-1');
+  // Scores rank canonical candidates only; section caps still require 2 READ + 1 MATH.
   assert.equal(result.questions.length, 3);
   assert.equal(result.questions[0].questionId, 'r2_v1');
   assert.equal(result.questions[1].questionId, 'm2_v1');
@@ -243,13 +255,80 @@ test('decidePracticeQuestionOrderWithGemini validates whitelist, blocks holdouts
     config: DEFAULT_LEARNING_CONFIG,
     nowIso: '2026-11-15T12:00:00Z',
     seed: 19,
-    generateTextFn: async () => {
+    decideFn: async () => {
       throw new Error('simulated timeout');
     },
   });
   assert.equal(fallback.decision.source, 'deterministic');
   assert.equal(fallback.questions.length, 3);
   assert.equal(fallback.questions.some((q) => q.poolType === 'benchmark_holdout'), false);
+});
+
+test('daily focus replaces a legacy Hydrogen cache once and shares concurrent/current-model requests', async () => {
+  const repo = new MemoryRepository();
+  const input = {
+    repo,
+    studentId: 'cache_student',
+    questions: [makeQuestion('cache_math', 'MATH', 'MATH.GEO2D.COMPOSITE_AREA')],
+    skillStates: {},
+    evidenceMap: {},
+    questionMemory: {},
+    nowIso: '2026-11-17T10:00:00Z',
+  };
+  const legacy = {
+    ...buildDeterministicDailyFocusPlan(input),
+    source: 'gemini' as const,
+    modelId: 'gemini-4-hydrogen',
+  };
+  await repo.saveDailyFocusPlan(input.studentId, legacy);
+  let requests = 0;
+  const options = {
+    ...input,
+    decideFn: async () => {
+      requests++;
+      return { skill_0: scoreAnswer(4) };
+    },
+  };
+  const [first, concurrent] = await Promise.all([
+    getOrCreateDailyFocusPlan(options), getOrCreateDailyFocusPlan(options),
+  ]);
+  assert.equal(requests, 1);
+  assert.equal(first.plan.modelId, 'gemini-decision-1');
+  assert.deepEqual(concurrent.plan, first.plan);
+  const cached = await getOrCreateDailyFocusPlan(options);
+  assert.deepEqual(cached.plan, first.plan);
+  assert.equal(requests, 1);
+});
+
+test('a failed legacy-cache migration persists a deterministic daily fallback instead of retrying every load', async () => {
+  const repo = new MemoryRepository();
+  const input = {
+    repo,
+    studentId: 'fallback_student',
+    questions: [makeQuestion('fallback_math', 'MATH', 'MATH.GEO2D.COMPOSITE_AREA')],
+    skillStates: {},
+    evidenceMap: {},
+    questionMemory: {},
+    nowIso: '2026-11-17T10:00:00Z',
+  };
+  await repo.saveDailyFocusPlan(input.studentId, {
+    ...buildDeterministicDailyFocusPlan(input), source: 'gemini', modelId: 'gemini-4-hydrogen',
+  });
+  let requests = 0;
+  const options = {
+    ...input,
+    decideFn: async (): Promise<DecisionAnswerMap> => {
+      requests++;
+      throw new Error('test model unavailable');
+    },
+  };
+  const first = await getOrCreateDailyFocusPlan(options);
+  assert.equal(first.plan.source, 'deterministic');
+  assert.equal(first.plan.modelId, undefined);
+  assert.match(first.error || '', /unavailable/);
+  const cached = await getOrCreateDailyFocusPlan(options);
+  assert.deepEqual(cached.plan, first.plan);
+  assert.equal(requests, 1);
 });
 
 test('evaluateWritingWithGemini uses gemini-4-hydrogen and normalizes all 6 writing rubric criteria', async () => {
@@ -290,6 +369,94 @@ test('evaluateWritingWithGemini uses gemini-4-hydrogen and normalizes all 6 writ
 
   assert.equal(evalRec.modelId, 'gemini-4-hydrogen');
   assert.equal(evalRec.overallBandEstimate, 'strong');
+  assert.equal(evalRec.overallBand, 'B');
+  assert.equal(evalRec.totalMarks, 20);
+  assert.equal(evalRec.maxTotalMarks, 30);
   assert.equal(evalRec.criteriaScores.length, 6);
   assert.equal(evalRec.criteriaScores[0].score, 5);
+  assert.equal(evalRec.criteriaScores[0].band, 'A');
+  assert.equal(evalRec.criteriaScores[0].maxMarks, 5);
+});
+
+test('Banded A-E writing rubric scores 0..5 cleanly, computes deterministic totalMarks/bands, caps off-topic essays, and supports model override', async () => {
+  // Explicit 0 must not be coerced to 3
+  const withZero = normalizeWritingEvaluationCriteria([
+    { criterionSkillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE', score: 0, comment: 'Off-topic.' },
+    { criterionSkillId: 'WRIT.CRIT.IDEAS_CREATIVITY', score: 5, comment: 'Excellent.' },
+  ]);
+  assert.equal(withZero[0].score, 0);
+  assert.equal(withZero[0].band, 'E');
+  assert.equal(withZero[1].score, 5);
+  assert.equal(withZero[1].band, 'A');
+  assert.equal(scoreToCriterionBand(4), 'B');
+  assert.equal(scoreToCriterionBand(3), 'C');
+  assert.equal(scoreToCriterionBand(2), 'D');
+  assert.equal(scoreToCriterionBand(1), 'E');
+
+  const makeScores = (vals: number[]) =>
+    WRITING_CRITERIA.map((id, i) => ({
+      criterionSkillId: id,
+      score: vals[i],
+      maxMarks: 5,
+      band: scoreToCriterionBand(vals[i]),
+      comment: 'ok',
+    }));
+
+  // Threshold checks: A(25..30), B(19..24), C(13..18), D(7..12), E(0..6)
+  assert.equal(computeWritingBandSummary(makeScores([5, 5, 5, 5, 5, 5]), true).overallBand, 'A');
+  assert.equal(computeWritingBandSummary(makeScores([5, 4, 4, 4, 4, 4]), true).overallBand, 'A'); // 25
+  assert.equal(computeWritingBandSummary(makeScores([4, 4, 4, 4, 4, 4]), true).overallBand, 'B'); // 24
+  assert.equal(computeWritingBandSummary(makeScores([4, 3, 3, 3, 3, 3]), true).overallBand, 'B'); // 19
+  assert.equal(computeWritingBandSummary(makeScores([3, 3, 3, 3, 3, 3]), true).overallBand, 'C'); // 18
+  assert.equal(computeWritingBandSummary(makeScores([3, 2, 2, 2, 2, 2]), true).overallBand, 'C'); // 13
+  assert.equal(computeWritingBandSummary(makeScores([2, 2, 2, 2, 2, 2]), true).overallBand, 'D'); // 12
+  assert.equal(computeWritingBandSummary(makeScores([2, 1, 1, 1, 1, 1]), true).overallBand, 'D'); // 7
+  assert.equal(computeWritingBandSummary(makeScores([1, 1, 1, 1, 1, 1]), true).overallBand, 'E'); // 6
+  assert.equal(computeWritingBandSummary(makeScores([0, 0, 0, 0, 0, 0]), true).overallBand, 'E'); // 0
+
+  // Off-topic cap: 27/30 with topicAdherencePass=false caps Band A -> Band C
+  const capped = computeWritingBandSummary(makeScores([5, 5, 5, 4, 4, 4]), false);
+  assert.equal(capped.totalMarks, 27);
+  assert.equal(capped.overallBand, 'C');
+  assert.equal(capped.bandCappedByTopicAdherence, true);
+  assert.equal(capped.overallBandEstimate, 'solid');
+
+  // Configurable GEMINI_WRITING_MODEL override
+  const prevModel = process.env.GEMINI_WRITING_MODEL;
+  process.env.GEMINI_WRITING_MODEL = 'gemini-3.5-flash-lite';
+  try {
+    const writQ = makeQuestion('w2', 'WRIT', 'WRIT.CRIT.IDEAS_CREATIVITY');
+    const evalRec = await evaluateWritingWithGemini({
+      submissionId: 'wsub_test_2',
+      question: writQ,
+      planNotes: '',
+      responseText: 'Unrelated text.',
+      metrics: {
+        wordCount: 2,
+        paragraphCount: 1,
+        sentenceCount: 1,
+        avgWordsPerSentence: 2,
+        typeTokenRatio: 1,
+        matchedMandatoryStarter: false,
+      },
+      generateTextFn: async () =>
+        JSON.stringify({
+          topicAdherencePass: false,
+          criteriaScores: WRITING_CRITERIA.map((id) => ({
+            criterionSkillId: id,
+            score: 5,
+            comment: 'Good style but off topic.',
+          })),
+          topStrengths: ['Clear sentences'],
+          priorityFixes: ['Address the prompt'],
+        }),
+    });
+    assert.equal(evalRec.modelId, 'gemini-3.5-flash-lite');
+    assert.equal(evalRec.totalMarks, 30);
+    assert.equal(evalRec.overallBand, 'C');
+    assert.equal(evalRec.bandCappedByTopicAdherence, true);
+  } finally {
+    if (prevModel === undefined) delete process.env.GEMINI_WRITING_MODEL;
+    else process.env.GEMINI_WRITING_MODEL = prevModel;
+  }
 });

@@ -347,6 +347,31 @@ export interface WritingDeterministicMetrics {
   matchedMandatoryStarter: boolean;
 }
 
+export type WritingBandLetter = 'A' | 'B' | 'C' | 'D' | 'E';
+
+export const WRITING_CRITERION_MAX_MARKS = 5;
+export const WRITING_MAX_TOTAL_MARKS = 30;
+
+export const WRITING_BAND_DESCRIPTORS: Record<
+  WritingBandLetter,
+  { label: string; minMarks: number; maxMarks: number }
+> = {
+  A: { label: 'Extensive — Top Selective Band', minMarks: 25, maxMarks: 30 },
+  B: { label: 'Thorough — Strong', minMarks: 19, maxMarks: 24 },
+  C: { label: 'Sound — Solid', minMarks: 13, maxMarks: 18 },
+  D: { label: 'Basic — Developing', minMarks: 7, maxMarks: 12 },
+  E: { label: 'Elementary — Emerging', minMarks: 0, maxMarks: 6 },
+};
+
+export interface WritingCriterionScore {
+  criterionSkillId: string;
+  score: number;
+  maxMarks?: number;
+  band?: WritingBandLetter;
+  evidenceQuote?: string;
+  comment: string;
+}
+
 export interface WritingEvaluationRecord {
   evaluationId: string;
   submissionId: string;
@@ -354,7 +379,12 @@ export interface WritingEvaluationRecord {
   modelId?: string;
   topicAdherencePass: boolean;
   overallBandEstimate: 'developing' | 'solid' | 'strong' | 'top_band';
-  criteriaScores: { criterionSkillId: string; score: number; evidenceQuote?: string; comment: string }[];
+  overallBand?: WritingBandLetter;
+  overallBandDescriptor?: string;
+  totalMarks?: number;
+  maxTotalMarks?: number;
+  bandCappedByTopicAdherence?: boolean;
+  criteriaScores: WritingCriterionScore[];
   topStrengths: string[];
   priorityFixes: string[];
   createdAt: string;

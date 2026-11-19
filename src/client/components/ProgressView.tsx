@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
 import { api, type ProgressResponse } from '../api';
-import type { SectionCode } from '../../shared/contracts';
+import { WRITING_CRITERION_MAX_MARKS, type SectionCode, type WritingBandLetter, type WritingEvaluationRecord } from '../../shared/contracts';
+
+function legacyEstimateToBand(est: WritingEvaluationRecord['overallBandEstimate']): WritingBandLetter {
+  if (est === 'top_band') return 'A';
+  if (est === 'strong') return 'B';
+  if (est === 'solid') return 'C';
+  return 'D';
+}
 
 interface ProgressViewProps {
   onOpenSession: (sessionId: string) => void;
@@ -390,28 +397,52 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
           </p>
         ) : (
           <div className="space-y-3">
-            {data.writingSubmissions.map((sub) => (
-              <div
-                key={sub.submissionId}
-                className="p-5 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-elevated)] space-y-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--text-secondary)] tabular-nums">
-                  <span>
-                    {new Date(sub.submittedAt).toLocaleString()} · {sub.wordCount} words · {sub.evaluations.length} evaluation(s)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onOpenSession(sub.sessionId)}
-                    className="text-[var(--accent-primary)] font-semibold hover:underline cursor-pointer"
-                  >
-                    Open Review →
-                  </button>
+            {data.writingSubmissions.map((sub) => {
+              const latestEval = sub.evaluations[0];
+              const evalBand = latestEval
+                ? latestEval.overallBand ?? legacyEstimateToBand(latestEval.overallBandEstimate)
+                : null;
+              const evalMarks = latestEval
+                ? latestEval.totalMarks ?? latestEval.criteriaScores.reduce((sum, c) => sum + Math.round(c.score), 0)
+                : null;
+              const evalMax = latestEval
+                ? latestEval.maxTotalMarks ?? latestEval.criteriaScores.length * WRITING_CRITERION_MAX_MARKS
+                : null;
+              return (
+                <div
+                  key={sub.submissionId}
+                  className="p-5 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-elevated)] space-y-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--text-secondary)] tabular-nums">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>
+                        {new Date(sub.submittedAt).toLocaleString()} · {sub.wordCount} words
+                      </span>
+                      {latestEval && evalBand ? (
+                        <span className="px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-bold">
+                          Band {evalBand} · {evalMarks}/{evalMax}
+                          {latestEval.bandCappedByTopicAdherence ? ' (capped)' : ''}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-[var(--text-muted)] font-medium">
+                          Not yet graded
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenSession(sub.sessionId)}
+                      className="text-[var(--accent-primary)] font-semibold hover:underline cursor-pointer"
+                    >
+                      Open Review →
+                    </button>
+                  </div>
+                  <p className="text-sm text-[var(--text-primary)] line-clamp-3 whitespace-pre-line">
+                    {sub.responseText}
+                  </p>
                 </div>
-                <p className="text-sm text-[var(--text-primary)] line-clamp-3 whitespace-pre-line">
-                  {sub.responseText}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

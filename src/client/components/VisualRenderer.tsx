@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ImageOff, Maximize2, X } from 'lucide-react';
 import type { VisualSpec } from '../../shared/contracts';
 
@@ -17,6 +17,10 @@ interface VisualRendererProps {
 export function VisualRenderer({ visual, compact = false }: VisualRendererProps) {
   const [zoomOpen, setZoomOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [visual?.imageUrl]);
 
   if (!visual || visual.visualType === 'none') return null;
 

@@ -236,6 +236,7 @@ export type ApiError = Error & {
   currentRevision?: number;
   serverCheckpoint?: SessionRecord['checkpoint'];
   expiredAutoSubmitted?: boolean;
+  alreadySubmitted?: boolean;
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -269,6 +270,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       currentRevision?: number;
       serverCheckpoint?: SessionRecord['checkpoint'];
       expiredAutoSubmitted?: boolean;
+      alreadySubmitted?: boolean;
     };
     const err = new Error(payload?.error || `Request failed (${res.status})`) as ApiError;
     err.status = res.status;
@@ -277,6 +279,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     if (payload?.serverCheckpoint) err.serverCheckpoint = payload.serverCheckpoint;
     if (typeof payload?.expiredAutoSubmitted === 'boolean') {
       err.expiredAutoSubmitted = payload.expiredAutoSubmitted;
+    }
+    if (typeof payload?.alreadySubmitted === 'boolean') {
+      err.alreadySubmitted = payload.alreadySubmitted;
     }
     throw err;
   }
@@ -355,7 +360,13 @@ export const api = {
     checkpoint: NonNullable<SessionRecord['checkpoint']>,
     expectedRevision?: number
   ) =>
-    request<{ ok: boolean; revision: number }>(
+    request<{
+      ok: boolean;
+      checkpointRevision: number;
+      revision?: number;
+      savedAtIso?: string;
+      serverNowIso?: string;
+    }>(
       `/api/student/sessions/${encodeURIComponent(id)}/checkpoint`,
       {
         method: 'PATCH',

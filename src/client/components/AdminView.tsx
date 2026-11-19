@@ -1739,7 +1739,7 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
                   </div>
                   <div>Session Secret: {diagnostics.sessionSecretConfigured ? 'Configured' : 'Ephemeral/Unset'}</div>
                   <div>
-                    Gemini Decisions: {diagnostics.geminiModel || 'gemini-4-hydrogen'} (
+                    Gemini Decisions: {diagnostics.geminiModel || 'Not reported'} (
                     {diagnostics.geminiConfigured ? 'Configured' : 'Unset'})
                   </div>
                   <div>Local PIN Auth: {diagnostics.localDevPinEnabled ? 'Enabled' : 'Disabled'}</div>
