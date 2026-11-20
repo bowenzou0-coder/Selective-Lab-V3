@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { signInWithPopup, type User } from 'firebase/auth';
-import { Lock } from 'lucide-react';
 import { auth, googleAuthProvider } from '../../lib/firebase';
 import { api, type AuthState } from '../api';
+import { IsometricBookStarIllustration } from './StudioIllustrations';
 
 function formatFirebaseAuthError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err || 'Google sign-in failed.');
@@ -10,13 +10,16 @@ function formatFirebaseAuthError(err: unknown): string {
   const combined = `${code} ${msg}`;
   if (combined.includes('auth/unauthorized-domain')) {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-    return `Google Sign-In is blocked for ${host}. Add this domain in Firebase Console → Authentication → Settings → Authorized domains.`;
+    return `Google Sign-In is blocked for ${host}. Add this domain in Firebase Console under Authentication Authorized domains.`;
   }
   if (combined.includes('auth/popup-blocked')) {
     return 'Sign-in pop-up was blocked by your browser. Allow pop-ups for this site and try again.';
   }
   if (combined.includes('auth/popup-closed-by-user')) {
     return 'Sign-in pop-up was closed before completing.';
+  }
+  if (combined.includes('auth/cancelled-popup-request')) {
+    return 'A sign-in pop-up is already open. Please complete or close it and try again.';
   }
   return msg;
 }
@@ -95,46 +98,57 @@ export function StudentPinGate({
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6 bg-[var(--bg-canvas)]">
-      <div className="w-full max-w-md bg-[var(--bg-elevated)] border border-[var(--border-hairline)] rounded-[var(--radius-lg)] p-8">
-        <div className="flex items-center gap-2.5 text-[var(--text-secondary)] text-xs font-medium mb-3">
-          <Lock className="w-4 h-4 text-[var(--accent-primary)]" />
-          <span>Selective Lab</span>
+    <main className="min-h-screen flex flex-col items-center justify-center px-5 py-10 bg-[#F3EFE8]">
+      <div className="w-full max-w-[440px] bg-white border border-[#E5DFD5] rounded-[18px] p-8 shadow-[0_2px_8px_rgba(17,60,54,0.04)]">
+        <div className="flex items-start justify-between gap-4 mb-5">
+          <div>
+            <div className="font-serif-display font-extrabold text-[22px] tracking-[-0.02em] text-[#113C36]">
+              Selective Lab
+            </div>
+            <h1 className="mt-3 font-sans-display font-semibold text-[22px] tracking-[-0.015em] text-[#113C36]">
+              Welcome back
+            </h1>
+          </div>
+          <IsometricBookStarIllustration className="w-20 h-16 shrink-0 -mt-1" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)] mb-2">
-          Sign in to Selective Lab
-        </h1>
-        <p className="text-sm text-[var(--text-secondary)] mb-6">
-          Sign in with Google to sync your practice tests, question progress, and mastery stats across devices.
+
+        <p className="text-sm text-[#4A5955] leading-relaxed mb-6">
+          Sign in with Google to keep your practice drills, writing feedback, and progress synced across devices.
         </p>
 
         <button
           type="button"
           disabled={googleLoading || loading}
           onClick={handleGoogleSignIn}
-          className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold text-sm inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 cursor-pointer"
+          className="w-full py-2.5 px-4 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] font-sans-display font-semibold text-sm inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 cursor-pointer"
         >
           <GoogleBadgeIcon />
-          <span>{googleLoading ? 'Syncing with Google...' : 'Sign in with Google'}</span>
+          <span>{googleLoading ? 'Signing in with Google...' : 'Sign in with Google'}</span>
         </button>
 
         {!localDevPinEnabled && displayError && (
-          <p role="alert" className="mt-4 text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+          <p
+            role="alert"
+            className="mt-4 text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3.5 py-2.5 rounded-[10px]"
+          >
             {displayError}
           </p>
         )}
 
         {localDevPinEnabled && (
           <>
-            <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
-              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
-              <span>or local dev student pin</span>
-              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
+            <div className="my-5 flex items-center gap-3 text-xs text-[#78756E]">
+              <div className="flex-1 h-px bg-[#E5DFD5]" />
+              <span>or continue with student PIN</span>
+              <div className="flex-1 h-px bg-[#E5DFD5]" />
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="student-pin-input" className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">
+                <label
+                  htmlFor="student-pin-input"
+                  className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
+                >
                   Student PIN
                 </label>
                 <input
@@ -145,12 +159,15 @@ export function StudentPinGate({
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   placeholder="Enter PIN (default: 1234)"
-                  className="w-full px-3.5 py-2.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-primary)] tabular-nums text-base focus:outline-none focus:border-[var(--accent-primary)]"
+                  className="w-full px-3.5 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] text-[#113C36] tabular-nums text-base focus:outline-none focus:border-[#113C36] focus:bg-white transition-colors"
                 />
               </div>
 
               {displayError && (
-                <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+                <p
+                  role="alert"
+                  className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3.5 py-2.5 rounded-[10px]"
+                >
                   {displayError}
                 </p>
               )}
@@ -158,22 +175,22 @@ export function StudentPinGate({
               <button
                 type="submit"
                 disabled={loading || googleLoading}
-                className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
               >
-                {loading ? 'Verifying...' : 'Unlock with Student PIN'}
+                {loading ? 'Checking PIN...' : 'Continue with student PIN'}
               </button>
             </form>
           </>
         )}
 
-        <div className="mt-6 pt-4 border-t border-[var(--border-hairline)] flex items-center justify-between text-xs text-[var(--text-muted)]">
-          <span>Server-authoritative sync</span>
+        <div className="mt-6 pt-4 border-t border-[#E5DFD5] flex items-center justify-between text-xs text-[#78756E]">
+          <span>Progress saved automatically</span>
           <button
             type="button"
             onClick={onGoAdmin}
-            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline underline-offset-2 cursor-pointer"
+            className="text-[#4A5955] hover:text-[#113C36] font-medium underline underline-offset-2 cursor-pointer"
           >
-            Admin Console
+            Parent and tutor admin
           </button>
         </div>
       </div>
@@ -187,12 +204,14 @@ export function AdminPasswordGate({
   onBackHome,
   localDevPinEnabled = true,
   initialError = '',
+  embedded = false,
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onGoogleAuthenticated: (user: User) => Promise<void>;
   onBackHome: () => void;
   localDevPinEnabled?: boolean;
   initialError?: string;
+  embedded?: boolean;
 }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -232,56 +251,67 @@ export function AdminPasswordGate({
   };
 
   return (
-    <main className="min-h-[75vh] flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-md bg-[var(--bg-elevated)] border border-[var(--border-hairline)] rounded-[var(--radius-lg)] p-8">
-        <div className="flex items-center gap-2 text-[var(--text-secondary)] text-xs font-medium mb-2">
-          <Lock className="w-4 h-4 text-[var(--accent-primary)]" />
-          <span>Parent &amp; Tutor Administration</span>
+    <main
+      className={`${
+        embedded ? 'py-16 px-6' : 'min-h-screen px-5 py-10 bg-[#F3EFE8]'
+      } flex flex-col items-center justify-center`}
+    >
+      <div className="w-full max-w-[440px] bg-white border border-[#E5DFD5] rounded-[18px] p-8 shadow-[0_2px_8px_rgba(17,60,54,0.04)]">
+        <div className="font-serif-display font-extrabold text-[20px] tracking-[-0.02em] text-[#113C36]">
+          Selective Lab
         </div>
-        <h1 className="text-xl font-bold text-[var(--text-primary)] mb-2">Admin Sign In</h1>
-        <p className="text-sm text-[var(--text-secondary)] mb-6">
-          Authenticate with an authorized Admin Google account to access the Question Browser, Calibration Simulator, Manifest Importer, and Config Versioning.
+        <h1 className="mt-3 font-sans-display font-semibold text-[21px] tracking-[-0.015em] text-[#113C36] mb-2">
+          Admin sign in
+        </h1>
+        <p className="text-sm text-[#4A5955] leading-relaxed mb-6">
+          Sign in with an authorized admin account to manage the question bank, calibration simulator, imports, and settings.
         </p>
 
         <button
           type="button"
           disabled={googleLoading || loading}
           onClick={handleGoogleSignIn}
-          className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold text-sm inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 cursor-pointer"
+          className="w-full py-2.5 px-4 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] font-sans-display font-semibold text-sm inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 cursor-pointer"
         >
           <GoogleBadgeIcon />
-          <span>{googleLoading ? 'Syncing with Google...' : 'Sign in with Admin Google'}</span>
+          <span>{googleLoading ? 'Signing in with Google...' : 'Sign in with admin Google'}</span>
         </button>
 
         {!localDevPinEnabled && (
           <div className="mt-4 space-y-3">
             {displayError && (
-              <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+              <p
+                role="alert"
+                className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3.5 py-2.5 rounded-[10px]"
+              >
                 {displayError}
               </p>
             )}
             <button
               type="button"
               onClick={onBackHome}
-              className="w-full py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-[10px] border border-[#CFC6B9] text-sm font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] cursor-pointer"
             >
-              Back
+              Back to studio
             </button>
           </div>
         )}
 
         {localDevPinEnabled && (
           <>
-            <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
-              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
-              <span>or local dev admin password</span>
-              <div className="flex-1 h-px bg-[var(--border-hairline)]" />
+            <div className="my-5 flex items-center gap-3 text-xs text-[#78756E]">
+              <div className="flex-1 h-px bg-[#E5DFD5]" />
+              <span>or use admin password</span>
+              <div className="flex-1 h-px bg-[#E5DFD5]" />
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="admin-password-input" className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">
-                  Admin Password
+                <label
+                  htmlFor="admin-password-input"
+                  className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
+                >
+                  Admin password
                 </label>
                 <input
                   id="admin-password-input"
@@ -289,12 +319,15 @@ export function AdminPasswordGate({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter admin password"
-                  className="w-full px-3.5 py-2.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
+                  className="w-full px-3.5 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] text-[#113C36] text-sm focus:outline-none focus:border-[#113C36] focus:bg-white transition-colors"
                 />
               </div>
 
               {displayError && (
-                <p role="alert" className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3 py-2 rounded-[var(--radius-sm)]">
+                <p
+                  role="alert"
+                  className="text-xs font-medium text-[var(--status-error)] bg-[var(--status-error-bg)] px-3.5 py-2.5 rounded-[10px]"
+                >
                   {displayError}
                 </p>
               )}
@@ -303,14 +336,14 @@ export function AdminPasswordGate({
                 <button
                   type="submit"
                   disabled={loading || googleLoading}
-                  className="flex-1 py-2.5 px-4 rounded-[var(--radius-sm)] bg-[var(--text-primary)] hover:opacity-90 text-white font-semibold text-sm transition-opacity disabled:opacity-60 cursor-pointer"
+                  className="flex-1 py-2.5 px-4 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
                 >
-                  {loading ? 'Signing in...' : 'Open Admin Console'}
+                  {loading ? 'Signing in...' : 'Open admin console'}
                 </button>
                 <button
                   type="button"
                   onClick={onBackHome}
-                  className="py-2.5 px-4 rounded-[var(--radius-sm)] border border-[var(--border-strong)] text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  className="py-2.5 px-4 rounded-[10px] border border-[#CFC6B9] text-sm font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-[#FAF8F5] cursor-pointer"
                 >
                   Back
                 </button>

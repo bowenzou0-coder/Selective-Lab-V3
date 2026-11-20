@@ -460,3 +460,163 @@ test('Banded A-E writing rubric scores 0..5 cleanly, computes deterministic tota
     else process.env.GEMINI_WRITING_MODEL = prevModel;
   }
 });
+
+test('Auto-Calibrate with gemini-decision-1 dynamically adjusts total question volume and skews toward urgent sections', async () => {
+  const { allocateAutoCalibratedDailyPlan } = await import('./geminiPlanner.ts');
+  const { selectPoolMockQuestions, selectPracticeSession } = await import('../shared/engine.ts');
+
+  const mathHeavy = allocateAutoCalibratedDailyPlan({
+    volumeScore: 4, // max load
+    sectionScores: { READ: 1, MATH: 4, THINK: 1 },
+    includeWriting: false,
+    availableBySection: { READ: 10, MATH: 10, THINK: 10, WRIT: 2 },
+    autoConfig: { enabled: true, minDailyQuestions: 6, maxDailyQuestions: 14, includeWriting: false },
+  });
+  const totalMathHeavy =
+    mathHeavy.dailyQuestionLimitBySection.READ +
+    mathHeavy.dailyQuestionLimitBySection.MATH +
+    mathHeavy.dailyQuestionLimitBySection.THINK;
+  assert.equal(totalMathHeavy, 14);
+  assert.ok(mathHeavy.dailyQuestionLimitBySection.MATH > mathHeavy.dailyQuestionLimitBySection.READ);
+  assert.ok(mathHeavy.dailyQuestionLimitBySection.MATH > mathHeavy.dailyQuestionLimitBySection.THINK);
+
+  const lightDay = allocateAutoCalibratedDailyPlan({
+    volumeScore: 0, // min load
+    sectionScores: { READ: 4, MATH: 1, THINK: 1 },
+    includeWriting: true,
+    availableBySection: { READ: 10, MATH: 10, THINK: 10, WRIT: 2 },
+    autoConfig: { enabled: true, minDailyQuestions: 6, maxDailyQuestions: 14, includeWriting: true },
+  });
+  assert.equal(
+    lightDay.dailyQuestionLimitBySection.READ +
+      lightDay.dailyQuestionLimitBySection.MATH +
+      lightDay.dailyQuestionLimitBySection.THINK,
+    6
+  );
+  assert.equal(lightDay.dailyQuestionLimitBySection.WRIT, 1);
+  assert.ok(lightDay.dailyQuestionLimitBySection.READ > lightDay.dailyQuestionLimitBySection.MATH);
+
+  // Full generateGeminiFocusOverride with autoCalibrate enabled
+  const questions = [
+    makeQuestion('r1', 'READ', 'READ.FIC.CHARACTER_INFERENCE'),
+    makeQuestion('r2', 'READ', 'READ.POEM.FIGURATIVE_IMAGERY'),
+    makeQuestion('r3', 'READ', 'READ.CLOZE.CONTEXT_NUANCE'),
+    makeQuestion('m1', 'MATH', 'MATH.GEO2D.COMPOSITE_AREA'),
+    makeQuestion('m2', 'MATH', 'MATH.NUM.NUMBER_SEQUENCES'),
+    makeQuestion('m3', 'MATH', 'MATH.PROB.COMBINATORICS'),
+    makeQuestion('m4', 'MATH', 'MATH.ALG.LINEAR_EQUATIONS'),
+    makeQuestion('m5', 'MATH', 'MATH.MEAS.VOLUME_CAPACITY'),
+    makeQuestion('t1', 'THINK', 'THINK.DEDUCT.SET_SYLLOGISMS'),
+    makeQuestion('t2', 'THINK', 'THINK.CRIT.FLAW_DETECTION'),
+    makeQuestion('h1', 'MATH', 'MATH.GEO2D.COMPOSITE_AREA', 'benchmark_holdout'),
+  ];
+
+  const basePlan = buildDeterministicDailyFocusPlan({
+    studentId: 'auto_stu',
+    questions,
+    skillStates: {},
+    evidenceMap: {},
+    questionMemory: {},
+    config: {
+      ...DEFAULT_LEARNING_CONFIG,
+      autoCalibrate: { enabled: true, minDailyQuestions: 6, maxDailyQuestions: 10, includeWriting: false },
+    },
+    nowIso: '2026-11-18T08:00:00Z',
+  });
+  const ranked = computeRankedSkillCandidates({
+    questions,
+    skillStates: {},
+    evidenceMap: {},
+    questionMemory: {},
+    nowIso: '2026-11-18T08:00:00Z',
+  });
+
+  const calibrated = await generateGeminiFocusOverride({
+    basePlan,
+    candidates: ranked,
+    availableBySection: { READ: 3, MATH: 5, THINK: 2, WRIT: 0 },
+    autoCalibrate: { enabled: true, minDailyQuestions: 6, maxDailyQuestions: 10, includeWriting: false },
+    decideFn: async ({ questions: decisionQs }) => {
+      assert.equal(decisionQs.daily_volume.type, 'score');
+      assert.equal(decisionQs.section_share_MATH.type, 'score');
+      const answers: DecisionAnswerMap = {
+        daily_volume: scoreAnswer(4),
+        section_share_READ: scoreAnswer(1),
+        section_share_MATH: scoreAnswer(4),
+        section_share_THINK: scoreAnswer(1),
+        recommended_section: { type: 'choice', choice: 'MATH', probabilities: {}, confidence: 0.92 },
+      };
+      ranked.forEach((_, idx) => {
+        answers[`skill_${idx}`] = scoreAnswer(3);
+      });
+      return answers;
+    },
+  });
+
+  assert.ok(calibrated);
+  assert.equal(calibrated.autoCalibrated, true);
+  assert.ok(calibrated.dailyQuestionLimitBySection);
+  assert.equal(calibrated.dailyQuestionLimitBySection.MATH, 5); // capped at available MATH stock
+
+  // Pool-drawn mock excludes holdouts & prioritizes unseen questions first
+  const seenMemory = {
+    m1: {
+      questionFamilyId: 'm1',
+      timesSeen: 2,
+      lastSeenAt: '2026-11-17T08:00:00Z',
+      lastAllCorrect: true,
+      nextDueAt: '2026-11-24T08:00:00Z',
+      intervalDays: 7,
+      lapseCount: 0,
+    },
+  };
+  const poolMock = selectPoolMockQuestions({
+    questions,
+    sectionFilter: 'MATH',
+    questionCount: 4,
+    questionMemory: seenMemory,
+    seed: 11,
+  });
+  assert.equal(poolMock.length, 4);
+  assert.equal(poolMock.some((q) => q.poolType === 'benchmark_holdout'), false);
+  assert.equal(poolMock.some((q) => q.questionId === 'm1_v1'), false); // 4 unseen math items win ahead of seen m1
+
+  // autoRetireMastered excludes retained questions from regular practice selection
+  const retainedEvidence = {
+    m2__ev_m2: {
+      evidenceKey: 'm2__ev_m2',
+      questionFamilyId: 'm2',
+      questionId: 'm2_v1',
+      evidenceRevision: 'ev_m2',
+      section: 'MATH' as const,
+      status: 'retained' as const,
+      cleanPassesCount: 3,
+      passTimestampsIso: [],
+      everCleanPassed: true,
+      firstSubmissionCleanPass: true,
+      attemptsCount: 3,
+      resetCount: 0,
+      lastAllCorrect: true,
+      policyVersion: 'v3',
+      updatedAtIso: '2026-11-17T08:00:00Z',
+    },
+  };
+  const practiceAfterRetire = selectPracticeSession({
+    mode: 'section_drill',
+    sectionFilter: 'MATH',
+    questions,
+    skillStates: {},
+    questionMemory: {},
+    evidenceMap: retainedEvidence,
+    questionCountOverride: 5,
+    config: {
+      ...DEFAULT_LEARNING_CONFIG,
+      poolPolicy: { autoRetireMastered: true },
+    },
+    nowIso: '2026-11-18T08:00:00Z',
+    seed: 7,
+  });
+  assert.equal(practiceAfterRetire.some((q) => q.questionId === 'm2_v1'), false);
+  assert.equal(practiceAfterRetire.length, 4);
+});
+

@@ -245,11 +245,8 @@ export class PostgresRepository implements AppRepository {
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT role FROM users WHERE uid = $1', [input.uid]);
     const isAdmin =
-      input.isBootstrappedAdmin ||
-      input.email.toLowerCase() === getBootstrappedAdminEmail().toLowerCase() ||
-      rows[0]?.role === 'admin';
+      input.email.trim().toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
     const role: 'student' | 'admin' = isAdmin ? 'admin' : 'student';
     const displayName = (input.displayName || input.email.split('@')[0] || 'Learner').slice(0, 120);
     await this.pool.query(

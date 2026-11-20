@@ -1,138 +1,204 @@
-interface TopNavProps {
+import { useState, type ReactNode } from 'react';
+import {
+  BarChart3,
+  BookOpenCheck,
+  Clock,
+  LayoutGrid,
+  LogOut,
+  SlidersHorizontal,
+} from 'lucide-react';
+
+export interface StudioShellProps {
   currentPath: string;
+  role: 'student' | 'admin' | null;
+  studentId?: string | null;
   onNavigate: (path: string) => void;
-  onPrimaryAction: () => void;
-  primaryLabel: string;
+  onSignOut: () => void;
+  banner?: ReactNode;
+  children: ReactNode;
 }
 
-export function TopNav({ currentPath, onNavigate, onPrimaryAction, primaryLabel }: TopNavProps) {
-  const linkClass = (active: boolean) =>
-    `text-sm font-medium whitespace-nowrap shrink-0 transition-colors pb-0.5 border-b ${
-      active
-        ? 'text-[var(--text-primary)] border-[var(--accent-primary)]'
-        : 'text-[var(--text-secondary)] border-transparent hover:text-[var(--text-primary)]'
-    }`;
+type NavKey = 'dashboard' | 'drills' | 'mocks' | 'progress' | 'admin';
+
+export function StudioShell({
+  currentPath,
+  role,
+  onNavigate,
+  onSignOut,
+  banner,
+  children,
+}: StudioShellProps) {
+  const [homeAnchor, setHomeAnchor] = useState<'top' | 'drills' | 'mocks'>('top');
+
+  const activeKey: NavKey = currentPath.startsWith('/admin')
+    ? 'admin'
+    : currentPath.startsWith('/progress')
+      ? 'progress'
+      : homeAnchor === 'drills'
+        ? 'drills'
+        : homeAnchor === 'mocks'
+          ? 'mocks'
+          : 'dashboard';
+
+  const handleNav = (key: NavKey) => {
+    if (key === 'dashboard') {
+      setHomeAnchor('top');
+      onNavigate('/');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    if (key === 'drills') {
+      setHomeAnchor('drills');
+      onNavigate('/');
+      window.setTimeout(() => {
+        document.getElementById('practice-drills')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+      return;
+    }
+    if (key === 'mocks') {
+      setHomeAnchor('mocks');
+      onNavigate('/');
+      window.setTimeout(() => {
+        document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+      return;
+    }
+    setHomeAnchor('top');
+    onNavigate(key === 'progress' ? '/progress' : '/admin');
+  };
+
+  const navItems: { key: NavKey; label: string; shortLabel: string; href: string; icon: typeof LayoutGrid }[] = [
+    { key: 'dashboard', label: 'Dashboard', shortLabel: 'Home', href: '/', icon: LayoutGrid },
+    { key: 'drills', label: 'Practice drills', shortLabel: 'Drills', href: '/#practice-drills', icon: BookOpenCheck },
+    { key: 'mocks', label: 'Mock tests', shortLabel: 'Mocks', href: '/#mock-simulator', icon: Clock },
+    { key: 'progress', label: 'Progress', shortLabel: 'Progress', href: '/progress', icon: BarChart3 },
+    { key: 'admin', label: 'Admin', shortLabel: 'Admin', href: '/admin', icon: SlidersHorizontal },
+  ];
 
   return (
-    <header className="w-full border-b border-[var(--border-hairline)] bg-[var(--bg-elevated)]">
-      <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-8">
+    <div className="min-h-screen bg-[#F3EFE8] text-[#113C36] flex flex-col">
+      {banner}
+
+      {/* Mobile Top Brand Header */}
+      <header className="md:hidden px-4 pt-3.5 pb-2.5 flex items-center justify-between gap-3 bg-[#F3EFE8]">
         <a
           href="/"
           onClick={(e) => {
             e.preventDefault();
-            onNavigate('/');
+            handleNav('dashboard');
           }}
-          className="text-lg font-bold tracking-tight text-[var(--text-primary)] whitespace-nowrap shrink-0"
+          className="font-serif-display font-extrabold text-[21px] tracking-[-0.02em] text-[#113C36] leading-none"
         >
           Selective Lab
         </a>
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Sign out</span>
+        </button>
+      </header>
 
-        <nav className="hidden md:flex items-center gap-6" aria-label="Main navigation">
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('/');
-            }}
-            className={linkClass(currentPath === '/')}
-          >
-            Practice
-          </a>
-          <a
-            href="/#mock-simulator"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('/');
-              setTimeout(() => {
-                document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth' });
-              }, 50);
-            }}
-            className={linkClass(false)}
-          >
-            Mock Tests
-          </a>
-          <a
-            href="/progress"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('/progress');
-            }}
-            className={linkClass(currentPath.startsWith('/progress'))}
-          >
-            Progress
-          </a>
-          <a
-            href="/admin"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate('/admin');
-            }}
-            className={linkClass(currentPath.startsWith('/admin'))}
-          >
-            Admin
-          </a>
-        </nav>
+      <div className="flex-1 flex flex-col md:flex-row w-full max-w-[1440px] mx-auto">
+        {/* Desktop Oat Studio Left Sidebar (208px) */}
+        <aside className="hidden md:flex md:w-[208px] shrink-0 flex-col justify-between sticky top-0 h-screen px-4 py-6 bg-[#F3EFE8]">
+          <div className="space-y-7">
+            <a
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                handleNav('dashboard');
+              }}
+              className="block px-2.5 font-serif-display font-extrabold text-[22px] tracking-[-0.02em] text-[#113C36] leading-tight"
+            >
+              Selective Lab
+            </a>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={onPrimaryAction}
-            className="px-4 py-2 text-xs font-semibold rounded-[var(--radius-sm)] bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary-hover)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            {primaryLabel}
-          </button>
+            <nav className="space-y-1" aria-label="Main navigation">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeKey === item.key;
+                return (
+                  <a
+                    key={item.key}
+                    href={item.href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleNav(item.key);
+                    }}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-all whitespace-nowrap ${
+                      isActive
+                        ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5] shadow-[0_1px_2px_rgba(17,60,54,0.05)]'
+                        : 'text-[#4A5955] font-sans-text font-medium hover:text-[#113C36] hover:bg-white/55 border border-transparent'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0 opacity-85" />
+                    <span>{item.label}</span>
+                  </a>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Subtle Learner / Sync Badge + Sign Out */}
+          <div className="pt-4 border-t border-[#E5DFD5] space-y-2.5 px-1">
+            <div className="flex items-center gap-2 px-1.5 text-xs text-[#4A5955]">
+              <span className="w-2 h-2 rounded-full bg-[#1D6346] shrink-0" aria-hidden="true" />
+              <span className="truncate font-medium">
+                {role === 'admin' ? 'Admin workspace' : 'Synced account'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-[10px] text-[13px] font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Floating Warm White Studio Canvas */}
+        <div className="flex-1 min-w-0 px-3 pb-24 md:py-3.5 md:pr-4 md:pl-0">
+          <div className="bg-white rounded-[18px] border border-[#E5DFD5] shadow-[0_1px_3px_rgba(17,60,54,0.03)] min-h-[calc(100vh-1.75rem)] overflow-x-clip">
+            {children}
+          </div>
         </div>
       </div>
 
-      {/* Mobile navigation strip */}
+      {/* Collapsible Mobile Bottom Navigation Strip */}
       <nav
-        className="md:hidden border-t border-[var(--border-hairline)] px-4 py-2 flex items-center justify-around gap-3 bg-[var(--bg-surface)]"
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#F3EFE8]/95 backdrop-blur-sm border-t border-[#E5DFD5] px-2 py-2 flex items-center justify-around gap-1"
         aria-label="Mobile navigation"
       >
-        <a
-          href="/"
-          onClick={(e) => {
-            e.preventDefault();
-            onNavigate('/');
-          }}
-          className={linkClass(currentPath === '/')}
-        >
-          Practice
-        </a>
-        <a
-          href="/#mock-simulator"
-          onClick={(e) => {
-            e.preventDefault();
-            onNavigate('/');
-            setTimeout(() => {
-              document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth' });
-            }, 50);
-          }}
-          className={linkClass(false)}
-        >
-          Mock Tests
-        </a>
-        <a
-          href="/progress"
-          onClick={(e) => {
-            e.preventDefault();
-            onNavigate('/progress');
-          }}
-          className={linkClass(currentPath.startsWith('/progress'))}
-        >
-          Progress
-        </a>
-        <a
-          href="/admin"
-          onClick={(e) => {
-            e.preventDefault();
-            onNavigate('/admin');
-          }}
-          className={linkClass(currentPath.startsWith('/admin'))}
-        >
-          Admin
-        </a>
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeKey === item.key;
+          return (
+            <a
+              key={item.key}
+              href={item.href}
+              onClick={(e) => {
+                e.preventDefault();
+                handleNav(item.key);
+              }}
+              aria-current={isActive ? 'page' : undefined}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-colors ${
+                isActive
+                  ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5]'
+                  : 'text-[#4A5955] font-medium'
+              }`}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              <span>{item.shortLabel}</span>
+            </a>
+          );
+        })}
       </nav>
-    </header>
+    </div>
   );
 }

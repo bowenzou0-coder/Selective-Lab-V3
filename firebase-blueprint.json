@@ -209,6 +209,9 @@
         "skillWeights": { "type": "object" },
         "algorithmAdjustments": { "type": "object" },
         "recommendedSection": { "type": "string", "enum": ["READ", "MATH", "THINK"] },
+        "dailyQuestionLimitBySection": { "type": "object" },
+        "dailyGoalMinutes": { "type": "integer" },
+        "autoCalibrated": { "type": "boolean" },
         "rationale": { "type": "string", "maxLength": 1000 }
       },
       "required": ["planDate", "studentId", "generatedAtIso", "source", "focusSkillIds", "skillWeights", "rationale"]

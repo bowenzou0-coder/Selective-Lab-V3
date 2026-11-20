@@ -13,7 +13,8 @@ import {
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
-import { api, type ApiError, type SessionDetailResponse } from '../api';
+import { api, type SessionDetailResponse } from '../api';
+import { CheckpointSaveQueue } from '../checkpointQueue';
 import type {
   MarkingResult,
   QuestionItem,
@@ -114,6 +115,9 @@ export function SessionPlayerView({
 
   // Concurrency + recoverable unsent draft UI state
   const checkpointRevisionRef = useRef<number>(1);
+  const saveQueueRef = useRef<CheckpointSaveQueue<SessionCheckpoint> | null>(null);
+  const sessionRef = useRef<SessionRecord | null>(null);
+  const submittingRef = useRef(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [conflictState, setConflictState] = useState<{
     currentRevision: number;
@@ -132,6 +136,12 @@ export function SessionPlayerView({
   useEffect(() => {
     onActiveSessionClearedRef.current = onActiveSessionCleared;
   }, [onActiveSessionCleared]);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    submittingRef.current = submitting;
+  }, [submitting]);
   const serverAnchorRef = useRef<{ serverMs: number; perfMs: number } | null>(null);
   const [, setClockTick] = useState(0);
 
@@ -193,6 +203,8 @@ export function SessionPlayerView({
   // Load authoritative session from server
   useEffect(() => {
     let active = true;
+    saveQueueRef.current?.dispose();
+    saveQueueRef.current = null;
     setLoading(true);
     setError('');
     setConflictState(null);
@@ -207,9 +219,70 @@ export function SessionPlayerView({
           serverMs: Number.isNaN(parsedServerMs) ? Date.now() : parsedServerMs,
           perfMs: performance.now(),
         };
+        sessionRef.current = res.session;
         setSession(res.session);
         setQuestions(res.questions);
-        checkpointRevisionRef.current = res.session.checkpointRevision ?? 1;
+        const initialRev = res.session.checkpointRevision ?? 1;
+        checkpointRevisionRef.current = initialRev;
+
+        const queue = new CheckpointSaveQueue<SessionCheckpoint>({
+          initialRevision: initialRev,
+          getPayload: () => checkpointRef.current,
+          canSave: () =>
+            Boolean(
+              sessionRef.current &&
+                sessionRef.current.status === 'in_progress' &&
+                !submittingRef.current
+            ),
+          saveFn: (payload, expectedRevision) =>
+            api.saveCheckpoint(res.session.sessionId, payload, expectedRevision),
+          onBeforeSave: (payload) => {
+            writeLocalDraft(draftStorageKey, payload);
+            setSaveStatus('saving');
+          },
+          onSaved: (saveRes, stillDirty) => {
+            checkpointRevisionRef.current = queue.getRevision();
+            if (saveRes.serverNowIso) {
+              const ms = Date.parse(saveRes.serverNowIso);
+              if (!Number.isNaN(ms)) {
+                serverAnchorRef.current = { serverMs: ms, perfMs: performance.now() };
+              }
+            }
+            setConflictState(null);
+            if (!stillDirty) {
+              dirtyRef.current = false;
+              clearLocalDraft(draftStorageKey);
+              setSaveStatus('saved');
+            }
+          },
+          onAlreadySubmitted: async () => {
+            clearLocalDraft(draftStorageKey);
+            dirtyRef.current = false;
+            try {
+              const refreshed = await api.getSession(res.session.sessionId);
+              if (!active) return;
+              sessionRef.current = refreshed.session;
+              setSession(refreshed.session);
+              setQuestions(refreshed.questions);
+              if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
+              if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
+              onActiveSessionClearedRef.current?.();
+            } catch {
+              if (active) setSaveStatus('failed');
+            }
+          },
+          onConflict: (conflict) => {
+            setConflictState({
+              currentRevision: conflict.currentRevision,
+              serverCheckpoint: conflict.serverCheckpoint,
+            });
+            setSaveStatus('conflict');
+          },
+          onError: () => {
+            setSaveStatus('failed');
+          },
+        });
+        saveQueueRef.current = queue;
 
         const cp = res.session.checkpoint;
         if (cp) {
@@ -263,64 +336,16 @@ export function SessionPlayerView({
       });
     return () => {
       active = false;
+      saveQueueRef.current?.dispose();
+      saveQueueRef.current = null;
     };
   }, [sessionId, isAdmin, draftStorageKey, applyCheckpointToState]);
 
-  const flushCheckpoint = useCallback(
-    async (overrideExpectedRevision?: number) => {
-      if (!session || session.status !== 'in_progress') return;
-      if (conflictState && overrideExpectedRevision === undefined) return;
-      const payload = checkpointRef.current;
-      writeLocalDraft(draftStorageKey, payload);
-      setSaveStatus('saving');
-      try {
-        const res = await api.saveCheckpoint(
-          session.sessionId,
-          payload,
-          overrideExpectedRevision ?? checkpointRevisionRef.current
-        );
-        checkpointRevisionRef.current =
-          res.checkpointRevision ?? res.revision ?? checkpointRevisionRef.current + 1;
-        if (res.serverNowIso) {
-          const parsedServerMs = Date.parse(res.serverNowIso);
-          if (!Number.isNaN(parsedServerMs)) {
-            serverAnchorRef.current = { serverMs: parsedServerMs, perfMs: performance.now() };
-          }
-        }
-        dirtyRef.current = false;
-        setConflictState(null);
-        clearLocalDraft(draftStorageKey);
-        setSaveStatus('saved');
-      } catch (err) {
-        const apiErr = err as ApiError;
-        if (apiErr.status === 409 && (apiErr.expiredAutoSubmitted || apiErr.alreadySubmitted)) {
-          clearLocalDraft(draftStorageKey);
-          dirtyRef.current = false;
-          try {
-            const refreshed = await api.getSession(session.sessionId);
-            setSession(refreshed.session);
-            setQuestions(refreshed.questions);
-            if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
-            if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
-            onActiveSessionClearedRef.current?.();
-          } catch {
-            setSaveStatus('failed');
-          }
-          return;
-        }
-        if (apiErr.status === 409 && apiErr.serverCheckpoint && typeof apiErr.currentRevision === 'number') {
-          setConflictState({
-            currentRevision: apiErr.currentRevision,
-            serverCheckpoint: apiErr.serverCheckpoint,
-          });
-          setSaveStatus('conflict');
-        } else {
-          setSaveStatus('failed');
-        }
-      }
-    },
-    [session, conflictState, draftStorageKey]
-  );
+  const flushCheckpoint = useCallback(async (overrideExpectedRevision?: number) => {
+    const queue = saveQueueRef.current;
+    if (!queue) return;
+    await queue.flush(overrideExpectedRevision);
+  }, []);
 
   // Elapsed timer, 500ms monotonic deadline clock tick, and 30s periodic autosave
   useEffect(() => {
@@ -332,7 +357,9 @@ export function SessionPlayerView({
       setClockTick((t) => (t + 1) % 100_000);
     }, 500);
     const saveTimer = window.setInterval(() => {
-      flushCheckpoint();
+      if (!saveQueueRef.current?.hasActiveConflict()) {
+        void flushCheckpoint();
+      }
     }, 30_000);
     return () => {
       window.clearInterval(secTimer);
@@ -345,7 +372,7 @@ export function SessionPlayerView({
   useEffect(() => {
     if (!session || session.status !== 'in_progress' || !dirtyRef.current) return;
     const t = window.setTimeout(() => {
-      flushCheckpoint();
+      void flushCheckpoint();
     }, 450);
     return () => window.clearTimeout(t);
   }, [
@@ -363,6 +390,7 @@ export function SessionPlayerView({
 
   const markLocalDirty = useCallback(() => {
     dirtyRef.current = true;
+    saveQueueRef.current?.markDirty();
     setSaveStatus('unsent');
     writeLocalDraft(draftStorageKey, checkpointRef.current);
   }, [draftStorageKey]);
@@ -370,6 +398,7 @@ export function SessionPlayerView({
   const handleSelectAnswer = useCallback(
     (partId: string, key: string | null) => {
       dirtyRef.current = true;
+      saveQueueRef.current?.markDirty();
       setSaveStatus('unsent');
       setAnswersByPartId((prev) => {
         const next = { ...prev, [partId]: key };
@@ -543,7 +572,8 @@ export function SessionPlayerView({
   }, [isLockedStudentSession, saveStatus]);
 
   const handleSubmit = useCallback(async () => {
-    if (!session || submitting) return;
+    if (!session || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitConfirmOpen(false);
     setSubmitting(true);
     setError('');
@@ -573,9 +603,10 @@ export function SessionPlayerView({
         }, 2500);
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [session, submitting, draftStorageKey, isTimeUp]);
+  }, [session, draftStorageKey, isTimeUp]);
 
   // Auto-submit when timed locked student session hits 00:00 on server clock
   useEffect(() => {
@@ -667,11 +698,12 @@ export function SessionPlayerView({
   const activeInspectorPart = activeInspectorQ?.parts[safeInspectorPartIdx];
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[var(--bg-canvas)]">
-      {/* Janison-Style Minimalist Exam Top Bar with Large Centered Timer + Authoritative Save Status */}
-      <header className="sticky top-0 z-30 border-b border-[var(--border-hairline)] bg-[var(--bg-elevated)]">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-2.5 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-3">
-          <div className="flex items-center gap-3 min-w-0">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[#FAF8F5] text-[#113C36]">
+      {/* Quiet Exam Room 48px #F3EFE8 Top Rail */}
+      <header className="sticky top-0 z-30 border-b border-[#E5DFD5] bg-[#F3EFE8]">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 min-h-[48px] py-1.5 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+          {/* Left: Plain title + soft emerald Saved pill */}
+          <div className="flex items-center gap-2.5 min-w-0">
             {!isLockedStudentSession && (
               <button
                 type="button"
@@ -680,91 +712,86 @@ export function SessionPlayerView({
                   onNavigate(session.mode === 'admin_calibration' ? '/admin' : '/');
                 }}
                 aria-label="Exit session and return"
-                className="p-1.5 rounded-[var(--radius-sm)] border border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] text-[var(--text-secondary)] cursor-pointer shrink-0"
+                className="p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-colors"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-3.5 h-3.5" />
               </button>
             )}
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-[var(--text-primary)] truncate">
+
+            <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+              <span className="font-sans-display font-semibold text-sm text-[#113C36] truncate">
                 {session.title || session.mode.replace(/_/g, ' ')}
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
-                <span>{isLockedStudentSession ? 'Locked exam session' : 'Calibration workspace'}</span>
-                {session.selectionDecision && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span title={session.selectionDecision.rationale}>
-                      {session.selectionDecision.source === 'gemini'
-                        ? `Gemini Decisions${session.selectionDecision.modelId ? ` (${session.selectionDecision.modelId})` : ''}`
-                        : 'Adaptive engine'}
-                    </span>
-                  </>
-                )}
-                <span aria-hidden="true">·</span>
-                {saveStatus === 'saving' && (
-                  <span className="text-[var(--text-secondary)] font-medium">Saving...</span>
-                )}
-                {saveStatus === 'saved' && (
-                  <span className="inline-flex items-center gap-1 text-[var(--status-success)] font-medium">
-                    <CloudCheck className="w-3.5 h-3.5" />
-                    <span>Saved</span>
-                  </span>
-                )}
-                {saveStatus === 'unsent' && (
-                  <span className="inline-flex items-center gap-1 text-[var(--status-warn)] font-medium">
-                    <span>Unsent local draft</span>
-                    <button
-                      type="button"
-                      onClick={() => flushCheckpoint()}
-                      className="underline hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      Save now
-                    </button>
-                  </span>
-                )}
-                {saveStatus === 'failed' && (
-                  <span className="inline-flex items-center gap-1.5 text-[var(--status-error)] font-medium">
-                    <CloudOff className="w-3.5 h-3.5" />
-                    <span>Save failed</span>
-                    <button
-                      type="button"
-                      onClick={() => flushCheckpoint()}
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--status-error)] text-[11px] hover:bg-[var(--status-error-bg)] cursor-pointer"
-                    >
-                      <RefreshCw className="w-2.5 h-2.5" />
-                      Retry
-                    </button>
-                  </span>
-                )}
-                {saveStatus === 'conflict' && (
-                  <span className="inline-flex items-center gap-1 text-[var(--status-warn)] font-semibold">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>Newer save on another device</span>
-                  </span>
-                )}
-              </div>
+              </span>
+
+              {saveStatus === 'saving' && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white/80 border border-[#E5DFD5] text-[11px] font-medium text-[#4A5955]">
+                  Saving...
+                </span>
+              )}
+              {saveStatus === 'saved' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#E5F3EC] text-[#1D6346] text-[11px] font-medium">
+                  <CloudCheck className="w-3 h-3" />
+                  <span>Saved</span>
+                </span>
+              )}
+              {saveStatus === 'unsent' && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-medium">
+                  <span>Unsent draft</span>
+                  <button
+                    type="button"
+                    onClick={() => flushCheckpoint()}
+                    className="underline hover:text-[#113C36] cursor-pointer"
+                  >
+                    Save now
+                  </button>
+                </span>
+              )}
+              {saveStatus === 'failed' && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDECEB] text-[#B42318] text-[11px] font-medium">
+                  <CloudOff className="w-3 h-3" />
+                  <span>Save failed</span>
+                  <button
+                    type="button"
+                    onClick={() => flushCheckpoint()}
+                    className="inline-flex items-center gap-1 underline hover:text-[#113C36] cursor-pointer"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    Retry
+                  </button>
+                </span>
+              )}
+              {saveStatus === 'conflict' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-semibold">
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>Updated on another device</span>
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Center Large Prominent Timer */}
+          {/* Center: Prominent AnthropicMono Countdown Clock (click to hide) */}
           <div className="flex items-center justify-center">
             <button
               type="button"
               onClick={() => setTimerHidden((v) => !v)}
               aria-label={timerHidden ? 'Show countdown timer' : 'Hide countdown timer'}
-              className={`inline-flex items-center gap-2.5 px-5 py-1.5 rounded-[var(--radius-md)] border cursor-pointer transition-colors ${
+              title={timerHidden ? 'Click to show timer' : 'Click to hide timer'}
+              className={`inline-flex items-center gap-2 px-4 py-1 rounded-[10px] border cursor-pointer transition-colors ${
                 remainingSec !== null && remainingSec <= 30 && !timerHidden
-                  ? 'border-[var(--status-error)] bg-[var(--status-error-bg)] text-[var(--status-error)]'
+                  ? 'border-[#B42318]/50 bg-[#FDECEB] text-[#B42318]'
                   : remainingSec !== null && remainingSec <= 120 && !timerHidden
-                    ? 'border-[var(--status-warn)] bg-[var(--status-warn-bg)] text-[var(--status-warn)]'
-                    : 'border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-primary)]'
+                    ? 'border-[#A35116]/40 bg-[#FDF0E2] text-[#A35116]'
+                    : 'border-[#E5DFD5] bg-white text-[#113C36] hover:border-[#CFC6B9]'
               }`}
             >
-              {timerHidden ? <Eye className="w-4 h-4 opacity-70" /> : <EyeOff className="w-4 h-4 opacity-70" />}
+              {timerHidden ? (
+                <Eye className="w-3.5 h-3.5 opacity-60" />
+              ) : (
+                <EyeOff className="w-3.5 h-3.5 opacity-55" />
+              )}
               <span
                 data-testid="exam-timer-display"
-                className="text-2xl sm:text-3xl font-bold font-mono tabular-nums tracking-tight leading-none"
+                className="font-exam-clock text-xl sm:text-[22px] tracking-tight leading-none"
               >
                 {timerHidden
                   ? '--:--'
@@ -775,19 +802,20 @@ export function SessionPlayerView({
             </button>
           </div>
 
-          <div className="flex items-center justify-start md:justify-end gap-2.5 flex-wrap">
-            <div className="text-xs font-medium text-[var(--text-secondary)] tabular-nums whitespace-nowrap">
-              Q {currentIndex + 1}/{questions.length} · {answeredSlotsCount}/{totalSlotsCount} answered
+          {/* Right: Question X of Y, Flag, Navigator, Finish test */}
+          <div className="flex items-center justify-start md:justify-end gap-2 flex-wrap">
+            <div className="text-xs font-medium text-[#4A5955] tabular-nums whitespace-nowrap mr-1">
+              Question {currentIndex + 1} of {questions.length}
             </div>
 
             <button
               type="button"
               onClick={() => handleToggleFlag(currentQuestion.questionId)}
               aria-pressed={isFlagged}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
                 isFlagged
-                  ? 'border-[var(--status-warn)] bg-[var(--status-warn-bg)] text-[var(--status-warn)]'
-                  : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  ? 'border-[#A35116]/50 bg-[#FDF0E2] text-[#A35116]'
+                  : 'border-[#E5DFD5] bg-white text-[#4A5955] hover:text-[#113C36] hover:border-[#CFC6B9]'
               }`}
             >
               <Flag className="w-3.5 h-3.5" />
@@ -798,21 +826,21 @@ export function SessionPlayerView({
               type="button"
               onClick={() => setNavOpen((v) => !v)}
               aria-expanded={navOpen}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-xs font-semibold text-[var(--text-primary)] cursor-pointer whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-medium text-[#113C36] cursor-pointer whitespace-nowrap transition-colors"
             >
               <Grid className="w-3.5 h-3.5" />
               <span>Navigator</span>
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronDown className="w-3.5 h-3.5 opacity-70" />
             </button>
 
             {session.mode === 'admin_calibration' && isAdmin && activeInspectorQ && (
               <button
                 type="button"
                 onClick={() => setInspectorOpen((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap ${
                   inspectorOpen
-                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                    : 'border-[var(--border-strong)] bg-[var(--bg-elevated)] text-[var(--text-primary)]'
+                    ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
+                    : 'border-[#CFC6B9] bg-white text-[#113C36]'
                 }`}
               >
                 <ShieldAlert className="w-3.5 h-3.5" />
@@ -824,20 +852,32 @@ export function SessionPlayerView({
               type="button"
               disabled={submitting}
               onClick={() => setSubmitConfirmOpen(true)}
-              className="px-4 py-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-xs font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60"
+              className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-colors"
             >
-              {submitting ? 'Submitting...' : 'Finish & Submit'}
+              {submitting ? 'Submitting...' : 'Finish test'}
             </button>
           </div>
         </div>
 
         {/* Collapsible Question Navigator Grid */}
         {navOpen && (
-          <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-surface)] px-6 py-4">
+          <div className="border-t border-[#E5DFD5] bg-[#FAF8F5] px-6 py-4">
             <div className="max-w-[1440px] mx-auto space-y-3">
-              <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-                <span>Jump to any question ({questions.length} items)</span>
-                <span>Current · Answered · Flagged</span>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#4A5955]">
+                <span className="font-medium tabular-nums">
+                  {answeredSlotsCount} of {totalSlotsCount} slots answered across {questions.length} questions
+                </span>
+                <div className="flex items-center gap-3 text-[11px] text-[#78756E]">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-[#113C36]" /> Current
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-[#E5F0EA] border border-[#1D6346]/50" /> Answered
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#A35116]" /> Flagged
+                  </span>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {questions.map((q, idx) => {
@@ -852,19 +892,19 @@ export function SessionPlayerView({
                       key={q.questionId}
                       type="button"
                       onClick={() => handleGoIndex(idx)}
-                      className={`w-10 h-10 rounded-[var(--radius-sm)] border text-xs font-bold tabular-nums relative cursor-pointer transition-colors ${
+                      className={`w-10 h-10 rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums relative cursor-pointer transition-colors ${
                         isCurr
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
+                          ? 'border-[#113C36] bg-[#113C36] text-white'
                           : isQAnswered
-                            ? 'border-[var(--status-success)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
-                            : 'border-[var(--border-strong)] bg-[var(--bg-elevated)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                            ? 'border-[#1D6346]/45 bg-[#E5F0EA] text-[#113C36]'
+                            : 'border-[#CFC6B9] bg-white text-[#113C36] hover:bg-[#F3EFE8]'
                       }`}
                     >
                       {idx + 1}
                       {isQFlagged && (
                         <span
                           aria-label="Flagged"
-                          className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[var(--status-warn)] border border-white"
+                          className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#A35116] border border-white"
                         />
                       )}
                     </button>
@@ -878,8 +918,8 @@ export function SessionPlayerView({
 
       {/* Recoverable Unsent Local Draft Banner */}
       {recoverableDraft && !conflictState && (
-        <div className="border-b border-[var(--status-warn)]/40 bg-[var(--status-warn-bg)] px-6 py-2.5">
-          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--status-warn)]">
+        <div className="border-b border-[#A35116]/25 bg-[#FDF0E2] px-6 py-2.5">
+          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[#A35116]">
             <span>
               An unsent local draft from {new Date(recoverableDraft.savedAtMs).toLocaleTimeString()} was found in this browser.
             </span>
@@ -890,11 +930,12 @@ export function SessionPlayerView({
                   applyCheckpointToState(recoverableDraft.checkpoint, questions.length);
                   setRecoverableDraft(null);
                   dirtyRef.current = true;
-                  flushCheckpoint();
+                  saveQueueRef.current?.markDirty();
+                  void flushCheckpoint();
                 }}
-                className="px-3 py-1 rounded-[var(--radius-sm)] bg-[var(--text-primary)] text-white font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer"
               >
-                Restore &amp; Save Draft
+                Restore and save draft
               </button>
               <button
                 type="button"
@@ -903,9 +944,9 @@ export function SessionPlayerView({
                   setRecoverableDraft(null);
                   setSaveStatus('saved');
                 }}
-                className="px-3 py-1 rounded-[var(--radius-sm)] border border-[var(--status-warn)] font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] border border-[#A35116] font-sans-display font-semibold cursor-pointer"
               >
-                Discard Unsent Draft
+                Discard unsent draft
               </button>
             </div>
           </div>
@@ -914,35 +955,37 @@ export function SessionPlayerView({
 
       {/* Optimistic Concurrency Conflict Resolution Banner (409) */}
       {conflictState && (
-        <div role="alert" className="border-b border-[var(--status-error)]/40 bg-[var(--status-error-bg)] px-6 py-2.5">
-          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--status-error)]">
+        <div role="alert" className="border-b border-[#B42318]/25 bg-[#FDECEB] px-6 py-2.5">
+          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[#B42318]">
             <span>
-              Checkpoint conflict detected (another device saved revision v{conflictState.currentRevision}).
+              Another device saved a newer version of this session (revision {conflictState.currentRevision}).
             </span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
                   checkpointRevisionRef.current = conflictState.currentRevision;
+                  saveQueueRef.current?.clearConflict(conflictState.currentRevision, true);
                   applyCheckpointToState(conflictState.serverCheckpoint, questions.length);
                   clearLocalDraft(draftStorageKey);
                   dirtyRef.current = false;
                   setConflictState(null);
                   setSaveStatus('saved');
                 }}
-                className="px-3 py-1 rounded-[var(--radius-sm)] bg-[var(--text-primary)] text-white font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer"
               >
-                Load Server State
+                Load latest saved answers
               </button>
               <button
                 type="button"
                 onClick={() => {
                   checkpointRevisionRef.current = conflictState.currentRevision;
-                  flushCheckpoint(conflictState.currentRevision);
+                  saveQueueRef.current?.setRevision(conflictState.currentRevision);
+                  void flushCheckpoint(conflictState.currentRevision);
                 }}
-                className="px-3 py-1 rounded-[var(--radius-sm)] border border-[var(--status-error)] font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] border border-[#B42318] font-sans-display font-semibold cursor-pointer"
               >
-                Overwrite With Local Draft
+                Keep this device&apos;s answers
               </button>
             </div>
           </div>
@@ -950,52 +993,55 @@ export function SessionPlayerView({
       )}
 
       {isTimeUp && (
-        <div role="status" className="border-b border-[var(--status-error)]/40 bg-[var(--status-error-bg)] px-6 py-2.5 text-center text-xs font-semibold text-[var(--status-error)]">
-          Time expired — locking inputs and finalising your submission on the server...
+        <div
+          role="status"
+          className="border-b border-[#B42318]/25 bg-[#FDECEB] px-6 py-2.5 text-center text-xs font-medium text-[#B42318]"
+        >
+          Time has ended — locking answers and submitting your paper now...
         </div>
       )}
 
       {error && (
         <div role="alert" className="max-w-[1440px] mx-auto w-full px-6 pt-4">
-          <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--status-error-bg)] text-[var(--status-error)] text-xs font-medium">
+          <div className="p-3 rounded-[10px] bg-[#FDECEB] text-[#B42318] text-xs font-medium">
             {error}
           </div>
         </div>
       )}
 
-      {/* Admin Inspector Panel (if active in calibration mode) */}
+      {/* Admin Inspector Panel (strictly in admin_calibration mode) */}
       {session.mode === 'admin_calibration' && isAdmin && inspectorOpen && activeInspectorQ && (
-        <div className="border-b border-[var(--border-strong)] bg-[var(--bg-surface)] px-6 py-4">
+        <div className="border-b border-[#E5DFD5] bg-[#F3EFE8] px-6 py-4">
           <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-start justify-between gap-4 text-xs">
             <div className="space-y-1.5 flex-1 min-w-0">
-              <div className="font-bold text-[var(--text-primary)] tabular-nums">
-                Admin Inspector · {activeInspectorQ.questionId} · Pool: {activeInspectorQ.poolType} · QC:{' '}
+              <div className="font-mono-code font-semibold text-[#113C36]">
+                Admin Inspector | {activeInspectorQ.questionId} | Pool: {activeInspectorQ.poolType} | QC:{' '}
                 {activeInspectorQ.qcStatus}
                 {activeInspectorQ.provenance.sourceReference
-                  ? ` · ${activeInspectorQ.provenance.sourceReference}`
+                  ? ` | ${activeInspectorQ.provenance.sourceReference}`
                   : ''}
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[var(--text-secondary)]">
+              <div className="flex flex-wrap items-center gap-2 text-[#4A5955]">
                 {activeInspectorQ.parts.map((p, idx) => (
                   <button
                     key={p.partId}
                     type="button"
                     onClick={() => setActiveGapIndex(idx)}
-                    className={`px-2 py-0.5 rounded-[var(--radius-sm)] border text-left cursor-pointer ${
+                    className={`px-2 py-0.5 rounded-[6px] border text-left cursor-pointer ${
                       idx === safeInspectorPartIdx
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--text-primary)]'
-                        : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-canvas)]'
+                        ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
+                        : 'border-[#E5DFD5] bg-white hover:bg-[#FAF8F5]'
                     }`}
                   >
                     {activeInspectorQ.parts.length > 1 ? `P${idx + 1}: ` : ''}
-                    <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> · Diff:{' '}
-                    {p.difficultyInitial} · {SKILL_NAME_MAP.get(p.skillId) || p.skillId}
+                    <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> (Diff {p.difficultyInitial},{' '}
+                    {SKILL_NAME_MAP.get(p.skillId) || p.skillId})
                   </button>
                 ))}
               </div>
               {activeInspectorPart?.workedExplanation && (
-                <div className="text-[var(--text-secondary)] whitespace-pre-line pt-1">
-                  <strong className="text-[var(--text-primary)]">
+                <div className="text-[#4A5955] whitespace-pre-line pt-1">
+                  <strong className="text-[#113C36]">
                     Explanation{activeInspectorQ.parts.length > 1 ? ` (Part ${safeInspectorPartIdx + 1})` : ''}:
                   </strong>{' '}
                   {activeInspectorPart.workedExplanation}
@@ -1006,21 +1052,21 @@ export function SessionPlayerView({
               <button
                 type="button"
                 onClick={() => handleInspectorQcChange(activeInspectorQ.questionId, 'active')}
-                className={`px-3 py-1.5 rounded-[var(--radius-sm)] border text-xs font-semibold cursor-pointer ${
+                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer ${
                   activeInspectorQ.qcStatus === 'active'
-                    ? 'border-[var(--status-success)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
-                    : 'border-[var(--border-strong)] bg-[var(--bg-elevated)]'
+                    ? 'border-[#1D6346] bg-[#E5F3EC] text-[#1D6346]'
+                    : 'border-[#CFC6B9] bg-white'
                 }`}
               >
-                Mark Active
+                Mark active
               </button>
               <button
                 type="button"
                 onClick={() => handleInspectorQcChange(activeInspectorQ.questionId, 'quarantined')}
-                className={`px-3 py-1.5 rounded-[var(--radius-sm)] border text-xs font-semibold cursor-pointer ${
+                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer ${
                   activeInspectorQ.qcStatus === 'quarantined'
-                    ? 'border-[var(--status-error)] bg-[var(--status-error-bg)] text-[var(--status-error)]'
-                    : 'border-[var(--border-strong)] bg-[var(--bg-elevated)]'
+                    ? 'border-[#B42318] bg-[#FDECEB] text-[#B42318]'
+                    : 'border-[#CFC6B9] bg-white'
                 }`}
               >
                 Quarantine
@@ -1030,7 +1076,7 @@ export function SessionPlayerView({
         </div>
       )}
 
-      {/* Shared Janison QuestionWorkspace in 'exam' mode */}
+      {/* Open-Book Split Spread QuestionWorkspace */}
       <QuestionWorkspace
         mode="exam"
         frozen={isTimeUp || submitting}
@@ -1063,12 +1109,12 @@ export function SessionPlayerView({
           setWritingDraft((prev) => ({ ...prev, responseText: val }));
         }}
         footerNav={
-          <div className="pt-4 border-t border-[var(--border-hairline)] flex items-center justify-between gap-3">
+          <div className="pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-3">
             <button
               type="button"
               disabled={currentIndex === 0}
               onClick={() => handleGoIndex(currentIndex - 1)}
-              className="px-4 py-2 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+              className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Previous</span>
@@ -1079,7 +1125,7 @@ export function SessionPlayerView({
                 <button
                   type="button"
                   onClick={() => handleGoIndex(currentIndex + 1)}
-                  className="px-5 py-2 rounded-[var(--radius-sm)] bg-[var(--text-primary)] hover:opacity-90 text-white text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
                   <span>Next</span>
                   <ArrowRight className="w-4 h-4" />
@@ -1089,9 +1135,9 @@ export function SessionPlayerView({
                   type="button"
                   disabled={submitting}
                   onClick={() => setSubmitConfirmOpen(true)}
-                  className="px-5 py-2 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-sm font-semibold cursor-pointer disabled:opacity-60"
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-colors"
                 >
-                  {submitting ? 'Submitting...' : 'Finish & Submit'}
+                  {submitting ? 'Submitting...' : 'Finish test'}
                 </button>
               )}
             </div>
@@ -1099,67 +1145,71 @@ export function SessionPlayerView({
         }
       />
 
-      {/* Submit Confirmation Modal */}
+      {/* 2-Step Finish Test Confirmation Modal */}
       {submitConfirmOpen && (
         <div
           role="presentation"
           onClick={() => !submitting && setSubmitConfirmOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="submit-confirm-title"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] border border-[var(--border-strong)] p-6 space-y-4 shadow-xl"
+            className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
           >
             <div className="space-y-1">
-              <div className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
-                Finish &amp; Submit
-              </div>
-              <h2 id="submit-confirm-title" className="text-lg font-bold text-[var(--text-primary)]">
-                Ready to submit this test?
+              <p className="text-xs font-sans-display font-medium text-[#78756E]">Finish test</p>
+              <h2
+                id="submit-confirm-title"
+                className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
+              >
+                Ready to submit your answers?
               </h2>
             </div>
-            <dl className="grid grid-cols-3 gap-2.5 p-3 rounded-[var(--radius-md)] bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-xs text-center tabular-nums">
+
+            <dl className="grid grid-cols-3 gap-2.5 p-3.5 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs text-center tabular-nums">
               <div>
-                <dt className="text-[var(--text-muted)]">Answered</dt>
-                <dd className="mt-0.5 text-base font-bold text-[var(--status-success)]">
+                <dt className="text-[#78756E]">Answered</dt>
+                <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#1D6346]">
                   {answeredSlotsCount}/{totalSlotsCount}
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--text-muted)]">Unanswered</dt>
-                <dd className="mt-0.5 text-base font-bold text-[var(--text-primary)]">
+                <dt className="text-[#78756E]">Unanswered</dt>
+                <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#113C36]">
                   {Math.max(0, totalSlotsCount - answeredSlotsCount)}
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--text-muted)]">Flagged</dt>
-                <dd className="mt-0.5 text-base font-bold text-[var(--status-warn)]">
+                <dt className="text-[#78756E]">Flagged</dt>
+                <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#A35116]">
                   {flaggedQuestionIds.length}
                 </dd>
               </div>
             </dl>
-            <p className="text-xs text-[var(--text-secondary)]">
-              Submitting locks your answers and unlocks your account for review and progress analytics.
+
+            <p className="text-xs text-[#4A5955] leading-relaxed">
+              Submitting records your final answers and opens the full review screen with worked explanations.
             </p>
+
             <div className="flex items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
                 disabled={submitting}
                 onClick={() => setSubmitConfirmOpen(false)}
-                className="px-4 py-2 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-surface)] text-xs font-semibold text-[var(--text-primary)] cursor-pointer disabled:opacity-50"
+                className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
               >
-                Keep Working
+                Keep working
               </button>
               <button
                 type="button"
                 disabled={submitting}
                 onClick={handleSubmit}
-                className="px-5 py-2 rounded-[var(--radius-sm)] bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)] text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+                className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-60"
               >
-                {submitting ? 'Submitting...' : 'Confirm & Submit'}
+                {submitting ? 'Submitting...' : 'Confirm and submit'}
               </button>
             </div>
           </div>

@@ -3,6 +3,13 @@
 
 @layer base {
   button,
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+
+  button,
   a,
   select,
   input,

@@ -12,9 +12,14 @@ function sanitizeSvg(markup: string): string {
 interface VisualRendererProps {
   visual?: VisualSpec;
   compact?: boolean;
+  variant?: 'default' | 'optionTile';
 }
 
-export function VisualRenderer({ visual, compact = false }: VisualRendererProps) {
+export function VisualRenderer({
+  visual,
+  compact = false,
+  variant = 'default',
+}: VisualRendererProps) {
   const [zoomOpen, setZoomOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -24,112 +29,145 @@ export function VisualRenderer({ visual, compact = false }: VisualRendererProps)
 
   if (!visual || visual.visualType === 'none') return null;
 
-  return (
+  const isOptionTile = variant === 'optionTile';
+  const isCompact = compact || isOptionTile;
+
+  const content = (
     <>
-      <figure
-        className={`rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-elevated)] ${
-          compact ? 'p-2' : 'p-4'
-        }`}
-      >
-        {visual.visualType === 'inline_svg' && visual.svgMarkup && (
-          <div className="relative group">
-            <div
-              className="flex justify-center overflow-x-auto [&_svg]:max-w-full [&_svg]:h-auto"
-              role="img"
-              aria-label={visual.altText}
-              dangerouslySetInnerHTML={{ __html: sanitizeSvg(visual.svgMarkup) }}
-            />
-            {!compact && (
+      {visual.visualType === 'inline_svg' && visual.svgMarkup && (
+        <div className={isOptionTile ? 'w-full h-full flex items-center justify-center' : 'relative group'}>
+          <div
+            className={
+              isOptionTile
+                ? 'w-full h-full flex items-center justify-center [&_svg]:max-h-full [&_svg]:max-w-full [&_svg]:w-auto [&_svg]:h-full'
+                : isCompact
+                  ? 'flex justify-center overflow-hidden max-h-28 [&_svg]:max-h-28 [&_svg]:max-w-full [&_svg]:w-auto [&_svg]:h-auto'
+                  : 'flex justify-center overflow-x-auto [&_svg]:max-w-full [&_svg]:h-auto'
+            }
+            role="img"
+            aria-label={visual.altText}
+            dangerouslySetInnerHTML={{ __html: sanitizeSvg(visual.svgMarkup) }}
+          />
+          {!isCompact && (
+            <button
+              type="button"
+              onClick={() => setZoomOpen(true)}
+              aria-label={`Zoom diagram: ${visual.altText}`}
+              className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>Zoom diagram</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {visual.visualType === 'image_asset' && visual.imageUrl && (
+        <div className={isOptionTile ? 'w-full h-full flex items-center justify-center' : ''}>
+          {!imgError ? (
+            isCompact ? (
+              <div className={isOptionTile ? 'w-full h-full flex items-center justify-center' : 'w-full flex justify-center'}>
+                <img
+                  src={visual.imageUrl}
+                  alt={visual.altText}
+                  referrerPolicy="no-referrer"
+                  onError={() => setImgError(true)}
+                  className={
+                    isOptionTile
+                      ? 'max-h-full max-w-full w-auto h-auto object-contain rounded-[4px]'
+                      : 'mx-auto object-contain rounded-[var(--radius-sm)] max-h-28 max-w-full w-auto'
+                  }
+                />
+              </div>
+            ) : (
               <button
                 type="button"
                 onClick={() => setZoomOpen(true)}
-                aria-label={`Zoom diagram: ${visual.altText}`}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                <Maximize2 className="w-3.5 h-3.5" />
-                <span>Zoom diagram</span>
-              </button>
-            )}
-          </div>
-        )}
-
-        {visual.visualType === 'image_asset' && visual.imageUrl && (
-          <div>
-            {!imgError ? (
-              <button
-                type="button"
-                onClick={() => !compact && setZoomOpen(true)}
                 aria-label={`Inspect image: ${visual.altText}`}
-                className={`block w-full text-left ${compact ? '' : 'cursor-zoom-in'}`}
+                className="block w-full text-left cursor-zoom-in"
               >
                 <img
                   src={visual.imageUrl}
                   alt={visual.altText}
                   referrerPolicy="no-referrer"
                   onError={() => setImgError(true)}
-                  className={`mx-auto object-contain rounded-[var(--radius-sm)] ${
-                    compact ? 'max-h-28 w-auto' : 'max-h-72 w-auto'
-                  }`}
+                  className="mx-auto object-contain rounded-[var(--radius-sm)] max-h-72 max-w-full w-auto"
                 />
               </button>
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2 py-6 px-4 rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-[var(--text-secondary)] text-xs text-center">
-                <ImageOff className="w-5 h-5" />
-                <span>{visual.altText || 'Visual asset unavailable'}</span>
-              </div>
-            )}
-            {!compact && !imgError && (
-              <div className="mt-2 flex items-center justify-between text-xs text-[var(--text-muted)]">
-                <span>{visual.caption || visual.altText}</span>
-                <button
-                  type="button"
-                  onClick={() => setZoomOpen(true)}
-                  className="inline-flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                  <span>Zoom</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+            )
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-[var(--text-secondary)] text-xs text-center">
+              <ImageOff className="w-5 h-5" />
+              <span>{visual.altText || 'Visual asset unavailable'}</span>
+            </div>
+          )}
+          {!isCompact && !imgError && (
+            <div className="mt-2 flex items-center justify-between text-xs text-[var(--text-muted)]">
+              <span>{visual.caption || visual.altText}</span>
+              <button
+                type="button"
+                onClick={() => setZoomOpen(true)}
+                className="inline-flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>Zoom</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
-        {visual.visualType === 'structured_table' && visual.tableData && (
-          <div className="overflow-x-auto">
-            {visual.tableData.caption && (
-              <div className="text-xs font-semibold text-[var(--text-secondary)] mb-2">
-                {visual.tableData.caption}
-              </div>
-            )}
-            <table className="w-full text-sm border-collapse tabular-nums">
-              <thead>
-                <tr className="border-b border-[var(--border-strong)] bg-[var(--bg-surface)]">
-                  {visual.tableData.headers.map((h, i) => (
-                    <th key={i} className="text-left px-3 py-2 font-semibold text-[var(--text-primary)]">
-                      {h}
-                    </th>
+      {visual.visualType === 'structured_table' && visual.tableData && (
+        <div className="overflow-x-auto">
+          {visual.tableData.caption && (
+            <div className="text-xs font-semibold text-[var(--text-secondary)] mb-2">
+              {visual.tableData.caption}
+            </div>
+          )}
+          <table className="w-full text-sm border-collapse tabular-nums">
+            <thead>
+              <tr className="border-b border-[var(--border-strong)] bg-[var(--bg-surface)]">
+                {visual.tableData.headers.map((h, i) => (
+                  <th key={i} className="text-left px-3 py-2 font-semibold text-[var(--text-primary)]">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visual.tableData.rows.map((row, rIdx) => (
+                <tr key={rIdx} className="border-b border-[var(--border-hairline)] last:border-b-0">
+                  {row.map((cell, cIdx) => (
+                    <td key={cIdx} className="px-3 py-2 text-[var(--text-primary)]">
+                      {String(cell)}
+                    </td>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {visual.tableData.rows.map((row, rIdx) => (
-                  <tr key={rIdx} className="border-b border-[var(--border-hairline)] last:border-b-0">
-                    {row.map((cell, cIdx) => (
-                      <td key={cIdx} className="px-3 py-2 text-[var(--text-primary)]">
-                        {String(cell)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-        {visual.caption && visual.visualType !== 'image_asset' && (
-          <figcaption className="mt-2 text-xs text-[var(--text-muted)]">{visual.caption}</figcaption>
-        )}
-      </figure>
+      {!isOptionTile && visual.caption && visual.visualType !== 'image_asset' && (
+        <figcaption className="mt-2 text-xs text-[var(--text-muted)]">{visual.caption}</figcaption>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      {isOptionTile ? (
+        <div className="w-full h-full flex items-center justify-center">{content}</div>
+      ) : (
+        <figure
+          className={`rounded-[12px] border border-[#E5DFD5] bg-white ${
+            isCompact ? 'p-2' : 'p-4'
+          }`}
+        >
+          {content}
+        </figure>
+      )}
 
       {zoomOpen && (
         <div

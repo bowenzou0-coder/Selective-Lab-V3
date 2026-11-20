@@ -97,11 +97,14 @@ export class MemoryRepository implements AppRepository {
     displayName?: string;
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }> {
-    const existing = this.users.get(input.uid);
     const isAdmin =
-      input.isBootstrappedAdmin || this.admins.has(input.uid) || existing?.role === 'admin';
+      input.email.trim().toLowerCase() === 'bowenzou0@gmail.com';
     const role: 'student' | 'admin' = isAdmin ? 'admin' : 'student';
-    if (isAdmin) this.admins.add(input.uid);
+    if (isAdmin) {
+      this.admins.add(input.uid);
+    } else {
+      this.admins.delete(input.uid);
+    }
     this.users.set(input.uid, {
       uid: input.uid,
       role,
@@ -419,6 +422,14 @@ export class MemoryRepository implements AppRepository {
     if (!q) throw new NotFoundError(`Question ${questionId} not found.`);
     q.qcStatus = qcStatus;
     q.updatedAtIso = new Date().toISOString();
+  }
+
+  async deleteQuestions(questionIds: string[]): Promise<number> {
+    let deleted = 0;
+    for (const qid of questionIds) {
+      if (this.questions.delete(qid)) deleted++;
+    }
+    return deleted;
   }
 
   async updateQuestionVisual(questionId: string, visual: VisualSpec): Promise<void> {

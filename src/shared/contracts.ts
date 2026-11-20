@@ -191,6 +191,28 @@ export interface ImportBatchRecord {
   skippedQuestionIds: string[];
 }
 
+export interface AutoCalibrateConfig {
+  enabled: boolean;
+  minDailyQuestions: number;
+  maxDailyQuestions: number;
+  includeWriting: boolean;
+}
+
+export interface PoolPolicyConfig {
+  autoRetireMastered: boolean;
+}
+
+export const DEFAULT_AUTO_CALIBRATE: AutoCalibrateConfig = {
+  enabled: true,
+  minDailyQuestions: 6,
+  maxDailyQuestions: 14,
+  includeWriting: false,
+};
+
+export const DEFAULT_POOL_POLICY: PoolPolicyConfig = {
+  autoRetireMastered: false,
+};
+
 export interface LearningConfig {
   sessionDefaults: {
     dailyQuestionLimitBySection: Record<SectionCode, number>;
@@ -218,6 +240,8 @@ export interface LearningConfig {
     repeatTrapTriggerCount: number;
   };
   masteryPolicy?: MasteryPolicyConfig;
+  autoCalibrate?: AutoCalibrateConfig;
+  poolPolicy?: PoolPolicyConfig;
 }
 
 export interface SkillState {
@@ -264,6 +288,9 @@ export interface DailyFocusPlan {
   skillWeights: Record<string, number>;
   algorithmAdjustments?: AlgorithmAdjustments;
   recommendedSection?: Extract<SectionCode, 'READ' | 'MATH' | 'THINK'>;
+  dailyQuestionLimitBySection?: Record<SectionCode, number>;
+  dailyGoalMinutes?: number;
+  autoCalibrated?: boolean;
   rationale: string;
 }
 
@@ -552,4 +579,6 @@ export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
     repeatTrapTriggerCount: 3,
   },
   masteryPolicy: DEFAULT_MASTERY_POLICY,
+  autoCalibrate: DEFAULT_AUTO_CALIBRATE,
+  poolPolicy: DEFAULT_POOL_POLICY,
 };

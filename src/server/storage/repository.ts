@@ -247,6 +247,7 @@ export interface AppRepository {
   listImportBatches(): Promise<ImportBatchRecord[]>;
   getImportBatch(batchId: string): Promise<ImportBatchRecord | null>;
   updateQuestionStatus(questionId: string, qcStatus: QuestionItem['qcStatus']): Promise<void>;
+  deleteQuestions?(questionIds: string[]): Promise<number>;
   updateQuestionVisual(questionId: string, visual: VisualSpec): Promise<void>;
 
   getActiveConfig(): Promise<{ configVersionId: string; versionNumber: number; config: LearningConfig }>;

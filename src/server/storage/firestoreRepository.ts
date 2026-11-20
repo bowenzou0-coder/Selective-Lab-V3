@@ -20,6 +20,7 @@ import type {
   WritingEvaluationRecord,
 } from '../../shared/contracts.ts';
 import { DEFAULT_LEARNING_CONFIG } from '../../shared/contracts.ts';
+import { decodeFromFirestore, encodeForFirestore } from '../../shared/firestoreCodec.ts';
 import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { getBootstrappedAdminEmail } from '../firebaseVerify.ts';
 import { computeCanonicalHash } from '../manifestValidator.ts';
@@ -59,24 +60,7 @@ export function toSafeDocId(raw: string): string {
 }
 
 export function stripUndefinedDeep<T>(value: T): T {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => stripUndefinedDeep(item)) as unknown as T;
-  }
-  if (typeof value === 'object') {
-    const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) {
-      return value;
-    }
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (v !== undefined) {
-        out[k] = stripUndefinedDeep(v);
-      }
-    }
-    return out as T;
-  }
-  return value;
+  return encodeForFirestore(value);
 }
 
 export interface FirestoreAdapterDeps {
@@ -188,11 +172,10 @@ export class FirestoreRepository implements AppRepository {
     const adminRef = this.db.collection('admins').doc(uid);
 
     const isEmailBootstrapped =
-      input.isBootstrappedAdmin ||
-      input.email.toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
+      input.email.trim().toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
 
     const [userSnap, adminSnap] = await Promise.all([userRef.get(), adminRef.get()]);
-    const isAdmin = isEmailBootstrapped || adminSnap.exists || userSnap.data()?.role === 'admin';
+    const isAdmin = isEmailBootstrapped;
     const role: 'student' | 'admin' = isAdmin ? 'admin' : 'student';
 
     if (isAdmin && !adminSnap.exists) {
@@ -257,8 +240,12 @@ export class FirestoreRepository implements AppRepository {
     stimuliById: Record<string, StimulusGroup>;
   }> {
     const [stimRows, qRows] = await Promise.all([
-      this.scanCollection(this.db.collection('bank_stimuli'), (d) => (d.data().payload as StimulusGroup) || (d.data() as StimulusGroup)),
-      this.scanCollection(this.db.collection('bank_questions'), (d) => (d.data().payload as QuestionItem) || (d.data() as QuestionItem)),
+      this.scanCollection(this.db.collection('bank_stimuli'), (d) =>
+        decodeFromFirestore((d.data().payload as StimulusGroup) || (d.data() as StimulusGroup))
+      ),
+      this.scanCollection(this.db.collection('bank_questions'), (d) =>
+        decodeFromFirestore((d.data().payload as QuestionItem) || (d.data() as QuestionItem))
+      ),
     ]);
 
     const stimuliById: Record<string, StimulusGroup> = {};
@@ -305,7 +292,9 @@ export class FirestoreRepository implements AppRepository {
       .where('questionFamilyId', '==', questionFamilyId)
       .get();
     const qs = snap.docs
-      .map((d) => (d.data().payload as QuestionItem) || (d.data() as QuestionItem))
+      .map((d) =>
+        decodeFromFirestore((d.data().payload as QuestionItem) || (d.data() as QuestionItem))
+      )
       .sort((a, b) => b.version - a.version);
     const stimIds = Array.from(new Set(qs.map((q) => q.stimulusId).filter((x): x is string => Boolean(x))));
     const stimuliById = await this.listStimuliByIds(stimIds);
@@ -324,7 +313,9 @@ export class FirestoreRepository implements AppRepository {
     const out: Record<string, StimulusGroup> = {};
     for (const s of snaps) {
       if (!s.exists) continue;
-      const stim = (s.data()?.payload as StimulusGroup) || (s.data() as StimulusGroup);
+      const stim = decodeFromFirestore(
+        (s.data()?.payload as StimulusGroup) || (s.data() as StimulusGroup)
+      );
       if (stim?.stimulusId) out[stim.stimulusId] = stim;
     }
     return out;
@@ -335,7 +326,9 @@ export class FirestoreRepository implements AppRepository {
   ): Promise<{ question: QuestionItem; stimulus?: StimulusGroup } | null> {
     const qSnap = await this.db.collection('bank_questions').doc(toSafeDocId(questionId)).get();
     if (!qSnap.exists) return null;
-    const question = (qSnap.data()?.payload as QuestionItem) || (qSnap.data() as QuestionItem);
+    const question = decodeFromFirestore(
+      (qSnap.data()?.payload as QuestionItem) || (qSnap.data() as QuestionItem)
+    );
     let stimulus: StimulusGroup | undefined;
     if (question.stimulusId) {
       const sSnap = await this.db
@@ -343,7 +336,9 @@ export class FirestoreRepository implements AppRepository {
         .doc(toSafeDocId(question.stimulusId))
         .get();
       if (sSnap.exists) {
-        stimulus = (sSnap.data()?.payload as StimulusGroup) || (sSnap.data() as StimulusGroup);
+        stimulus = decodeFromFirestore(
+          (sSnap.data()?.payload as StimulusGroup) || (sSnap.data() as StimulusGroup)
+        );
       }
     }
     return { question, stimulus };
@@ -824,7 +819,9 @@ export class FirestoreRepository implements AppRepository {
       .collection('sessions')
       .doc(sid)
       .collection('snapshots');
-    const docs = await this.scanCollection(snapCol, (d) => d.data() as SessionQuestionSnapshot);
+    const docs = await this.scanCollection(snapCol, (d) =>
+      decodeFromFirestore(d.data() as SessionQuestionSnapshot)
+    );
     return docs.sort((a, b) => a.snapshotIndex - b.snapshotIndex);
   }
 

@@ -1,14 +1,16 @@
-import type {
-  AlgorithmAdjustments,
-  DailyFocusPlan,
-  LearningConfig,
-  QuestionItem,
-  QuestionMasteryEvidence,
-  QuestionMemoryState,
-  SectionCode,
-  SessionMode,
-  SessionSelectionDecision,
-  SkillState,
+import {
+  DEFAULT_AUTO_CALIBRATE,
+  type AlgorithmAdjustments,
+  type AutoCalibrateConfig,
+  type DailyFocusPlan,
+  type LearningConfig,
+  type QuestionItem,
+  type QuestionMasteryEvidence,
+  type QuestionMemoryState,
+  type SectionCode,
+  type SessionMode,
+  type SessionSelectionDecision,
+  type SkillState,
 } from '../shared/contracts.ts';
 import {
   clampAlgorithmAdjustments,
@@ -138,17 +140,111 @@ export function computeRankedSkillCandidates(input: {
   return ranked;
 }
 
+export function allocateAutoCalibratedDailyPlan(input: {
+  volumeScore: number; // [0..4]
+  sectionScores: Record<'READ' | 'MATH' | 'THINK', number>; // each [0..4]
+  includeWriting: boolean;
+  availableBySection: Record<SectionCode, number>;
+  autoConfig?: AutoCalibrateConfig;
+}): {
+  dailyQuestionLimitBySection: Record<SectionCode, number>;
+  dailyGoalMinutes: number;
+} {
+  const cfg = {
+    ...DEFAULT_AUTO_CALIBRATE,
+    ...(input.autoConfig || {}),
+  };
+  const minQ = Math.max(3, Math.min(30, Math.round(cfg.minDailyQuestions || 6)));
+  const maxQ = Math.max(minQ, Math.min(40, Math.round(cfg.maxDailyQuestions || 14)));
+  const clampedVol = Math.min(4, Math.max(0, Number.isFinite(input.volumeScore) ? input.volumeScore : 2));
+  const rawTotal = Math.round(minQ + (clampedVol / 4) * (maxQ - minQ));
+
+  const objSections: Array<'READ' | 'MATH' | 'THINK'> = ['READ', 'MATH', 'THINK'];
+  const activeObjSections = objSections.filter((s) => (input.availableBySection[s] || 0) > 0);
+  const totalAvailableObj = activeObjSections.reduce(
+    (sum, s) => sum + Math.max(0, input.availableBySection[s] || 0),
+    0
+  );
+  const targetObjTotal = Math.min(rawTotal, totalAvailableObj);
+
+  const allocation: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
+
+  if (targetObjTotal > 0 && activeObjSections.length > 0) {
+    // Exponentially amplify rubric score differences so a high-urgency section gets clearly more questions
+    const weights: Record<'READ' | 'MATH' | 'THINK', number> = { READ: 0, MATH: 0, THINK: 0 };
+    let weightSum = 0;
+    for (const sec of activeObjSections) {
+      const s = Math.min(4, Math.max(0, Number.isFinite(input.sectionScores[sec]) ? input.sectionScores[sec] : 2));
+      const w = 0.5 + Math.pow(s + 0.4, 1.5);
+      weights[sec] = w;
+      weightSum += w;
+    }
+
+    // Proportional allocation with largest-remainder rounding, clamped to available stock
+    const exactShares = activeObjSections.map((sec) => {
+      const exact = (weights[sec] / Math.max(0.001, weightSum)) * targetObjTotal;
+      const base = Math.min(input.availableBySection[sec], Math.floor(exact));
+      return { sec, base, frac: exact - Math.floor(exact) };
+    });
+
+    let assigned = 0;
+    for (const row of exactShares) {
+      allocation[row.sec] = row.base;
+      assigned += row.base;
+    }
+
+    // Distribute remaining slots by highest fractional remainder
+    const byFrac = [...exactShares].sort((a, b) => b.frac - a.frac);
+    let safety = 0;
+    while (assigned < targetObjTotal && safety < 50) {
+      safety++;
+      let progressed = false;
+      for (const row of byFrac) {
+        if (assigned >= targetObjTotal) break;
+        if (allocation[row.sec] < input.availableBySection[row.sec]) {
+          allocation[row.sec] += 1;
+          assigned += 1;
+          progressed = true;
+        }
+      }
+      if (!progressed) break;
+    }
+  }
+
+  const writingCount =
+    cfg.includeWriting && input.includeWriting && (input.availableBySection.WRIT || 0) > 0 ? 1 : 0;
+  allocation.WRIT = writingCount;
+
+  const objCount = allocation.READ + allocation.MATH + allocation.THINK;
+  const rawMinutes = objCount * 2.2 + writingCount * 25;
+  const dailyGoalMinutes = Math.max(10, Math.min(90, Math.round(rawMinutes / 5) * 5));
+
+  return { dailyQuestionLimitBySection: allocation, dailyGoalMinutes };
+}
+
+function countAvailableBySection(questions: QuestionItem[]): Record<SectionCode, number> {
+  const counts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
+  for (const q of questions) {
+    if (q.qcStatus === 'active' && q.poolType !== 'benchmark_holdout') {
+      counts[q.section] = (counts[q.section] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
 export function buildDeterministicDailyFocusPlan(input: {
   studentId: string;
   skillStates: Record<string, SkillState>;
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
   questions: QuestionItem[];
+  config?: LearningConfig;
   nowIso?: string;
 }): DailyFocusPlan {
   const nowIso = input.nowIso ?? new Date().toISOString();
   const planDate = nowIso.slice(0, 10);
   const ranked = computeRankedSkillCandidates(input);
+  const availableBySection = countAvailableBySection(input.questions);
 
   const chosen: FocusPlanSummaryRow[] = [];
   const chosenIds = new Set<string>();
@@ -190,13 +286,40 @@ export function buildDeterministicDailyFocusPlan(input: {
   }
   const rationale =
     rationaleParts.length > 0
-      ? `${rationaleParts.join(' · ')}.`
+      ? `${rationaleParts.join(', ')}.`
       : 'Balanced Reading, Maths, and Thinking Skills coverage across unseen and developing areas.';
 
   const recommendedSection =
     chosen[0] && (chosen[0].section === 'READ' || chosen[0].section === 'MATH' || chosen[0].section === 'THINK')
       ? chosen[0].section
       : undefined;
+
+  const autoCfg = input.config?.autoCalibrate;
+  let dailyQuestionLimitBySection: Record<SectionCode, number> | undefined;
+  let dailyGoalMinutes: number | undefined;
+  let autoCalibrated = false;
+
+  if (autoCfg?.enabled) {
+    const secUrgency = { READ: 1.5, MATH: 1.5, THINK: 1.5 };
+    for (const sec of ['READ', 'MATH', 'THINK'] as const) {
+      const secRows = ranked.filter((r) => r.section === sec);
+      if (secRows.length > 0) {
+        const avgUrg = secRows.reduce((s, r) => s + r.urgency, 0) / secRows.length;
+        secUrgency[sec] = Math.min(4, Math.max(0.5, avgUrg * 1.4));
+      }
+    }
+    const volScore = Math.min(4, Math.max(1, 1.5 + (totalRepairs + totalDue) * 0.25));
+    const allocated = allocateAutoCalibratedDailyPlan({
+      volumeScore: volScore,
+      sectionScores: secUrgency,
+      includeWriting: false,
+      availableBySection,
+      autoConfig: autoCfg,
+    });
+    dailyQuestionLimitBySection = allocated.dailyQuestionLimitBySection;
+    dailyGoalMinutes = allocated.dailyGoalMinutes;
+    autoCalibrated = true;
+  }
 
   return {
     planDate,
@@ -207,6 +330,9 @@ export function buildDeterministicDailyFocusPlan(input: {
     skillWeights,
     algorithmAdjustments: clampAlgorithmAdjustments(),
     recommendedSection,
+    dailyQuestionLimitBySection,
+    dailyGoalMinutes,
+    autoCalibrated,
     rationale,
   };
 }
@@ -268,6 +394,22 @@ const SKILL_PRIORITY_LEVELS = [
   'Moderate priority: steady building or moderate uncertainty.',
   'High priority: developing mastery, due spaced review, or time slowdown.',
   'Critical priority: active needs-repair items, overdue confirmation reviews, or stagnant plateau.',
+];
+
+const DAILY_VOLUME_LEVELS = [
+  'Light recovery load: learner has high mastery and minimal repairs/reviews; keep session crisp near minimum count.',
+  'Moderate-light load: steady maintenance day slightly below midpoint.',
+  'Balanced standard load: normal daily training cadence near midpoint.',
+  'Focused build load: meaningful backlog of repairs, due reviews, or weak skills; push above midpoint.',
+  'Intensive load: large backlog of overdue reviews/repairs or big coverage gap; schedule near maximum count.',
+];
+
+const SECTION_SHARE_LEVELS = [
+  'Minimal share: section is strong and caught up; assign minimal or zero questions today.',
+  'Light share: section is stable; light maintenance only.',
+  'Standard balanced share: normal proportional mix.',
+  'Heavy share: clear weakness, plateau, or repair backlog; skew today’s mix toward this section.',
+  'Dominant priority share: urgent repairs/overdue reviews or major mastery gap; allocate the largest share today.',
 ];
 
 const ITEM_SELECTION_LEVELS = [
@@ -335,6 +477,8 @@ function extractAlgorithmAdjustmentsFromAnswers(answers: DecisionAnswerMap): Alg
 export async function generateGeminiFocusOverride(input: {
   basePlan: DailyFocusPlan;
   candidates: FocusPlanSummaryRow[];
+  availableBySection?: Record<SectionCode, number>;
+  autoCalibrate?: AutoCalibrateConfig;
   decideFn?: DecisionsExecutor;
 }): Promise<DailyFocusPlan | null> {
   if (!input.decideFn && !isGeminiConfigured()) {
@@ -358,8 +502,38 @@ export async function generateGeminiFocusOverride(input: {
 
   if (topCandidates.length === 0) return null;
 
+  const autoCfg = input.autoCalibrate;
+  const shouldAutoCalibrate = Boolean(autoCfg?.enabled);
+  const avail = input.availableBySection || {
+    READ: topCandidates.filter((c) => c.section === 'READ').length * 3,
+    MATH: topCandidates.filter((c) => c.section === 'MATH').length * 3,
+    THINK: topCandidates.filter((c) => c.section === 'THINK').length * 3,
+    WRIT: 0,
+  };
+
+  // Aggregate section-level telemetry so gemini-decision-1 can skew daily section mix cleanly
+  const sectionTelemetry = (['READ', 'MATH', 'THINK'] as const).map((sec) => {
+    const rows = topCandidates.filter((c) => c.section === sec);
+    const meanMastery =
+      rows.length > 0 ? Number((rows.reduce((s, r) => s + r.mastery, 0) / rows.length).toFixed(2)) : 0.5;
+    return {
+      section: sec,
+      availableQuestions: avail[sec] || 0,
+      repairs: rows.reduce((s, r) => s + r.repairs, 0),
+      dueReviews: rows.reduce((s, r) => s + r.dueReviews, 0),
+      unseen: rows.reduce((s, r) => s + r.unseen, 0),
+      meanMastery,
+      plateaus: rows.filter((r) => r.plateau !== 'none').length,
+    };
+  });
+
   const payloadJson = JSON.stringify({
     date: input.basePlan.planDate,
+    autoCalibrateEnabled: shouldAutoCalibrate,
+    dailyQuestionRange: shouldAutoCalibrate
+      ? [autoCfg?.minDailyQuestions ?? 6, autoCfg?.maxDailyQuestions ?? 14]
+      : null,
+    sectionTelemetry,
     candidateSkills: topCandidates,
   });
 
@@ -389,6 +563,33 @@ export async function generateGeminiFocusOverride(input: {
       criteria: ZPD_OFFSET_LEVELS,
     },
   };
+
+  if (shouldAutoCalibrate) {
+    questions.daily_volume = {
+      type: 'score',
+      instructions: `Decide today's flexible daily question load within [${autoCfg?.minDailyQuestions ?? 6}..${autoCfg?.maxDailyQuestions ?? 14}] questions based on sectionTelemetry repairs, dueReviews, unseen stock, and meanMastery.`,
+      criteria: DAILY_VOLUME_LEVELS,
+    };
+    for (const sec of ['READ', 'MATH', 'THINK'] as const) {
+      const tel = sectionTelemetry.find((t) => t.section === sec)!;
+      questions[`section_share_${sec}`] = {
+        type: 'score',
+        instructions: `What share of today's daily practice questions should go to ${sec} (meanMastery=${tel.meanMastery}, repairs=${tel.repairs}, dueReviews=${tel.dueReviews}, unseen=${tel.unseen}, plateaus=${tel.plateaus}, available=${tel.availableQuestions})?`,
+        criteria: SECTION_SHARE_LEVELS,
+      };
+    }
+    if (autoCfg?.includeWriting && (avail.WRIT || 0) > 0) {
+      questions.include_writing_today = {
+        type: 'noul',
+        instructions:
+          'Should today’s adaptive set include 1 timed Writing task alongside objective sections?',
+        criteria: {
+          true_description: 'Objective repair load is manageable and adding a writing task balances exam readiness.',
+          false_description: 'Objective repairs/due reviews are heavy today; focus solely on Reading, Maths, and Thinking.',
+        },
+      };
+    }
+  }
 
   const availableSections = Array.from(
     new Set(topCandidates.map((c) => c.section).filter((s) => s === 'READ' || s === 'MATH' || s === 'THINK'))
@@ -452,6 +653,40 @@ export async function generateGeminiFocusOverride(input: {
       ? (secAns.choice as DailyFocusPlan['recommendedSection'])
       : input.basePlan.recommendedSection;
 
+  let dailyQuestionLimitBySection = input.basePlan.dailyQuestionLimitBySection;
+  let dailyGoalMinutes = input.basePlan.dailyGoalMinutes;
+  let autoCalibrated = Boolean(input.basePlan.autoCalibrated);
+
+  if (shouldAutoCalibrate) {
+    const volAns = answers.daily_volume;
+    const volumeScore = volAns?.type === 'score' && Number.isFinite(volAns.score) ? volAns.score : 2;
+    const readScore =
+      answers.section_share_READ?.type === 'score' && Number.isFinite(answers.section_share_READ.score)
+        ? answers.section_share_READ.score
+        : 2;
+    const mathScore =
+      answers.section_share_MATH?.type === 'score' && Number.isFinite(answers.section_share_MATH.score)
+        ? answers.section_share_MATH.score
+        : 2;
+    const thinkScore =
+      answers.section_share_THINK?.type === 'score' && Number.isFinite(answers.section_share_THINK.score)
+        ? answers.section_share_THINK.score
+        : 2;
+    const writAns = answers.include_writing_today;
+    const includeWriting = writAns?.type === 'noul' ? writAns.noul >= 0.65 : false;
+
+    const allocated = allocateAutoCalibratedDailyPlan({
+      volumeScore,
+      sectionScores: { READ: readScore, MATH: mathScore, THINK: thinkScore },
+      includeWriting,
+      availableBySection: avail,
+      autoConfig: autoCfg,
+    });
+    dailyQuestionLimitBySection = allocated.dailyQuestionLimitBySection;
+    dailyGoalMinutes = allocated.dailyGoalMinutes;
+    autoCalibrated = true;
+  }
+
   const algorithmAdjustments = extractAlgorithmAdjustmentsFromAnswers(answers);
   const topNames = chosenRows.slice(0, 3).map((r) => r.cand.displayName);
   const totalRepairs = topCandidates.reduce((s, r) => s + r.repairs, 0);
@@ -459,7 +694,15 @@ export async function generateGeminiFocusOverride(input: {
   const rationaleParts = [`Prioritising ${topNames.join(', ')}`];
   if (totalRepairs > 0) rationaleParts.push(`${totalRepairs} repair item${totalRepairs === 1 ? '' : 's'} queued`);
   if (totalDue > 0) rationaleParts.push(`${totalDue} spaced review${totalDue === 1 ? '' : 's'} due`);
-  if (recommendedSection) rationaleParts.push(`recommended focus: ${recommendedSection}`);
+  if (autoCalibrated && dailyQuestionLimitBySection) {
+    const mixLabel = (['READ', 'MATH', 'THINK'] as const)
+      .filter((s) => dailyQuestionLimitBySection![s] > 0)
+      .map((s) => `${s === 'READ' ? 'Reading' : s === 'MATH' ? 'Maths' : 'Thinking'} ${dailyQuestionLimitBySection![s]}`)
+      .join(', ');
+    if (mixLabel) rationaleParts.push(`today's mix: ${mixLabel}`);
+  } else if (recommendedSection) {
+    rationaleParts.push(`recommended focus: ${recommendedSection}`);
+  }
 
   return {
     ...input.basePlan,
@@ -469,7 +712,10 @@ export async function generateGeminiFocusOverride(input: {
     skillWeights,
     algorithmAdjustments,
     recommendedSection,
-    rationale: `${rationaleParts.join(' · ')}.`.slice(0, 280),
+    dailyQuestionLimitBySection,
+    dailyGoalMinutes,
+    autoCalibrated,
+    rationale: `${rationaleParts.join(', ')}.`.slice(0, 280),
   };
 }
 
@@ -480,6 +726,8 @@ type DailyFocusPlanInput = {
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
   questions: QuestionItem[];
+  config?: LearningConfig;
+  forceRefresh?: boolean;
   nowIso?: string;
   decideFn?: DecisionsExecutor;
 };
@@ -488,6 +736,9 @@ type DailyFocusPlanResult = { plan: DailyFocusPlan; error?: string };
 const dailyFocusInFlight = new WeakMap<AppRepository, Map<string, Promise<DailyFocusPlanResult>>>();
 
 export async function getOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<DailyFocusPlanResult> {
+  if (input.forceRefresh) {
+    return loadOrCreateDailyFocusPlan(input);
+  }
   let requests = dailyFocusInFlight.get(input.repo);
   if (!requests) {
     requests = new Map();
@@ -509,12 +760,15 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
   const nowIso = input.nowIso ?? new Date().toISOString();
   const planDate = nowIso.slice(0, 10);
 
-  const cached = await input.repo.getDailyFocusPlan(input.studentId, planDate).catch(() => null);
-  // A model migration gets one fresh plan; deterministic fallbacks are cached too,
-  // so a rejected/unavailable model is not retried on every dashboard load.
-  if (cached && cached.focusSkillIds.length > 0 &&
-    (cached.source === 'deterministic' || cached.modelId === GEMINI_DECISION_MODEL)) {
-    return { plan: cached };
+  if (!input.forceRefresh) {
+    const cached = await input.repo.getDailyFocusPlan(input.studentId, planDate).catch(() => null);
+    if (
+      cached &&
+      cached.focusSkillIds.length > 0 &&
+      (cached.source === 'deterministic' || cached.modelId === GEMINI_DECISION_MODEL)
+    ) {
+      return { plan: cached };
+    }
   }
 
   const deterministic = buildDeterministicDailyFocusPlan({
@@ -523,6 +777,7 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
     evidenceMap: input.evidenceMap,
     questionMemory: input.questionMemory,
     questions: input.questions,
+    config: input.config,
     nowIso,
   });
 
@@ -538,11 +793,14 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
     questions: input.questions,
     nowIso,
   });
+  const availableBySection = countAvailableBySection(input.questions);
 
   try {
     const geminiPlan = await generateGeminiFocusOverride({
       basePlan: deterministic,
       candidates: candidateRows,
+      availableBySection,
+      autoCalibrate: input.config?.autoCalibrate,
       decideFn: input.decideFn,
     });
     if (geminiPlan) {
@@ -559,6 +817,56 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
   }
 }
 
+export async function generateDailyFocusPlanStateless(input: {
+  studentId: string;
+  skillStates: Record<string, SkillState>;
+  evidenceMap: Record<string, QuestionMasteryEvidence>;
+  questionMemory: Record<string, QuestionMemoryState>;
+  questions: QuestionItem[];
+  config?: LearningConfig;
+  nowIso?: string;
+  decideFn?: DecisionsExecutor;
+}): Promise<DailyFocusPlanResult> {
+  const nowIso = input.nowIso ?? new Date().toISOString();
+  const deterministic = buildDeterministicDailyFocusPlan({
+    studentId: input.studentId,
+    skillStates: input.skillStates,
+    evidenceMap: input.evidenceMap,
+    questionMemory: input.questionMemory,
+    questions: input.questions,
+    config: input.config,
+    nowIso,
+  });
+
+  if (!input.decideFn && !isGeminiConfigured()) {
+    return { plan: deterministic };
+  }
+
+  const candidateRows = computeRankedSkillCandidates({
+    skillStates: input.skillStates,
+    evidenceMap: input.evidenceMap,
+    questionMemory: input.questionMemory,
+    questions: input.questions,
+    nowIso,
+  });
+  const availableBySection = countAvailableBySection(input.questions);
+
+  try {
+    const geminiPlan = await generateGeminiFocusOverride({
+      basePlan: deterministic,
+      candidates: candidateRows,
+      availableBySection,
+      autoCalibrate: input.config?.autoCalibrate,
+      decideFn: input.decideFn,
+    });
+    return { plan: geminiPlan || deterministic };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Gemini Decisions 1 focus planning failed.';
+    console.error('Stateless Gemini Decisions 1 focus plan failed:', message);
+    return { plan: deterministic, error: message };
+  }
+}
+
 export async function decidePracticeQuestionOrderWithGemini(input: {
   mode: SessionMode;
   sectionFilter?: SectionCode;
@@ -567,12 +875,17 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
   questionMemory: Record<string, QuestionMemoryState>;
   evidenceMap?: Record<string, QuestionMasteryEvidence>;
   dailyPlan?: DailyFocusPlan | null;
+  questionCountOverride?: number;
   config: LearningConfig;
   nowIso: string;
   seed: number;
   decideFn?: DecisionsExecutor;
 }): Promise<{ questions: QuestionItem[]; decision: SessionSelectionDecision }> {
   const baseAdj = clampAlgorithmAdjustments(input.dailyPlan?.algorithmAdjustments);
+  const dailyLimitsOverride =
+    input.config.autoCalibrate?.enabled && input.dailyPlan?.dailyQuestionLimitBySection
+      ? input.dailyPlan.dailyQuestionLimitBySection
+      : undefined;
   const deterministicQuestions = selectPracticeSession({
     mode: input.mode,
     sectionFilter: input.sectionFilter,
@@ -582,6 +895,8 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     evidenceMap: input.evidenceMap,
     skillFocusWeights: input.dailyPlan?.skillWeights,
     algorithmAdjustments: baseAdj,
+    dailyLimitsOverride,
+    questionCountOverride: input.questionCountOverride,
     config: input.config,
     nowIso: input.nowIso,
     seed: input.seed,
@@ -621,6 +936,8 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     evidenceMap: input.evidenceMap,
     skillFocusWeights: input.dailyPlan?.skillWeights,
     algorithmAdjustments: baseAdj,
+    dailyLimitsOverride,
+    questionCountOverride: input.questionCountOverride,
     config: input.config,
     nowIso: input.nowIso,
     seed: input.seed,

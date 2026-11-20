@@ -85,3 +85,14 @@ test('verifyFirebaseIdToken verifies valid RS256 Firebase JWTs and rejects inval
     globalThis.fetch = originalFetch;
   }
 });
+
+test('sole admin policy grants admin strictly to bowenzou0@gmail.com', async () => {
+  const { isSoleAdminEmail, SOLE_ADMIN_EMAIL } = await import('./firebaseVerify.ts');
+  assert.equal(SOLE_ADMIN_EMAIL, 'bowenzou0@gmail.com');
+  assert.equal(isSoleAdminEmail('bowenzou0@gmail.com'), true);
+  assert.equal(isSoleAdminEmail('  BoWeNzOu0@gmail.com '), true);
+  assert.equal(isSoleAdminEmail('other@gmail.com'), false);
+  assert.equal(isSoleAdminEmail('bowenzou0@gmail.com.evil.com'), false);
+  assert.equal(isSoleAdminEmail(''), false);
+  assert.equal(isSoleAdminEmail(null), false);
+});

@@ -7,6 +7,7 @@ import type {
   StimulusGroup,
   StudentQuestionView,
 } from '../../shared/contracts';
+import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../optionLayout';
 import { VisualRenderer } from './VisualRenderer';
 
 type WorkspaceQuestion = StudentQuestionView | (QuestionItem & { stimulus?: StimulusGroup });
@@ -70,7 +71,7 @@ function renderStudentHighlights(text: string, highlights: string[]): ReactNode 
   const segments = text.split(regex);
   return segments.map((seg, i) =>
     active.some((h) => h.toLowerCase() === seg.toLowerCase()) ? (
-      <mark key={i} className="bg-[var(--status-warn-bg)] text-[var(--text-primary)] px-0.5 rounded-sm">
+      <mark key={i} className="bg-[#FDE8D7] text-[#113C36] px-0.5 rounded-sm">
         {seg}
       </mark>
     ) : (
@@ -349,7 +350,7 @@ export function ReadingStimulusPane({
                       <span>Gap {gapNum}</span>
                       {placedExtract && (
                         <span className="font-normal text-[var(--text-primary)]">
-                          · [{placedExtract.label}] {placedExtract.bodyMarkdown.slice(0, 44)}
+                          [{placedExtract.label}] {placedExtract.bodyMarkdown.slice(0, 44)}
                           {placedExtract.bodyMarkdown.length > 44 ? '…' : ''}
                         </span>
                       )}
@@ -373,10 +374,14 @@ export function ReadingStimulusPane({
 
   return (
     <div ref={containerRef} className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--border-hairline)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3.5 border-b border-[#E5DFD5]">
         <div>
-          {stim.title && <h2 className="text-lg font-bold text-[var(--text-primary)]">{stim.title}</h2>}
-          <div className="text-xs text-[var(--text-muted)]">
+          {stim.title && (
+            <h2 className="font-serif-display font-bold text-[22px] tracking-[-0.015em] text-[#113C36] leading-snug">
+              {stim.title}
+            </h2>
+          )}
+          <div className="text-xs text-[#78756E] capitalize mt-0.5">
             {stim.genreOrTextType.replace(/_/g, ' ')}
           </div>
         </div>
@@ -417,7 +422,7 @@ export function ReadingStimulusPane({
           {highlights.length > 0 && (
             <div className="flex items-center gap-3 text-[11px]">
               <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-xs bg-[var(--status-warn-bg)] border border-[var(--status-warn)]/40 inline-block" />
+                <span className="w-2.5 h-2.5 rounded-xs bg-[#FDE8D7] border border-[#EAB690] inline-block" />
                 Your highlight
               </span>
               <span className="inline-flex items-center gap-1">
@@ -640,7 +645,7 @@ export function ReadingRightAnswerPane({
                       }`}
                     >
                       <span className="flex items-center gap-2 min-w-0">
-                        <span className="font-mono text-xs text-[var(--text-muted)]">{opt.key}</span>
+                        <span className="font-sans-display font-semibold text-xs text-[#78756E]">{opt.key}</span>
                         <span className="truncate">{opt.text}</span>
                       </span>
                       {readOnly && isCorrect && (
@@ -716,7 +721,7 @@ export function ReadingRightAnswerPane({
                 }`}
               >
                 Gap {idx + 1}
-                {val ? ` → ${val}` : ''}
+                {val ? `: ${val}` : ''}
                 {readOnly && cKey ? ` (Key: ${cKey})` : ''}
               </button>
             );
@@ -745,8 +750,8 @@ export function ReadingRightAnswerPane({
                   <div className="space-y-1">
                     <div className="text-xs font-bold text-[var(--text-primary)]">
                       Extract {ex.label}
-                      {assignedGapNum ? ` · Selected Gap ${assignedGapNum}` : ''}
-                      {correctGapNum ? ` · Key: Gap ${correctGapNum}` : ''}
+                      {assignedGapNum ? ` (Selected Gap ${assignedGapNum})` : ''}
+                      {correctGapNum ? ` (Key: Gap ${correctGapNum})` : ''}
                     </div>
                     <p className="text-sm text-[var(--text-primary)] leading-relaxed whitespace-pre-line">{ex.bodyMarkdown}</p>
                   </div>
@@ -806,7 +811,9 @@ export function ReadingRightAnswerPane({
                 }}
                 className="text-sm text-[var(--text-primary)] text-left whitespace-pre-line cursor-pointer"
               >
-                <span className="font-mono text-xs text-[var(--text-muted)] mr-2">{idx + 1}.</span>
+                <span className="font-sans-display font-semibold text-xs text-[#78756E] mr-2 tabular-nums">
+                  {idx + 1}.
+                </span>
                 {part.promptText}
               </button>
               <div className="flex items-center gap-1.5 shrink-0">
@@ -855,92 +862,176 @@ export function ReadingRightAnswerPane({
 
   return (
     <div className="space-y-4">
-      <div className="text-base font-semibold text-[var(--text-primary)] leading-snug">
+      <div className="font-sans-display font-semibold text-[16px] text-[#113C36] leading-snug">
         {part.promptText}
       </div>
-      <div className="space-y-2.5">
-        {part.options.map((opt) => {
-          const isSelected = picked === opt.key;
-          const isCorrect = correctKey === opt.key;
-          const isWrongSelected = readOnly && isSelected && correctKey && !isCorrect;
-          const isElim = !readOnly && eliminated.has(opt.key);
-          return (
-            <div key={opt.key} className="flex items-stretch gap-2">
-              <button
-                type="button"
-                disabled={readOnly}
-                onClick={() => !readOnly && onSelectAnswer(part.partId, isSelected ? null : opt.key)}
-                className={`flex-1 text-left p-3.5 rounded-[var(--radius-md)] border transition-colors flex items-start gap-3 ${
-                  readOnly ? 'cursor-default' : 'cursor-pointer'
-                } ${
-                  readOnly && isCorrect
-                    ? 'border-[var(--status-success)] bg-[var(--status-success-bg)]'
-                    : isWrongSelected
-                      ? 'border-[var(--status-error)] bg-[var(--status-error-bg)]'
-                      : isSelected
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-                        : isElim
-                          ? 'border-[var(--border-hairline)] bg-[var(--bg-surface)] opacity-55'
-                          : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
-                }`}
-              >
-                <span
-                  className={`w-6 h-6 rounded-full border text-xs font-bold flex items-center justify-center shrink-0 mt-0.5 ${
-                    readOnly && isCorrect
-                      ? 'border-[var(--status-success)] bg-[var(--status-success)] text-white'
-                      : isWrongSelected
-                        ? 'border-[var(--status-error)] bg-[var(--status-error)] text-white'
-                        : isSelected
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
-                          : 'border-[var(--border-strong)] text-[var(--text-secondary)]'
-                  }`}
-                >
-                  {readOnly && isCorrect ? (
-                    <Check className="w-3.5 h-3.5" />
-                  ) : isSelected && !readOnly ? (
-                    <Check className="w-3.5 h-3.5" />
-                  ) : (
-                    opt.key
-                  )}
-                </span>
-                <div className="flex-1 min-w-0 space-y-2">
-                  {opt.text && (
-                    <span className={`block text-sm text-[var(--text-primary)] leading-relaxed ${isElim ? 'line-through' : ''}`}>
-                      {opt.text}
-                    </span>
-                  )}
-                  {opt.visual && <VisualRenderer visual={opt.visual} compact />}
-                </div>
-                {readOnly && isCorrect && (
-                  <span className="text-[11px] font-bold text-[var(--status-success)] shrink-0 mt-0.5">
-                    Correct
-                  </span>
-                )}
-                {isWrongSelected && (
-                  <span className="text-[11px] font-bold text-[var(--status-error)] shrink-0 mt-0.5">
-                    Picked
-                  </span>
-                )}
-              </button>
-              {!readOnly && (
+      {shouldUseVisualOptionGrid(part.options) ? (
+        <div className="grid grid-cols-2 gap-3" data-testid="reading-visual-options-grid">
+          {part.options.map((opt) => {
+            const isSelected = picked === opt.key;
+            const isCorrect = correctKey === opt.key;
+            const isWrongSelected = readOnly && isSelected && correctKey && !isCorrect;
+            const isElim = !readOnly && eliminated.has(opt.key);
+            const tileHeightClass = getVisualOptionTileHeightClass(part.options.length);
+            return (
+              <div key={opt.key} className="relative flex flex-col">
                 <button
                   type="button"
-                  aria-label={`Eliminate option ${opt.key}`}
-                  title="Cross out option"
-                  onClick={() => onToggleEliminate(part.partId, opt.key)}
-                  className={`px-2.5 rounded-[var(--radius-md)] border text-xs cursor-pointer transition-colors ${
-                    isElim
-                      ? 'border-[var(--border-strong)] bg-[var(--bg-hover)] text-[var(--text-primary)]'
-                      : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  disabled={readOnly}
+                  onClick={() => !readOnly && onSelectAnswer(part.partId, isSelected ? null : opt.key)}
+                  aria-label={`Option ${opt.key}${opt.text ? `: ${opt.text}` : ''}`}
+                  className={`w-full h-full text-left p-2.5 rounded-[var(--radius-md)] border transition-colors flex flex-col gap-2 ${
+                    readOnly ? 'cursor-default' : 'cursor-pointer'
+                  } ${
+                    readOnly && isCorrect
+                      ? 'border-[var(--status-success)] bg-[var(--status-success-bg)]'
+                      : isWrongSelected
+                        ? 'border-[var(--status-error)] bg-[var(--status-error-bg)]'
+                        : isSelected
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+                          : isElim
+                            ? 'border-[var(--border-hairline)] bg-[var(--bg-surface)] opacity-55'
+                            : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
                   }`}
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <div className={`flex items-center justify-between gap-1.5 min-w-0 ${!readOnly ? 'pr-7' : ''}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`w-6 h-6 rounded-full border text-xs font-bold flex items-center justify-center shrink-0 ${
+                          readOnly && isCorrect
+                            ? 'border-[var(--status-success)] bg-[var(--status-success)] text-white'
+                            : isWrongSelected
+                              ? 'border-[var(--status-error)] bg-[var(--status-error)] text-white'
+                              : isSelected
+                                ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
+                                : 'border-[var(--border-strong)] text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        {readOnly && isCorrect ? (
+                          <Check className="w-3.5 h-3.5" />
+                        ) : isSelected && !readOnly ? (
+                          <Check className="w-3.5 h-3.5" />
+                        ) : (
+                          opt.key
+                        )}
+                      </span>
+                      {opt.text && (
+                        <span className={`text-xs text-[var(--text-primary)] truncate ${isElim ? 'line-through' : ''}`}>
+                          {opt.text}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {opt.visual && (
+                    <div className={`w-full ${tileHeightClass} rounded-[8px] border border-[#EAE4DA] bg-white p-2 flex items-center justify-center overflow-hidden`}>
+                      <VisualRenderer visual={opt.visual} compact variant="optionTile" />
+                    </div>
+                  )}
                 </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    aria-label={`Eliminate option ${opt.key}`}
+                    title="Cross out option"
+                    onClick={() => onToggleEliminate(part.partId, opt.key)}
+                    className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-colors ${
+                      isElim
+                        ? 'border-[var(--border-strong)] bg-[var(--bg-hover)] text-[var(--text-primary)]'
+                        : 'border-[var(--border-hairline)] bg-white/95 text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {part.options.map((opt) => {
+            const isSelected = picked === opt.key;
+            const isCorrect = correctKey === opt.key;
+            const isWrongSelected = readOnly && isSelected && correctKey && !isCorrect;
+            const isElim = !readOnly && eliminated.has(opt.key);
+            return (
+              <div key={opt.key} className="flex items-stretch gap-2">
+                <button
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => !readOnly && onSelectAnswer(part.partId, isSelected ? null : opt.key)}
+                  className={`flex-1 text-left p-3.5 rounded-[var(--radius-md)] border transition-colors flex items-start gap-3 ${
+                    readOnly ? 'cursor-default' : 'cursor-pointer'
+                  } ${
+                    readOnly && isCorrect
+                      ? 'border-[var(--status-success)] bg-[var(--status-success-bg)]'
+                      : isWrongSelected
+                        ? 'border-[var(--status-error)] bg-[var(--status-error-bg)]'
+                        : isSelected
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+                          : isElim
+                            ? 'border-[var(--border-hairline)] bg-[var(--bg-surface)] opacity-55'
+                            : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)]'
+                  }`}
+                >
+                  <span
+                    className={`w-6 h-6 rounded-full border text-xs font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                      readOnly && isCorrect
+                        ? 'border-[var(--status-success)] bg-[var(--status-success)] text-white'
+                        : isWrongSelected
+                          ? 'border-[var(--status-error)] bg-[var(--status-error)] text-white'
+                          : isSelected
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
+                            : 'border-[var(--border-strong)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {readOnly && isCorrect ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : isSelected && !readOnly ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      opt.key
+                    )}
+                  </span>
+                  <div className="flex-1 min-w-0 space-y-2">
+                    {opt.text && (
+                      <span className={`block text-sm text-[var(--text-primary)] leading-relaxed ${isElim ? 'line-through' : ''}`}>
+                        {opt.text}
+                      </span>
+                    )}
+                    {opt.visual && <VisualRenderer visual={opt.visual} compact />}
+                  </div>
+                  {readOnly && isCorrect && (
+                    <span className="text-[11px] font-bold text-[var(--status-success)] shrink-0 mt-0.5">
+                      Correct
+                    </span>
+                  )}
+                  {isWrongSelected && (
+                    <span className="text-[11px] font-bold text-[var(--status-error)] shrink-0 mt-0.5">
+                      Picked
+                    </span>
+                  )}
+                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    aria-label={`Eliminate option ${opt.key}`}
+                    title="Cross out option"
+                    onClick={() => onToggleEliminate(part.partId, opt.key)}
+                    className={`px-2.5 rounded-[var(--radius-md)] border text-xs cursor-pointer transition-colors ${
+                      isElim
+                        ? 'border-[var(--border-strong)] bg-[var(--bg-hover)] text-[var(--text-primary)]'
+                        : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -317,6 +317,8 @@ export interface PracticeSelectionInput {
   evidenceMap?: Record<string, QuestionMasteryEvidence>;
   skillFocusWeights?: Record<string, number>;
   algorithmAdjustments?: AlgorithmAdjustments;
+  dailyLimitsOverride?: Record<SectionCode, number>;
+  questionCountOverride?: number;
   config: LearningConfig;
   nowIso: string;
   seed: number;
@@ -347,6 +349,8 @@ function scorePracticeCandidates(input: PracticeSelectionInput): {
     evidenceMap,
     skillFocusWeights,
     algorithmAdjustments,
+    dailyLimitsOverride,
+    questionCountOverride,
     config,
     nowIso,
     seed,
@@ -357,6 +361,7 @@ function scorePracticeCandidates(input: PracticeSelectionInput): {
   const effectiveSpacedWeight = config.scheduling.spacedReviewWeight * adj.spacedReviewWeightMultiplier;
   const effectiveWeakestWeight = config.scheduling.weakestSkillWeight * adj.weakestSkillWeightMultiplier;
   const effectiveNoveltyWeight = config.scheduling.noveltyCoverageWeight * adj.noveltyCoverageWeightMultiplier;
+  const autoRetireMastered = Boolean(config.poolPolicy?.autoRetireMastered);
 
   // HARD INVARIANT: benchmark_holdout NEVER leaks into non-benchmark modes
   const eligible = questions.filter((q) => {
@@ -364,6 +369,10 @@ function scorePracticeCandidates(input: PracticeSelectionInput): {
     if (mode === 'benchmark_exam') return q.poolType === 'benchmark_holdout';
     if (q.poolType === 'benchmark_holdout') return false;
     if (sectionFilter && q.section !== sectionFilter) return false;
+    if (autoRetireMastered && mode !== 'spaced_review') {
+      const ev = findFamilyEvidence(q, evidenceMap);
+      if (ev?.status === 'retained') return false;
+    }
     return true;
   });
 
@@ -427,12 +436,15 @@ function scorePracticeCandidates(input: PracticeSelectionInput): {
     .sort((a, b) => b.priority - a.priority);
 
   if (sectionFilter) {
-    const drillCap = config.sessionDefaults.sectionDrillQuestionCount ?? 10;
+    const drillCap =
+      typeof questionCountOverride === 'number' && questionCountOverride > 0
+        ? Math.round(questionCountOverride)
+        : (config.sessionDefaults.sectionDrillQuestionCount ?? 10);
     const sectionLimit = mode === 'benchmark_exam' ? 40 : Math.max(1, drillCap);
     return { scored, sectionLimit };
   }
 
-  const caps = config.sessionDefaults.dailyQuestionLimitBySection;
+  const caps = dailyLimitsOverride || config.sessionDefaults.dailyQuestionLimitBySection;
   const totalConfigured = (['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).reduce(
     (sum, sec) => sum + Math.max(0, Number(caps[sec] ?? 0)),
     0
@@ -562,6 +574,133 @@ export function selectMockTestQuestions(input: {
       if (secDiff !== 0) return secDiff;
       return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
     });
+}
+
+export function selectBatchMockQuestions(input: {
+  batchId: string;
+  sectionFilter?: SectionCode;
+  questions: QuestionItem[];
+}): QuestionItem[] {
+  const { batchId, sectionFilter, questions } = input;
+  const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
+  return questions
+    .filter((q) => {
+      if (q.qcStatus !== 'active') return false;
+      if (q.batchId !== batchId) return false;
+      if (sectionFilter && q.section !== sectionFilter) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const secDiff = sectionOrder[a.section] - sectionOrder[b.section];
+      if (secDiff !== 0) return secDiff;
+      return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
+    });
+}
+
+export const CANONICAL_POOL_MOCK_COUNTS: Record<SectionCode, number> = {
+  READ: 15,
+  MATH: 35,
+  THINK: 40,
+  WRIT: 1,
+};
+
+/**
+ * Dynamically assembles a fresh mock exam directly from the live active Question Bank
+ * (no hardcoded test batches required). Strictly excludes benchmark_holdout items,
+ * prioritizes unseen questions first, then least-recently-seen, and maintains section order.
+ */
+export function selectPoolMockQuestions(input: {
+  questions: QuestionItem[];
+  sectionFilter?: SectionCode;
+  questionCount?: number;
+  questionMemory?: Record<string, QuestionMemoryState>;
+  evidenceMap?: Record<string, QuestionMasteryEvidence>;
+  autoRetireMastered?: boolean;
+  seed?: number;
+}): QuestionItem[] {
+  const {
+    questions,
+    sectionFilter,
+    questionCount,
+    questionMemory = {},
+    evidenceMap,
+    autoRetireMastered = false,
+    seed = 42,
+  } = input;
+
+  const eligible = questions.filter((q) => {
+    if (q.qcStatus !== 'active') return false;
+    if (q.poolType === 'benchmark_holdout') return false;
+    if (sectionFilter && q.section !== sectionFilter) return false;
+    if (autoRetireMastered) {
+      const ev = findFamilyEvidence(q, evidenceMap);
+      if (ev?.status === 'retained') return false;
+    }
+    return true;
+  });
+
+  const scoreForFreshMock = (q: QuestionItem): number => {
+    const mem = questionMemory[q.questionFamilyId];
+    const ev = findFamilyEvidence(q, evidenceMap);
+    const isUnseen = !mem && (!ev || ev.status === 'unseen');
+    const isRetained = ev?.status === 'retained';
+    let score = isUnseen ? 100 : 40;
+    if (isRetained) score -= 35;
+    if (mem?.lastSeenAt) {
+      // Older attempts rank higher than recently seen ones
+      const ageDays = Math.min(60, Math.max(0, (Date.now() - Date.parse(mem.lastSeenAt)) / 86_400_000));
+      score += ageDays * 0.5;
+    }
+    score += seededNoise(seed, q.questionId) * 10;
+    return score;
+  };
+
+  if (sectionFilter) {
+    const cap =
+      typeof questionCount === 'number' && questionCount > 0
+        ? Math.round(questionCount)
+        : CANONICAL_POOL_MOCK_COUNTS[sectionFilter];
+    const scored = eligible
+      .map((q) => ({ q, priority: scoreForFreshMock(q) }))
+      .sort((a, b) => b.priority - a.priority);
+    return pickWithDiversity(scored, cap).map((x) => x.q);
+  }
+
+  const picked: QuestionItem[] = [];
+  const totalLimit =
+    typeof questionCount === 'number' && questionCount > 0 ? Math.round(questionCount) : null;
+  const sections: SectionCode[] = ['READ', 'MATH', 'THINK', 'WRIT'];
+
+  if (totalLimit !== null) {
+    // Proportional distribution across READ / MATH / THINK (plus 1 WRIT if totalLimit >= 12 and WRIT available)
+    const hasWrit = eligible.some((q) => q.section === 'WRIT') && totalLimit >= 12;
+    const objectiveBudget = hasWrit ? totalLimit - 1 : totalLimit;
+    const perObj = Math.max(1, Math.floor(objectiveBudget / 3));
+    let remainder = Math.max(0, objectiveBudget - perObj * 3);
+    const caps: Record<SectionCode, number> = {
+      READ: perObj + (remainder-- > 0 ? 1 : 0),
+      MATH: perObj + (remainder-- > 0 ? 1 : 0),
+      THINK: perObj + (remainder-- > 0 ? 1 : 0),
+      WRIT: hasWrit ? 1 : 0,
+    };
+    for (const sec of sections) {
+      const secScored = eligible
+        .filter((q) => q.section === sec)
+        .map((q) => ({ q, priority: scoreForFreshMock(q) }))
+        .sort((a, b) => b.priority - a.priority);
+      picked.push(...pickWithDiversity(secScored, caps[sec]).map((x) => x.q));
+    }
+    return picked;
+  }
+
+  for (const sec of sections) {
+    const secScored = eligible
+      .filter((q) => q.section === sec)
+      .map((q) => ({ q, priority: scoreForFreshMock(q) }))
+      .sort((a, b) => b.priority - a.priority);
+    picked.push(...pickWithDiversity(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map((x) => x.q));
+  }
+  return picked;
 }
 
 export function selectAdminCalibrationQuestions(input: {

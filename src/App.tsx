@@ -6,7 +6,7 @@ import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates
 import { HomeView } from './client/components/HomeView';
 import { ProgressView } from './client/components/ProgressView';
 import { SessionPlayerView } from './client/components/SessionPlayerView';
-import { TopNav } from './client/components/TopNav';
+import { StudioShell } from './client/components/TopNav';
 import { auth as firebaseAuth, testFirestoreConnection } from './lib/firebase';
 
 export default function App() {
@@ -145,7 +145,7 @@ export default function App() {
 
   if (loadingAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-canvas)] text-sm text-[var(--text-secondary)]">
+      <div className="min-h-screen flex items-center justify-center bg-[#F3EFE8] text-sm text-[#4A5955] font-sans-text">
         Loading Selective Lab...
       </div>
     );
@@ -163,9 +163,9 @@ export default function App() {
   const demoBanner = isDisposableDemo ? (
     <div
       role="status"
-      className="w-full bg-[var(--status-warn-bg)] border-b border-[var(--status-warn)]/30 px-4 py-1.5 text-center text-xs font-medium text-[var(--status-warn)]"
+      className="w-full bg-[var(--status-warn-bg)] border-b border-[var(--status-warn)]/25 px-4 py-1.5 text-center text-xs font-medium text-[var(--status-warn)]"
     >
-      Disposable In-Memory Preview Mode ({health?.backendName || auth?.backendName || 'memory_preview'}) — data resets on server restart. Configure Firestore or Emulator for persistent storage.
+      Disposable preview storage ({health?.backendName || auth?.backendName || 'memory_preview'}) — data resets on server restart.
     </div>
   ) : null;
 
@@ -212,15 +212,16 @@ export default function App() {
   // Gate /admin if currently logged in only as student
   if (isAdminRoute && auth.role !== 'admin') {
     return (
-      <div className="min-h-screen bg-[var(--bg-canvas)]">
-        {demoBanner}
-        <TopNav
-          currentPath={path}
-          onNavigate={navigate}
-          onPrimaryAction={handleLogout}
-          primaryLabel="Sign Out"
-        />
+      <StudioShell
+        currentPath={effectivePath}
+        role={auth.role}
+        studentId={auth.studentId}
+        onNavigate={navigate}
+        onSignOut={handleLogout}
+        banner={demoBanner}
+      >
         <AdminPasswordGate
+          embedded
           localDevPinEnabled={localDevPinEnabled}
           initialError={authSyncError}
           onAuthenticated={(next) => {
@@ -230,15 +231,16 @@ export default function App() {
           onGoogleAuthenticated={async (user) => {
             const nextAuth = await syncFirebaseUser(user);
             if (nextAuth.role !== 'admin') {
-              throw new Error('This Google account does not have Admin permissions.');
+              throw new Error('Only bowenzou0@gmail.com currently has Admin permissions.');
             }
           }}
           onBackHome={() => navigate('/')}
         />
-      </div>
+      </StudioShell>
     );
   }
 
+  // Quiet Exam Room — drop the Oat Studio sidebar completely during active sessions
   if (sessionMatch) {
     return (
       <>
@@ -255,17 +257,17 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--bg-canvas)]">
-      {demoBanner}
-      <TopNav
-        currentPath={path}
-        onNavigate={navigate}
-        onPrimaryAction={handleLogout}
-        primaryLabel={auth.role === 'admin' ? 'Admin · Sign Out' : 'Sign Out'}
-      />
+    <StudioShell
+      currentPath={effectivePath}
+      role={auth.role}
+      studentId={auth.studentId}
+      onNavigate={navigate}
+      onSignOut={handleLogout}
+      banner={demoBanner}
+    >
       {isAdminRoute ? (
         <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
-      ) : path.startsWith('/progress') ? (
+      ) : effectivePath.startsWith('/progress') ? (
         <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
       ) : (
         <HomeView
@@ -278,6 +280,6 @@ export default function App() {
           onNavigate={navigate}
         />
       )}
-    </div>
+    </StudioShell>
   );
 }

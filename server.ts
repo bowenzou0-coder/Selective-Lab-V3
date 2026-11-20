@@ -17,15 +17,16 @@ import {
   signSessionToken,
   type AuthenticatedRequest,
 } from './src/server/auth.ts';
-import { isFirebaseEmulatorActive } from './src/server/firebaseAdmin.ts';
+import { isClientFirestoreMode, isFirebaseEmulatorActive } from './src/server/firebaseAdmin.ts';
 import {
-  getBootstrappedAdminEmail,
+  isSoleAdminEmail,
   verifyFirebaseIdToken,
 } from './src/server/firebaseVerify.ts';
 import { getRuntimeDiagnostics } from './src/server/diagnostics.ts';
 import { GeminiServiceError } from './src/server/geminiClient.ts';
 import {
   decidePracticeQuestionOrderWithGemini,
+  generateDailyFocusPlanStateless,
   getOrCreateDailyFocusPlan,
 } from './src/server/geminiPlanner.ts';
 import { evaluateWritingWithGemini } from './src/server/geminiWriting.ts';
@@ -73,7 +74,9 @@ import {
   getQuestionBatchTag,
   gradeSubmission,
   selectAdminCalibrationQuestions,
+  selectBatchMockQuestions,
   selectMockTestQuestions,
+  selectPoolMockQuestions,
   selectPracticeSession,
   toStudentQuestionView,
   updateFamilyMemoryOnce,
@@ -551,11 +554,31 @@ export interface CreateAppOptions {
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; repo: AppRepository }> {
   assertAuthRuntimeConfig();
-  const repo = options.repo ?? createRepository();
+  const clientFirestoreMode = !options.repo && isClientFirestoreMode();
+  const repo: AppRepository = clientFirestoreMode
+    ? (null as unknown as AppRepository)
+    : (options.repo ?? createRepository());
+  const backendName = clientFirestoreMode ? 'firestore_client' : repo.backendName;
   let seedPromise: Promise<void> | null = null;
+  let cachedSeedManifestsPromise: Promise<BankImportManifest[]> | null = null;
+
+  async function loadAllSeedManifests(): Promise<BankImportManifest[]> {
+    if (!cachedSeedManifestsPromise) {
+      cachedSeedManifestsPromise = (async () => {
+        const files = [
+          'golden-smoke-pack.json',
+          'official-doe-pt1-2.json',
+          'official-doe-pt3-holdout.json',
+        ];
+        const loaded = await Promise.all(files.map((f) => readSeedManifest(f)));
+        return loaded.filter((m): m is BankImportManifest => m !== null);
+      })();
+    }
+    return cachedSeedManifestsPromise;
+  }
 
   async function ensureSeeded(): Promise<void> {
-    if (options.skipSeed) return;
+    if (options.skipSeed || clientFirestoreMode) return;
     if (!seedPromise) {
       seedPromise = (async () => {
         const smoke = await readSeedManifest('golden-smoke-pack.json');
@@ -585,18 +608,123 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.use(express.json({ limit: '15mb' }));
   app.use(attachAuth);
 
-  // Serve bundled seed & legacy static assets cleanly
+  // Serve bundled seed, fonts & docs static assets cleanly
   app.use('/assets', express.static(path.join(ROOT_DIR, 'public', 'assets')));
   app.use('/fonts', express.static(path.join(ROOT_DIR, 'public', 'fonts')));
+  app.use('/docs', express.static(path.join(ROOT_DIR, 'public', 'docs')));
 
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
-      backendName: repo.backendName,
-      isDisposableDemo: repo.backendName === 'memory_preview',
+      backendName,
+      isDisposableDemo: backendName === 'memory_preview',
       emulatorActive: isFirebaseEmulatorActive(),
       localDevPinEnabled: isLocalDevPinAuthEnabled(),
     });
+  });
+
+  // Stateless Starter-Tier endpoints (no Firebase Admin IAM required)
+  app.get('/api/seed/manifests', requireStudentOrAdmin, async (_req, res) => {
+    try {
+      const manifests = await loadAllSeedManifests();
+      res.json({ manifests });
+    } catch (err) {
+      console.error('GET /api/seed/manifests error:', err);
+      res.status(500).json({ error: 'Failed to load bundled seed manifests.' });
+    }
+  });
+
+  app.post('/api/ai/daily-focus', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const {
+        skillStates = {},
+        evidenceMap = {},
+        questionMemory = {},
+        questions = [],
+        config = DEFAULT_LEARNING_CONFIG,
+        nowIso,
+      } = req.body || {};
+      const result = await generateDailyFocusPlanStateless({
+        studentId: req.auth!.studentId,
+        skillStates,
+        evidenceMap,
+        questionMemory,
+        questions,
+        config,
+        nowIso,
+      });
+      res.json(result);
+    } catch (err) {
+      console.error('POST /api/ai/daily-focus error:', err);
+      res.status(500).json({ error: 'Failed to generate daily focus plan.' });
+    }
+  });
+
+  app.post('/api/ai/practice/order', requireStudentOrAdmin, async (req, res) => {
+    try {
+      const {
+        mode,
+        sectionFilter,
+        questions = [],
+        skillStates = {},
+        questionMemory = {},
+        evidenceMap = {},
+        dailyPlan = null,
+        questionCountOverride,
+        config = DEFAULT_LEARNING_CONFIG,
+        nowIso = new Date().toISOString(),
+        seed = Date.now(),
+      } = req.body || {};
+      const result = await decidePracticeQuestionOrderWithGemini({
+        mode,
+        sectionFilter,
+        questions,
+        skillStates,
+        questionMemory,
+        evidenceMap,
+        dailyPlan,
+        questionCountOverride,
+        config,
+        nowIso,
+        seed,
+      });
+      res.json({
+        questionIds: result.questions.map((q) => q.questionId),
+        decision: result.decision,
+      });
+    } catch (err) {
+      console.error('POST /api/ai/practice/order error:', err);
+      res.status(500).json({ error: 'Failed to rank practice questions.' });
+    }
+  });
+
+  app.post('/api/ai/writing/evaluate', requireStudentOrAdmin, async (req, res) => {
+    try {
+      const { submissionId, question, stimulus, planNotes = '', responseText = '', metrics } =
+        req.body || {};
+      if (!submissionId || !question || !metrics) {
+        res.status(400).json({ error: 'submissionId, question, and metrics are required.' });
+        return;
+      }
+      const evaluation = await evaluateWritingWithGemini({
+        submissionId,
+        question,
+        stimulus,
+        planNotes,
+        responseText,
+        metrics,
+      });
+      res.json({ evaluation });
+    } catch (err) {
+      if (err instanceof GeminiServiceError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      console.error('POST /api/ai/writing/evaluate error:', err);
+      res.status(502).json({
+        error: err instanceof Error ? err.message : 'Writing evaluation failed.',
+      });
+    }
   });
 
   // Stream stored media assets (GCS or local temp fallback in dev)
@@ -631,8 +759,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         role: null,
         studentId: null,
         activeSessionId: null,
-        backendName: repo.backendName,
-        isDisposableDemo: repo.backendName === 'memory_preview',
+        backendName,
+        isDisposableDemo: backendName === 'memory_preview',
+        localDevPinEnabled: isLocalDevPinAuthEnabled(),
+      });
+      return;
+    }
+    if (clientFirestoreMode) {
+      res.json({
+        authenticated: true,
+        role: req.auth.role,
+        studentId: req.auth.studentId,
+        email: req.auth.email,
+        activeSessionId: null,
+        backendName,
+        isDisposableDemo: false,
         localDevPinEnabled: isLocalDevPinAuthEnabled(),
       });
       return;
@@ -646,8 +787,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         studentId: req.auth.studentId,
         email: req.auth.email,
         activeSessionId,
-        backendName: repo.backendName,
-        isDisposableDemo: repo.backendName === 'memory_preview',
+        backendName,
+        isDisposableDemo: backendName === 'memory_preview',
         localDevPinEnabled: isLocalDevPinAuthEnabled(),
       });
     } catch (err) {
@@ -723,14 +864,40 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       return;
     }
 
+    const isSoleAdmin = isSoleAdminEmail(decoded.email);
+
+    // In Starter Tier client-Firestore mode, never call Firebase Admin Firestore on the server.
+    // Persistence and security rules run directly through the authenticated client Firebase SDK.
+    if (clientFirestoreMode) {
+      const role: 'student' | 'admin' = isSoleAdmin ? 'admin' : 'student';
+      const studentId = decoded.uid;
+      const token = signSessionToken({
+        role,
+        studentId,
+        email: decoded.email,
+        authMethod: 'firebase',
+      });
+      setAuthCookie(res, token, req);
+      res.json({
+        authenticated: true,
+        role,
+        studentId,
+        email: decoded.email,
+        activeSessionId: null,
+        backendName,
+        isDisposableDemo: false,
+        localDevPinEnabled: isLocalDevPinAuthEnabled(),
+        token,
+      });
+      return;
+    }
+
     try {
-      const isBootstrappedAdmin =
-        decoded.email.toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
       const { role } = await repo.upsertUserFromAuth({
         uid: decoded.uid,
         email: decoded.email,
         displayName: decoded.name,
-        isBootstrappedAdmin,
+        isBootstrappedAdmin: isSoleAdmin,
       });
       const studentId = decoded.uid;
       const token = signSessionToken({
@@ -750,7 +917,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           seedErr instanceof Error ? seedErr.message : seedErr
         );
       }
-      res.json({ authenticated: true, role, studentId, email: decoded.email, activeSessionId, token });
+      res.json({
+        authenticated: true,
+        role,
+        studentId,
+        email: decoded.email,
+        activeSessionId,
+        backendName,
+        isDisposableDemo: backendName === 'memory_preview',
+        localDevPinEnabled: isLocalDevPinAuthEnabled(),
+        token,
+      });
     } catch (err) {
       console.error('POST /api/auth/firebase-login persistence error:', err);
       res.status(503).json({
@@ -865,6 +1042,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       const mode = String(req.body?.mode || 'daily_adaptive') as SessionMode;
       const sectionFilter = req.body?.sectionFilter as SectionCode | undefined;
       const mockBatch = req.body?.mockBatch as MockTestBatch | undefined;
+      const batchId = typeof req.body?.batchId === 'string' ? req.body.batchId : undefined;
+      const mockSource = req.body?.mockSource as 'pool' | 'batch' | undefined;
+      const questionCount =
+        req.body?.questionCount !== undefined && Number(req.body.questionCount) > 0
+          ? Math.round(Number(req.body.questionCount))
+          : undefined;
       const timeMultiplier =
         req.body?.timeMultiplier !== undefined ? Number(req.body.timeMultiplier) : 1;
       const customTimeLimitSec =
@@ -905,7 +1088,41 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       let effectiveMode: SessionMode = mode;
       let timeLimitSec = 1500;
 
-      if (mockBatch) {
+      if (mockSource === 'pool') {
+        effectiveMode = 'section_drill';
+        selected = selectPoolMockQuestions({
+          questions: allQuestions,
+          sectionFilter,
+          questionCount,
+          questionMemory,
+          evidenceMap,
+          autoRetireMastered: Boolean(configData.config.poolPolicy?.autoRetireMastered),
+          seed: Date.now() & 0xfffffff,
+        });
+        const baseSec = getOfficialTimeLimitSec(sectionFilter);
+        if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)) {
+          timeLimitSec = Math.max(0, Math.round(customTimeLimitSec));
+        } else {
+          timeLimitSec = timeMultiplier <= 0 ? 0 : Math.round(baseSec * timeMultiplier);
+        }
+        title = `Fresh Pool Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Exam)'}`;
+      } else if (batchId) {
+        effectiveMode = 'section_drill';
+        selected = selectBatchMockQuestions({
+          batchId,
+          sectionFilter,
+          questions: allQuestions,
+        });
+        const baseSec = getOfficialTimeLimitSec(sectionFilter);
+        timeLimitSec =
+          customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)
+            ? Math.max(0, Math.round(customTimeLimitSec))
+            : timeMultiplier <= 0
+              ? 0
+              : Math.round(baseSec * timeMultiplier);
+        const batchLabel = selected[0]?.batchLabel || batchId;
+        title = `${batchLabel}${sectionFilter ? ` (${sectionFilter})` : ''}`;
+      } else if (mockBatch) {
         if (mockBatch === 'PT3') {
           effectiveMode = 'benchmark_exam';
         }
@@ -920,7 +1137,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         } else {
           timeLimitSec = timeMultiplier <= 0 ? 0 : Math.round(baseSec * timeMultiplier);
         }
-        title = `${mockBatch} Mock${sectionFilter ? ` · ${sectionFilter}` : ' · Full Test'}`;
+        title = `${mockBatch} Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Test)'}`;
       } else if (mode === 'benchmark_exam') {
         selected = selectMockTestQuestions({
           batch: 'PT3',
@@ -932,7 +1149,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           customTimeLimitSec !== undefined
             ? Math.max(0, Math.round(customTimeLimitSec))
             : Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1));
-        title = `PT3 Benchmark Holdout${sectionFilter ? ` · ${sectionFilter}` : ''}`;
+        title = `PT3 Benchmark Holdout${sectionFilter ? ` (${sectionFilter})` : ''}`;
       } else {
         const effectiveSection: SectionCode | undefined =
           mode === 'writing_sprint' ? 'WRIT' : sectionFilter;
@@ -948,6 +1165,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
                 evidenceMap,
                 questionMemory,
                 questions: allQuestions,
+                config: configData.config,
                 nowIso,
               })).plan;
         const seed = Date.now() & 0xfffffff;
@@ -974,6 +1192,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
             questionMemory,
             evidenceMap,
             dailyPlan,
+            questionCountOverride: questionCount,
             config: configData.config,
             nowIso,
             seed,
@@ -988,11 +1207,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         } else if (effectiveSection) {
           const drillMin = Math.max(1, configData.config.sessionDefaults.sectionDrillTimeMinutes ?? 8);
           timeLimitSec = effectiveSection === 'WRIT' ? 1800 : drillMin * 60;
-          title = `${effectiveSection} Practice Drill (${selected.length} Qs · ${
-            effectiveSection === 'WRIT' ? 30 : drillMin
-          } min)`;
+          title = `${effectiveSection} Practice Drill (${selected.length} Qs)`;
         } else {
-          timeLimitSec = configData.config.sessionDefaults.dailyGoalMinutes * 60;
+          const goalMin =
+            configData.config.autoCalibrate?.enabled && dailyPlan?.dailyGoalMinutes
+              ? dailyPlan.dailyGoalMinutes
+              : configData.config.sessionDefaults.dailyGoalMinutes;
+          timeLimitSec = goalMin * 60;
           title = "Today's Adaptive Practice";
         }
         if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)) {
@@ -1575,7 +1796,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   // ---------------------------------------------------------------------------
   app.get('/api/admin/diagnostics', requireAdmin, async (_req, res) => {
     try {
-      const report = await getRuntimeDiagnostics(repo);
+      const report = await getRuntimeDiagnostics(clientFirestoreMode ? null : repo, backendName);
       res.json(report);
     } catch (err) {
       console.error('GET /api/admin/diagnostics error:', err);
@@ -1705,6 +1926,27 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       }
       console.error('PATCH /api/admin/questions/:id/status error:', err);
       res.status(500).json({ error: 'Failed to update question QC status.' });
+    }
+  });
+
+  app.post('/api/admin/questions/delete', requireAdmin, async (req, res) => {
+    try {
+      await ensureSeeded();
+      const rawIds = Array.isArray(req.body?.questionIds) ? req.body.questionIds : [];
+      const ids = rawIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0);
+      if (ids.length === 0) {
+        res.json({ ok: true, deletedCount: 0 });
+        return;
+      }
+      if (!repo.deleteQuestions) {
+        res.status(501).json({ error: 'Permanent deletion is not supported on this backend.' });
+        return;
+      }
+      const deletedCount = await repo.deleteQuestions(ids);
+      res.json({ ok: true, deletedCount });
+    } catch (err) {
+      console.error('POST /api/admin/questions/delete error:', err);
+      res.status(500).json({ error: 'Failed to delete question(s).' });
     }
   });
 
@@ -1913,6 +2155,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.post('/api/admin/import/dry-run', requireAdmin, async (req, res) => {
     try {
+      if (clientFirestoreMode) {
+        const existing = Array.isArray(req.body?.existingQuestions)
+          ? (req.body.existingQuestions as QuestionItem[])
+          : [];
+        const existingStimuli =
+          req.body?.existingStimuli && typeof req.body.existingStimuli === 'object'
+            ? (req.body.existingStimuli as Record<string, StimulusGroup>)
+            : {};
+        const { report } = validateAndDryRunManifest(req.body?.manifest, existing, existingStimuli);
+        res.json({ report });
+        return;
+      }
       await ensureSeeded();
       const existing = await repo.listQuestions({ includeHistorical: true });
       const stimIds = Array.from(
@@ -2170,7 +2424,9 @@ if (isEntrypoint) {
   createApp()
     .then(({ app, repo }) => {
       app.listen(PORT, '0.0.0.0', () => {
-        console.log(`Selective Lab server listening on http://0.0.0.0:${PORT} (${repo.backendName})`);
+        console.log(
+          `Selective Lab server listening on http://0.0.0.0:${PORT} (${repo?.backendName ?? 'firestore_client'})`
+        );
       });
     })
     .catch((err) => {

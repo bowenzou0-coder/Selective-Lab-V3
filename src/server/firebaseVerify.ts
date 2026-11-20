@@ -2,8 +2,6 @@ import crypto from 'node:crypto';
 import { getPublicFirebaseConfig } from '../shared/firebaseConfig.ts';
 import {
   getAdminAuth,
-  hasExplicitServiceCredentials,
-  isCloudRunOrGcpRuntime,
   isFirebaseEmulatorActive,
 } from './firebaseAdmin.ts';
 
@@ -12,6 +10,17 @@ export interface VerifiedFirebaseUser {
   email: string;
   emailVerified: boolean;
   name?: string;
+}
+
+export const SOLE_ADMIN_EMAIL = 'bowenzou0@gmail.com';
+export const BOOTSTRAPPED_ADMIN_EMAIL = SOLE_ADMIN_EMAIL;
+
+export function getBootstrappedAdminEmail(): string {
+  return SOLE_ADMIN_EMAIL;
+}
+
+export function isSoleAdminEmail(email: string | undefined | null): boolean {
+  return typeof email === 'string' && email.trim().toLowerCase() === SOLE_ADMIN_EMAIL;
 }
 
 const GOOGLE_CERTS_URL =
@@ -106,17 +115,14 @@ async function verifyJwtWithGoogleCerts(idToken: string): Promise<VerifiedFireba
   };
 }
 
+/**
+ * Verifies a Firebase ID token without revocation checks so it requires NO IAM
+ * and works on both Starter Tier (Google-hosted) and user-owned projects.
+ */
 export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFirebaseUser> {
-  // In emulator or Admin-credentialed server runtimes, verify through Firebase Admin Auth SDK
-  // (skip for mocked tests that pass a unit-test RS256 token handled via global fetch mock)
-  const useAdminVerify =
-    isFirebaseEmulatorActive() ||
-    (process.env.NODE_ENV !== 'test' &&
-      (hasExplicitServiceCredentials() || isCloudRunOrGcpRuntime()));
-
-  if (useAdminVerify) {
+  if (process.env.NODE_ENV !== 'test' || isFirebaseEmulatorActive()) {
     try {
-      const decoded = await getAdminAuth().verifyIdToken(idToken, true);
+      const decoded = await getAdminAuth().verifyIdToken(idToken);
       if (!decoded.email || !decoded.email_verified) {
         throw new Error('Verified email address required.');
       }
@@ -127,19 +133,13 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<VerifiedFi
         name: typeof decoded.name === 'string' ? decoded.name : undefined,
       };
     } catch (err) {
-      // Allow Auth Emulator unsigned tokens in emulator mode where verifyIdToken handles them directly;
-      // if Admin verify explicitly rejected an invalid/revoked token, rethrow.
-      if (isFirebaseEmulatorActive() || process.env.NODE_ENV === 'production') {
+      if (isFirebaseEmulatorActive()) {
         throw err instanceof Error ? err : new Error('Firebase ID token verification failed.');
       }
+      // Fallback to direct public-cert RS256 verification if Admin Auth cert fetch hits a transient error
+      return verifyJwtWithGoogleCerts(idToken);
     }
   }
 
   return verifyJwtWithGoogleCerts(idToken);
 }
-
-export function getBootstrappedAdminEmail(): string {
-  return (process.env.BOOTSTRAPPED_ADMIN_EMAIL || 'bowenzou0@gmail.com').trim();
-}
-
-export const BOOTSTRAPPED_ADMIN_EMAIL = 'bowenzou0@gmail.com';

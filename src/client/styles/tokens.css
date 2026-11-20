@@ -1,45 +1,227 @@
-/* Drop custom .woff2 files into /public/fonts/ and add @font-face declarations here */
-:root {
-  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-serif: 'Source Serif 4', 'Georgia', Cambria, serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+/* Selective Lab V4 — Sunlit Editorial Studio & Quiet Exam Room Design System */
 
-  --bg-canvas: #FAF9F5;
-  --bg-surface: #F3F1EC;
-  --bg-elevated: #FFFFFF;
-  --bg-hover: #ECE8DF;
+/* --------------------------------------------------------------------------
+   Custom Anthropic OTF Typography (served from /fonts/*.otf)
+   -------------------------------------------------------------------------- */
 
-  --text-primary: #1F1E1D;
-  --text-secondary: #5F5B56;
-  --text-muted: #8A847C;
-
-  --border-hairline: #E5E0D8;
-  --border-strong: #CBC5BC;
-
-  --accent-primary: #D97757;
-  --accent-primary-hover: #C66546;
-  --accent-soft: #F9EAE4;
-
-  --status-success: #2E6F40;
-  --status-success-bg: #EAF3EC;
-  --status-warn: #B45309;
-  --status-warn-bg: #FEF3C7;
-  --status-error: #B91C1C;
-  --status-error-bg: #FEE2E2;
-
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+@font-face {
+  font-family: 'AnthropicSerifDisplay';
+  src: url('/fonts/AnthropicSerif-Display-Regular-Static.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
-* { box-sizing: border-box; }
+@font-face {
+  font-family: 'AnthropicSerifDisplay';
+  src: url('/fonts/AnthropicSerif-Display-Medium-Static.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSerifDisplay';
+  src: url('/fonts/AnthropicSerif-Display-MediumItalic-Static.otf') format('opentype');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSerifDisplay';
+  src: url('/fonts/AnthropicSerif-Display-Bold-Static.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSerifDisplay';
+  src: url('/fonts/AnthropicSerif-Display-Extrabold-Static.otf') format('opentype');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSerifText';
+  src: url('/fonts/AnthropicSerif-Text-Regular-Static.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSerifText';
+  src: url('/fonts/AnthropicSerif-Text-RegularItalic-Static.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSerifText';
+  src: url('/fonts/AnthropicSerif-Text-Medium-Static.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSansDisplay';
+  src: url('/fonts/AnthropicSans-Display-Medium-Static.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSansDisplay';
+  src: url('/fonts/AnthropicSans-Display-Semibold-Static.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSansText';
+  src: url('/fonts/AnthropicSans-Text-Regular-Static.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSansText';
+  src: url('/fonts/AnthropicSans-Text-Medium-Static.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicSansText';
+  src: url('/fonts/AnthropicSans-Text-Semibold-Static.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AnthropicMono';
+  src: url('/fonts/Anthropic%20Mono%20Web.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --------------------------------------------------------------------------
+   Semantic Palette & Surface Tokens
+   -------------------------------------------------------------------------- */
+
+:root {
+  --font-serif-display: 'AnthropicSerifDisplay', Georgia, 'Times New Roman', serif;
+  --font-serif-text: 'AnthropicSerifText', Georgia, Cambria, serif;
+  --font-sans-display: 'AnthropicSansDisplay', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-sans-text: 'AnthropicSansText', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'AnthropicMono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Back-compat aliases */
+  --font-sans: var(--font-sans-text);
+  --font-serif: var(--font-serif-text);
+
+  /* Studio Shell & Quiet Exam Surfaces */
+  --bg-shell: #F3EFE8;
+  --bg-canvas: #FAF8F5;
+  --bg-surface: #F3EFE8;
+  --bg-elevated: #FFFFFF;
+  --bg-hover: #EAE4DA;
+
+  /* Botanical Pine & Quiet Ink Hierarchy */
+  --text-primary: #113C36;
+  --text-secondary: #4A5955;
+  --text-muted: #78756E;
+
+  --border-hairline: #E5DFD5;
+  --border-strong: #CFC6B9;
+
+  /* Primary Interactive Pine & Soft Eucalyptus Selection */
+  --accent-primary: #113C36;
+  --accent-primary-hover: #0B2B26;
+  --accent-soft: #E5F0EA;
+
+  /* Editorial Studio Hero Blocks */
+  --studio-apricot: #F9CAA7;
+  --studio-stone: #ECE8E1;
+  --studio-coral: #F29A63;
+  --studio-coral-hover: #E6874C;
+  --studio-eucalyptus: #E5F0EA;
+  --reading-highlight: #FDE8D7;
+
+  /* Semantic Status Tokens */
+  --status-success: #1D6346;
+  --status-success-bg: #E5F3EC;
+  --status-warn: #A35116;
+  --status-warn-bg: #FDF0E2;
+  --status-error: #B42318;
+  --status-error-bg: #FDECEB;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  background: var(--bg-canvas);
+  background: var(--bg-shell);
   color: var(--text-primary);
-  font-family: var(--font-sans);
+  font-family: var(--font-sans-text);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-.reading-prose { font-family: var(--font-serif); font-size: 1.0625rem; line-height: 1.72; }
-.tabular-nums { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Editorial Typography Helpers */
+.font-serif-display {
+  font-family: var(--font-serif-display);
+}
+
+.font-serif-text {
+  font-family: var(--font-serif-text);
+}
+
+.font-sans-display {
+  font-family: var(--font-sans-display);
+}
+
+.font-sans-text {
+  font-family: var(--font-sans-text);
+}
+
+/* AnthropicMono is strictly reserved for the live exam clock and Admin IDs/JSON */
+.font-exam-clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono-code {
+  font-family: var(--font-mono);
+}
+
+/* Open-book serif reading sheets */
+.reading-prose {
+  font-family: var(--font-serif-text);
+  font-size: 17px;
+  line-height: 1.74;
+  max-width: 65ch;
+}
+
+/* Tabular figures stay in the surrounding editorial sans/serif — never forced to monospace */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
