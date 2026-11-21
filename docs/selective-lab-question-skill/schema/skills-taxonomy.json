@@ -1,0 +1,551 @@
+{
+  "version": "v3",
+  "totalSkills": 77,
+  "countsBySection": {
+    "READ": 18,
+    "MATH": 32,
+    "THINK": 21,
+    "WRIT": 6
+  },
+  "skills": [
+    {
+      "skillId": "READ.FIC.LITERAL_DETAIL",
+      "section": "READ",
+      "familyCode": "READ.FIC",
+      "displayName": "Fiction: Literal Detail",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.FIC.CHARACTER_INFERENCE",
+      "section": "READ",
+      "familyCode": "READ.FIC",
+      "displayName": "Fiction: Character Inference",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.FIC.IMPLIED_MEANING",
+      "section": "READ",
+      "familyCode": "READ.FIC",
+      "displayName": "Fiction: Implied Meaning",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.FIC.TONE_ATTITUDE",
+      "section": "READ",
+      "familyCode": "READ.FIC",
+      "displayName": "Fiction: Tone & Attitude",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.FIC.TECHNIQUE_EFFECT",
+      "section": "READ",
+      "familyCode": "READ.FIC",
+      "displayName": "Fiction: Technique & Effect",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.FIC.TEXT_STRUCTURE",
+      "section": "READ",
+      "familyCode": "READ.FIC",
+      "displayName": "Fiction: Text Structure",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "READ.CLOZE.COLLOCATION",
+      "section": "READ",
+      "familyCode": "READ.CLOZE",
+      "displayName": "Cloze: Collocation",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+      "section": "READ",
+      "familyCode": "READ.CLOZE",
+      "displayName": "Cloze: Context Nuance",
+      "examWeightHint": 0.07
+    },
+    {
+      "skillId": "READ.CLOZE.DISCOURSE_CONNECTOR",
+      "section": "READ",
+      "familyCode": "READ.CLOZE",
+      "displayName": "Cloze: Discourse Connector",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.POEM.LITERAL_SENSE",
+      "section": "READ",
+      "familyCode": "READ.POEM",
+      "displayName": "Poetry: Literal Sense",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.POEM.FIGURATIVE_IMAGERY",
+      "section": "READ",
+      "familyCode": "READ.POEM",
+      "displayName": "Poetry: Figurative Imagery",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.POEM.FORM_TONE_EFFECT",
+      "section": "READ",
+      "familyCode": "READ.POEM",
+      "displayName": "Poetry: Form, Tone & Effect",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.GAP.COHESIVE_BRIDGE",
+      "section": "READ",
+      "familyCode": "READ.GAP",
+      "displayName": "Gapped Text: Cohesive Bridge",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.GAP.REFERENTIAL_PRONOUN_LINK",
+      "section": "READ",
+      "familyCode": "READ.GAP",
+      "displayName": "Gapped Text: Referential Link",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.GAP.PARAGRAPH_PROGRESSION",
+      "section": "READ",
+      "familyCode": "READ.GAP",
+      "displayName": "Gapped Text: Progression",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "READ.MATCH.PRECISE_CONDITION",
+      "section": "READ",
+      "familyCode": "READ.MATCH",
+      "displayName": "Matching: Precise Condition",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.MATCH.CROSS_TEXT_COMPARE",
+      "section": "READ",
+      "familyCode": "READ.MATCH",
+      "displayName": "Matching: Cross-Text Compare",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "READ.MATCH.VIEWPOINT_CHANGE",
+      "section": "READ",
+      "familyCode": "READ.MATCH",
+      "displayName": "Matching: Viewpoint & Shift",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "MATH.NUM.DIVISIBILITY_REMAINDERS",
+      "section": "MATH",
+      "familyCode": "MATH.NUM",
+      "displayName": "Divisibility & Remainders",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.NUM.NUMBER_SEQUENCES",
+      "section": "MATH",
+      "familyCode": "MATH.NUM",
+      "displayName": "Number Sequences",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.NUM.PLACE_VALUE_DECIMALS",
+      "section": "MATH",
+      "familyCode": "MATH.NUM",
+      "displayName": "Place Value & Decimals",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.NUM.FACTORS_MULTIPLES_PRIMES",
+      "section": "MATH",
+      "familyCode": "MATH.NUM",
+      "displayName": "Factors, Multiples & Primes",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.FRAC.FRACTION_CHAINS",
+      "section": "MATH",
+      "familyCode": "MATH.FRAC",
+      "displayName": "Fraction of Remainder Chains",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "MATH.FRAC.TRUE_FALSE_STATEMENTS",
+      "section": "MATH",
+      "familyCode": "MATH.FRAC",
+      "displayName": "Fraction/Number Logic Statements",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.FRAC.RATIO_PROPORTION",
+      "section": "MATH",
+      "familyCode": "MATH.FRAC",
+      "displayName": "Ratio & Proportion",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.FRAC.PERCENTAGES",
+      "section": "MATH",
+      "familyCode": "MATH.FRAC",
+      "displayName": "Percentages",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.FRAC.PROBABILITY_DEPENDENT",
+      "section": "MATH",
+      "familyCode": "MATH.FRAC",
+      "displayName": "Probability & Combined Events",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.ALG.TWO_UNKNOWN_SYSTEMS",
+      "section": "MATH",
+      "familyCode": "MATH.ALG",
+      "displayName": "Two-Unknown Word Systems",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.ALG.WORKING_BACKWARDS",
+      "section": "MATH",
+      "familyCode": "MATH.ALG",
+      "displayName": "Working Backwards",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.ALG.SYMBOL_EQUATIONS",
+      "section": "MATH",
+      "familyCode": "MATH.ALG",
+      "displayName": "Symbol & Visual Equations",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.ALG.INEQUALITIES_BOUNDS",
+      "section": "MATH",
+      "familyCode": "MATH.ALG",
+      "displayName": "Inequalities & Bounds",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.ALG.DIGIT_CRYPT_PUZZLES",
+      "section": "MATH",
+      "familyCode": "MATH.ALG",
+      "displayName": "Digit & Column Puzzles",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.TIME.ELAPSED_24H",
+      "section": "MATH",
+      "familyCode": "MATH.TIME",
+      "displayName": "Elapsed & 24-Hour Time",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.TIME.TIME_ZONES_ITINERARY",
+      "section": "MATH",
+      "familyCode": "MATH.TIME",
+      "displayName": "Time Zones & Timetables",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.TIME.CLOCK_ANGLES",
+      "section": "MATH",
+      "familyCode": "MATH.TIME",
+      "displayName": "Clock Faces & Angles",
+      "examWeightHint": 0.02
+    },
+    {
+      "skillId": "MATH.MEAS.DIAL_GAUGE_OFFSET",
+      "section": "MATH",
+      "familyCode": "MATH.MEAS",
+      "displayName": "Dials, Scales & Offsets",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.MEAS.BALANCE_SCALES",
+      "section": "MATH",
+      "familyCode": "MATH.MEAS",
+      "displayName": "Balance Scales & Masses",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.MEAS.UNIT_CONVERSIONS",
+      "section": "MATH",
+      "familyCode": "MATH.MEAS",
+      "displayName": "Unit Conversions",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.GEO2D.COMPOSITE_AREA",
+      "section": "MATH",
+      "familyCode": "MATH.GEO2D",
+      "displayName": "Composite Area",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "MATH.GEO2D.COMPOSITE_PERIMETER",
+      "section": "MATH",
+      "familyCode": "MATH.GEO2D",
+      "displayName": "Composite Perimeter",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.GEO2D.ANGLES_PROTRACTOR",
+      "section": "MATH",
+      "familyCode": "MATH.GEO2D",
+      "displayName": "Angles & Polygons",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.GEO2D.SYMMETRY_ROTATION_REFLECT",
+      "section": "MATH",
+      "familyCode": "MATH.GEO2D",
+      "displayName": "Symmetry, Rotation & Reflection",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.GEO2D.COMPASS_TURNS",
+      "section": "MATH",
+      "familyCode": "MATH.GEO2D",
+      "displayName": "Compass & Degree Turns",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.GEO3D.CUBE_STACK_COUNT",
+      "section": "MATH",
+      "familyCode": "MATH.GEO3D",
+      "displayName": "3D Cube Stacks & Volumes",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.GEO3D.NETS_SOLIDS",
+      "section": "MATH",
+      "familyCode": "MATH.GEO3D",
+      "displayName": "Nets of 3D Solids",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.GEO3D.FACES_EDGES_VERTICES",
+      "section": "MATH",
+      "familyCode": "MATH.GEO3D",
+      "displayName": "Faces, Edges & Vertices",
+      "examWeightHint": 0.02
+    },
+    {
+      "skillId": "MATH.DATA.BAR_LINE_GRAPHS",
+      "section": "MATH",
+      "familyCode": "MATH.DATA",
+      "displayName": "Graphs & Charts",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.DATA.MEAN_RECONSTRUCTION",
+      "section": "MATH",
+      "familyCode": "MATH.DATA",
+      "displayName": "Averages & Mean Reconstruction",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "MATH.COMB.CONSTRAINED_OPTIMISATION",
+      "section": "MATH",
+      "familyCode": "MATH.COMB",
+      "displayName": "Constrained Integer Optimisation",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "MATH.COMB.GRID_PATHS_COORDS",
+      "section": "MATH",
+      "familyCode": "MATH.COMB",
+      "displayName": "Grids, Coordinates & Paths",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "THINK.VERBAL.STRENGTHEN_ARGUMENT",
+      "section": "THINK",
+      "familyCode": "THINK.VERBAL",
+      "displayName": "Strengthen Argument",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "THINK.VERBAL.WEAKEN_ARGUMENT",
+      "section": "THINK",
+      "familyCode": "THINK.VERBAL",
+      "displayName": "Weaken Argument",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "THINK.VERBAL.IDENTIFY_FLAW",
+      "section": "THINK",
+      "familyCode": "THINK.VERBAL",
+      "displayName": "Identify Reasoning Flaw",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "THINK.VERBAL.IMPLICIT_ASSUMPTION",
+      "section": "THINK",
+      "familyCode": "THINK.VERBAL",
+      "displayName": "Implicit Assumption",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "THINK.DEDUCT.WHOSE_REASONING_CORRECT",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Whose Reasoning is Correct?",
+      "examWeightHint": 0.08
+    },
+    {
+      "skillId": "THINK.DEDUCT.CONDITIONAL_CONTRAPOSITIVE",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Conditionals & Contrapositives",
+      "examWeightHint": 0.07
+    },
+    {
+      "skillId": "THINK.DEDUCT.LOGIC_GRID_CONSTRAINTS",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Logic Grid Constraints",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "THINK.DEDUCT.LINE_CIRCLE_ARRANGEMENT",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Seating & Spatial Arrangement",
+      "examWeightHint": 0.06
+    },
+    {
+      "skillId": "THINK.DEDUCT.DEDUCTIVE_ORDERING",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Deductive Ordering & Ranking",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "THINK.DEDUCT.SET_SYLLOGISMS",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Set & Quantifier Syllogisms",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "THINK.DEDUCT.KNIGHTS_AND_LIARS",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Truth-Tellers & Liars",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "THINK.DEDUCT.CRYPTOGRAM_MAPPING",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Code & Cryptogram Mapping",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "THINK.DEDUCT.CYCLE_CHAIN_REASONING",
+      "section": "THINK",
+      "familyCode": "THINK.DEDUCT",
+      "displayName": "Cycles & Repeating Chains",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "THINK.NUM.SYSTEMS_WORD_PUZZLES",
+      "section": "THINK",
+      "familyCode": "THINK.NUM",
+      "displayName": "Numerical Word Systems",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "THINK.NUM.MIN_COST_COMBINATIONS",
+      "section": "THINK",
+      "familyCode": "THINK.NUM",
+      "displayName": "Minimum-Cost Combinations",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "THINK.NUM.TABLE_CHART_RATE_LOGIC",
+      "section": "THINK",
+      "familyCode": "THINK.NUM",
+      "displayName": "Table & Rate Logic",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "THINK.NUM.OVERLAP_COUNTING",
+      "section": "THINK",
+      "familyCode": "THINK.NUM",
+      "displayName": "Overlaps & Inclusion-Exclusion",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "THINK.NUM.NETWORK_GRAPH_ROUTES",
+      "section": "THINK",
+      "familyCode": "THINK.NUM",
+      "displayName": "Networks & Route Logic",
+      "examWeightHint": 0.03
+    },
+    {
+      "skillId": "THINK.SPATIAL.VIEWS_3D_SILHOUETTES",
+      "section": "THINK",
+      "familyCode": "THINK.SPATIAL",
+      "displayName": "3D Views & Silhouettes",
+      "examWeightHint": 0.05
+    },
+    {
+      "skillId": "THINK.SPATIAL.FOLD_CUT_TILE_ASSEMBLY",
+      "section": "THINK",
+      "familyCode": "THINK.SPATIAL",
+      "displayName": "Folding, Cutting & Tiling",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "THINK.SPATIAL.PATTERN_ROTATION_SYMMETRY",
+      "section": "THINK",
+      "familyCode": "THINK.SPATIAL",
+      "displayName": "Visual Pattern & Symmetry",
+      "examWeightHint": 0.04
+    },
+    {
+      "skillId": "WRIT.CRIT.TOPIC_PROMPT_ADHERENCE",
+      "section": "WRIT",
+      "familyCode": "WRIT.CRIT",
+      "displayName": "Topic & Instruction Adherence",
+      "examWeightHint": 0.2
+    },
+    {
+      "skillId": "WRIT.CRIT.IDEAS_CREATIVITY",
+      "section": "WRIT",
+      "familyCode": "WRIT.CRIT",
+      "displayName": "Creativity & Depth of Ideas",
+      "examWeightHint": 0.2
+    },
+    {
+      "skillId": "WRIT.CRIT.PURPOSE_AUDIENCE_VOICE",
+      "section": "WRIT",
+      "familyCode": "WRIT.CRIT",
+      "displayName": "Purpose, Audience & Voice",
+      "examWeightHint": 0.15
+    },
+    {
+      "skillId": "WRIT.CRIT.STRUCTURE_LAYOUT",
+      "section": "WRIT",
+      "familyCode": "WRIT.CRIT",
+      "displayName": "Structure & Genre Conventions",
+      "examWeightHint": 0.15
+    },
+    {
+      "skillId": "WRIT.CRIT.STYLE_VOCABULARY",
+      "section": "WRIT",
+      "familyCode": "WRIT.CRIT",
+      "displayName": "Style, Imagery & Vocabulary",
+      "examWeightHint": 0.15
+    },
+    {
+      "skillId": "WRIT.CRIT.GRAMMAR_SPELLING_PUNCT",
+      "section": "WRIT",
+      "familyCode": "WRIT.CRIT",
+      "displayName": "Grammar, Punctuation & Spelling",
+      "examWeightHint": 0.15
+    }
+  ]
+}

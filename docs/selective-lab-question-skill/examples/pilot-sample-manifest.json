@@ -1,0 +1,1481 @@
+{
+  "manifestVersion": "1.0",
+  "batchLabel": "skill_pilot_showcase_1_5x_v2",
+  "defaultPoolType": "practice",
+  "defaultQcStatus": "verified",
+  "stimuli": [
+    {
+      "stimulusId": "stim_pilot_paired_01",
+      "stimulusFamilyId": "stim_pilot_paired_01",
+      "version": 1,
+      "section": "READ",
+      "genreOrTextType": "paired_extracts",
+      "title": "Listening to the Weather",
+      "preamble": "Read Text A and Text B on the theme of detecting approaching weather, then answer the questions.",
+      "extracts": [
+        {
+          "label": "A",
+          "title": "Text A — From The Cape Keeper's Apprentice",
+          "bodyMarkdown": "Before my first winter on the headland, I assumed a real gale arrived with theatrical courtesy—purple clouds stacked like bruised cushions, gulls fleeing inland, whitecaps chewing the outer reef. Whenever I checked the brass barometer in the hallway, I made a quiet show of tapping its face with my knuckle, hoping Old Hal would notice how diligently I kept watch. Hal rarely glanced at the dial. He claimed a man who stared only at glass waited until the weather had already finished making up its mind.\n\nOn a windless Tuesday in late May, the cove lay flat as varnished slate, and I was halfway through repacking the oil cans when Hal set his tin mug down without drinking. \"Leave the cans,\" he said, nodding toward the stairwell. \"Press two fingers to the cedar rail and stop talking for half a minute.\" I obeyed mostly to humour him, half convinced he was testing whether I would stand still on command. At first I felt only cold polish. Then, beneath the stillness of the house, a faint, patient thrum crept into my palm—not quite a vibration, more like the echo of heavy boots climbing a distant staircase.\n\n\"Swell off the southern shelf,\" Hal murmured, already fetching storm shutters from the porch. \"Six hours away, maybe seven, if it keeps its pace.\" I hurried outside to check the skyline, determined to catch him exaggerating, yet not a single dark rib smudged the horizon. Only forty minutes later did the kitchen barometer finally slip three notches, and by dusk the windowpanes were humming long before the first spit of rain reached the glass. I never tapped the barometer quite so proudly again."
+        },
+        {
+          "label": "B",
+          "title": "Text B — From The Hidden Sound of Approaching Storms",
+          "bodyMarkdown": "Long before coastal radar networks tracked squalls across the ocean, lighthouse keepers and harbour pilots relied on subtle cues that modern commuters rarely notice. Among the strangest of these early warnings are microbaroms—ultra-low-frequency pressure waves generated when steep storm swells collide at sea. Because sound waves at roughly 0.2 hertz lose very little energy as they travel through the atmosphere, microbaroms can race hundreds of kilometres ahead of the clouds and wind that produced them.\n\nStrictly speaking, human ears cannot hear microbaroms directly; the pitch sits well below the bottom limit of our hearing. Yet a storm does not need to be audible to announce itself physically. When steady pressure pulses wash against hollow timber towers, taut glass panes or narrow coastal valleys, those structures can resonate slightly, translating an invisible ocean tremor into a faint hum or a rhythm felt through wood and floorboards. Even several species of seabirds are thought to detect these infrasonic corridors and alter their flight paths hours before barometric pressure drops noticeably at the coast.\n\nMeteorologists today deploy sensitive microphone arrays to measure microbaroms from across entire ocean basins, combining acoustic data with satellite imagery to estimate storm intensity far from land. Still, researchers caution that local vibrations alone can mislead an untrained listener: distant surf, harbour traffic and even thermal winds can mimic a similar low murmur. Interpreting the sound accurately still requires the same patience coastal watchers practised for centuries—weighing one quiet signal against the wider pattern of sea and sky."
+        }
+      ],
+      "sourceType": "ai_generated"
+    },
+    {
+      "stimulusId": "stim_pilot_poem_01",
+      "stimulusFamilyId": "stim_pilot_poem_01",
+      "version": 1,
+      "section": "READ",
+      "genreOrTextType": "poem",
+      "title": "Low Tide at the Jetty",
+      "mainTextMarkdown": "At noon the harbour folds its cover back,\nexposing rungs of green-furred timber knees,\nold iron bolts that grip the weathered rack,\nand half a sunken tyre beneath the lees.\nWhat looked like seamless mirror an hour past\ngives up its cluttered basement to the sun.\n\nA heron stitches slow along the shoal,\neach careful step a pause between two breaths,\nreading the silt as if it were a scroll\nof tiny vanishings and tiny deaths.\nHe does not mourn the splendour of the blue;\nhis hunger knows the tide has set a feast.\n\nAlong the rail, the afternoon crowd sighs,\nchecks bus timetables, tilts a camera high\nto crop the brown mud flat out of the frame\nand keep the polished headland and the sky.\n\"We came too late,\" a father tells his son,\nalready turning sandals toward the road.\n\nBehind their backs a hundred silver claws\nunlatch from shadows underneath the stones,\nand brittle mussel shells click dry applause\nalong the jetty's salt-encrusted bones—\na quiet emptiness that starts to brim\nwith lives that hide whenever waters rise.",
+      "sourceType": "ai_generated"
+    },
+    {
+      "stimulusId": "stim_pilot_cloze_01",
+      "stimulusFamilyId": "stim_pilot_cloze_01",
+      "version": 1,
+      "section": "READ",
+      "genreOrTextType": "informational_cloze",
+      "title": "How Bogong Moths Find the Alps",
+      "mainTextMarkdown": "Every spring, millions of Bogong moths leave the warm plains of eastern Australia and {{gap:1}} more than a thousand kilometres south to cool alpine caves. Remarkably, each moth makes this journey only once, so it cannot {{gap:2}} on memories from an earlier flight. For decades, biologists were {{gap:3}} by how insects with brains smaller than a grain of rice maintained such an exact heading across dark farmland. Recent flight-simulator experiments showed that the moths {{gap:4}} two independent compass systems simultaneously. First, they sense subtle shifts in the Earth's magnetic field; {{gap:5}}, they steer by prominent visual landmarks along the horizon. When researchers artificially {{gap:6}} the magnetic field inside a test cylinder while keeping the visual silhouette fixed, the moths' flight paths quickly broke down. Only when both cues aligned did the insects steer {{gap:7}} toward the mountains. Sadly, expanding suburban glare now {{gap:8}} to disorient vast numbers of migrating moths before they ever reach the high country.",
+      "sourceType": "ai_generated"
+    },
+    {
+      "stimulusId": "stim_pilot_gapped_01",
+      "stimulusFamilyId": "stim_pilot_gapped_01",
+      "version": 1,
+      "section": "READ",
+      "genreOrTextType": "gapped_text",
+      "title": "How Desert Dunes Sing",
+      "preamble": "Read the six-paragraph article below. Choose from the summary headings (A–G) the one which best summarises each paragraph (Gap 1 to Gap 6). There is one extra heading you do not need to use.",
+      "mainTextMarkdown": "{{gap:1}}\nWalkers in parts of the Sahara, the Gobi and Western Australia have occasionally been startled by a low booming note rising straight from beneath their boots. Rather than a brief whistle of wind across a ridge, the sound resembles a distant propeller plane or bowed cello and can reverberate across a quiet valley for several minutes at a time.\n\n{{gap:2}}\nLong before physicists carried microphones into desert basins, travellers invented imaginative accounts for what they heard. Marco Polo wrote in the thirteenth century of unseen drums echoing across empty dunes, warning caravan guides never to lag behind lest the phantom voices lure them away from the safe track. Other legends blamed buried temple bells or hollow caverns hidden beneath the ridges.\n\n{{gap:3}}\nDespite its fame, fewer than forty dune fields worldwide are known to boom reliably. Laboratory studies show that singing sand requires an unusually strict combination of physical features: well-rounded quartz grains between 0.1 and 0.5 millimetres across, a dry outer layer resting over a slightly firmer base, and a leeward slope steep enough for a thin sheet of grains to slide smoothly.\n\n{{gap:4}}\nOnce footsteps or a gust of wind trigger a shallow avalanche, millions of grains shear past one another down the slope. Because the grains are remarkably uniform in size, their tiny impacts fall into step instead of cancelling each other out, transforming the upper metre of dry sand into a natural loudspeaker that projects a steady low-frequency wave.\n\n{{gap:5}}\nSurprisingly, kicking harder down the slope makes the boom louder, not higher or lower. Pitch is governed almost entirely by grain diameter: finer sand vibrates faster to emit a higher hum, whereas coarser sand produces a deeper bass rumble—and rare dunes containing two distinct grain populations can even sing two separate musical notes simultaneously.\n\n{{gap:6}}\nEven the most reliable singing dune can fall mute overnight when the air turns damp. A microscopic film of morning dew acts like weak glue between neighbouring grains, forcing the sliding layer to break into silent, sluggish clumps rather than vibrating cleanly across the dry sand beneath.",
+      "extracts": [
+        {
+          "label": "A",
+          "bodyMarkdown": "What governs the musical pitch a booming dune produces",
+          "isDecoy": false
+        },
+        {
+          "label": "B",
+          "bodyMarkdown": "Why a trace of moisture can silence a singing slope",
+          "isDecoy": false
+        },
+        {
+          "label": "C",
+          "bodyMarkdown": "Folklore and travellers' tales offered before scientific study",
+          "isDecoy": false
+        },
+        {
+          "label": "D",
+          "bodyMarkdown": "Why wind whistles louder across desert valleys at night than at noon",
+          "isDecoy": true
+        },
+        {
+          "label": "E",
+          "bodyMarkdown": "The rare physical ingredients a sand slope needs in order to boom",
+          "isDecoy": false
+        },
+        {
+          "label": "F",
+          "bodyMarkdown": "An unexpected sustained sound encountered in scattered desert regions",
+          "isDecoy": false
+        },
+        {
+          "label": "G",
+          "bodyMarkdown": "How synchronised grain collisions turn a sliding layer into a speaker",
+          "isDecoy": false
+        }
+      ],
+      "sourceType": "ai_generated"
+    },
+    {
+      "stimulusId": "stim_pilot_match_01",
+      "stimulusFamilyId": "stim_pilot_match_01",
+      "version": 1,
+      "section": "READ",
+      "genreOrTextType": "multiple_match",
+      "title": "Working While the City Sleeps",
+      "preamble": "Read the four extracts (A–D) from people who work night shifts, then match each statement (1–10) to the correct writer.",
+      "extracts": [
+        {
+          "label": "A",
+          "title": "Tariq — Sourdough Baker",
+          "bodyMarkdown": "People romanticise the smell of warm loaves at 3 am, though they rarely mention the 25-kilogram flour sacks or the fine dust that works its way into my laces. I switched to night baking five years ago primarily so I could collect my daughter from school every afternoon instead of missing her homework hours. Staying awake beside deck ovens is surprisingly manageable—the radiating heat and staggered timers keep my mind sharp. The real battle begins at midday, when I pull the curtains shut and try to persuade my brain to sleep while leaf-blowers and delivery vans rumble outside. Even so, watching the earliest commuters pause at our steamed-up window makes the upside-down routine feel worthwhile."
+        },
+        {
+          "label": "B",
+          "title": "Elena — Observatory Technician",
+          "bodyMarkdown": "My shift starts only once sunset drains the glare from the ridge. Visitors often imagine I spend my evenings discovering new comets, whereas my actual job is keeping the telescope's mirrors chilled to match the outside air so heat ripples never blur a researcher's photographs. On crisp winter nights the dome feels astonishingly serene, even when my gloved fingers grow stiff checking fibre cables in sub-zero air. What tests my patience is not the cold or the solitary hours, but an unforecast sheet of cloud sliding over the peak after four hours of calibration—wiping out an entire international team's observing window in ten minutes flat."
+        },
+        {
+          "label": "C",
+          "title": "Callum — Harbour Ferry Deckhand",
+          "bodyMarkdown": "The final ferry across the harbour carries an entirely different mood from the elbows-out morning commuter crush. Cellists lean instrument cases against their knees, hospital nurses rest their temples on cool glass, and scarcely anyone argues into a phone. Still, calm passengers do not mean an effortless crossing: waterlogged driftwood sits almost invisible against ink-black swells, so our skipper and I call out every lit channel marker aloud to double-check one another. In my first winter on deck I genuinely dreaded thick harbour fog, yet nowadays I find that hushed post-midnight stillness far preferable to the blinding salt glare of summer noon."
+        },
+        {
+          "label": "D",
+          "title": "Meera — Urban Wildlife Ecologist",
+          "bodyMarkdown": "Most suburban residents assume their neighbourhood creek shuts down at dusk, which is exactly why I pull on chest waders at 9 pm. Carrying ultrasonic detectors, I map microbats hunting beneath concrete road bridges and note which overhanging branches ringtail possums trust when crossing busy streets. Late dog-walkers sometimes pause to ask whether I feel uneasy working alone beside dark water, yet the truth is my biggest hazard is usually catching a boot on a hidden fig root while craning my neck at the canopy. Best of all, our survey logs recently convinced the local council to shield harsh floodlights along two creek-side paths."
+        }
+      ],
+      "sourceType": "ai_generated"
+    },
+    {
+      "stimulusId": "stim_pilot_writ_01",
+      "stimulusFamilyId": "stim_pilot_writ_01",
+      "version": 1,
+      "section": "WRIT",
+      "genreOrTextType": "newspaper_report",
+      "title": "Balloon Down on the School Oval",
+      "mainTextMarkdown": "Early this morning, before classes began, a colourful hot-air balloon made an unexpected emergency landing right in the middle of Riverbend Primary School's sports oval. Nobody was injured, and curious students, teachers and neighbours quickly gathered around the fence to watch the pilot pack up the giant canopy.\n\nWrite a **newspaper report** about this incident for your local community paper.",
+      "visual": {
+        "visualType": "inline_svg",
+        "altText": "A tilted orange-striped hot-air balloon and wicker basket resting on a green school oval beside a school building at 7:45 am",
+        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 240\"><rect width=\"560\" height=\"240\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"16\" y=\"16\" width=\"528\" height=\"148\" fill=\"#E6EEF2\" rx=\"6\"/><circle cx=\"476\" cy=\"56\" r=\"22\" fill=\"#F9CAA7\"/><path d=\"M16,154 Q280,136 544,154 L544,224 L16,224 Z\" fill=\"#E5F3EC\" stroke=\"#1F7A4C\" stroke-width=\"1.5\"/><rect x=\"42\" y=\"106\" width=\"110\" height=\"48\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"1.8\"/><polygon points=\"36,106 97,76 158,106\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"1.8\"/><rect x=\"62\" y=\"120\" width=\"18\" height=\"16\" fill=\"#E6EEF2\" stroke=\"#113C36\" stroke-width=\"1.2\"/><rect x=\"112\" y=\"120\" width=\"18\" height=\"16\" fill=\"#E6EEF2\" stroke=\"#113C36\" stroke-width=\"1.2\"/><ellipse cx=\"332\" cy=\"118\" rx=\"74\" ry=\"44\" transform=\"rotate(-14 332 118)\" fill=\"#F29A63\" stroke=\"#113C36\" stroke-width=\"2\"/><path d=\"M276,120 Q332,88 388,104\" fill=\"none\" stroke=\"#FFFFFF\" stroke-width=\"5\" stroke-opacity=\"0.7\"/><path d=\"M286,144 Q338,118 394,126\" fill=\"none\" stroke=\"#113C36\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><rect x=\"224\" y=\"152\" width=\"38\" height=\"26\" rx=\"4\" fill=\"#F9CAA7\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"256\" y1=\"154\" x2=\"278\" y2=\"132\" stroke=\"#113C36\" stroke-width=\"1.5\"/><line x1=\"258\" y1=\"168\" x2=\"284\" y2=\"144\" stroke=\"#113C36\" stroke-width=\"1.5\"/><text x=\"280\" y=\"210\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"13\" fill=\"#4A5955\">7:45 am — Unexpected landing on Riverbend Primary School oval</text></svg>",
+        "caption": "Scene on the school oval at 7:45 am"
+      },
+      "sourceType": "ai_generated"
+    }
+  ],
+  "questions": [
+    {
+      "questionId": "q_pilot_read_paired_01_v1",
+      "questionFamilyId": "q_pilot_read_paired_01",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_FICTION_MCQ",
+      "stimulusId": "stim_pilot_paired_01",
+      "parts": [
+        {
+          "partId": "q_pilot_read_paired_01_p1",
+          "partIndex": 0,
+          "promptText": "How does Text B qualify (add a caution to) the kind of observation Old Hal relies on in Text A?",
+          "skillId": "READ.FIC.IMPLIED_MEANING",
+          "secondarySkillIds": [
+            "READ.MATCH.CROSS_TEXT_COMPARE"
+          ],
+          "difficultyInitial": 4.3,
+          "targetTimeSec": 80,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "overstated_contradiction",
+            "single_text_detail"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "It argues that wooden buildings are unable to vibrate unless wind is already blowing."
+            },
+            {
+              "key": "B",
+              "text": "It notes that similar low vibrations can have non-storm causes, so one cue must be weighed against wider signs."
+            },
+            {
+              "key": "C",
+              "text": "It claims that barometers always detect storms hours earlier than coastal pressure waves do."
+            },
+            {
+              "key": "D",
+              "text": "It suggests that only seabirds, not humans, can sense low-frequency ocean pressure waves."
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Connect Old Hal's method in Text A with the explicit caution in the final paragraph of Text B:\n\n1) In Text A, Hal predicts the storm purely by feeling a \"faint, patient thrum\" through the cedar stairwell rail while the sky is still clear.\n2) In Text B, paragraph 2 confirms this phenomenon is real (timber towers and wood can resonate with microbaroms), BUT paragraph 3 adds an important qualification: \"local vibrations alone can mislead an untrained listener: distant surf, harbour traffic and even thermal winds can mimic a similar low murmur. Interpreting the sound accurately still requires... weighing one quiet signal against the wider pattern of sea and sky.\"\n3) Option B captures this exact nuanced caution without falsely claiming Text B rejects Hal's method.",
+          "distractorRationales": {
+            "A": "Text B explicitly states that hollow timber towers and wood CAN resonate ahead of the wind and clouds.",
+            "C": "Text B says microbaroms arrive \"hours before barometric pressure drops noticeably\" — the exact opposite of C.",
+            "D": "Text B says human ears cannot hear microbaroms directly, yet humans CAN feel or hear them when structures resonate (\"translating an invisible ocean tremor into a faint hum or a rhythm felt through wood\")."
+          },
+          "evidenceRefs": [
+            {
+              "refId": "ev_paired_b_caution",
+              "stimulusRevision": 1,
+              "targetKind": "extract",
+              "extractLabel": "B",
+              "startOffset": 1362,
+              "endOffset": 1503,
+              "quote": "local vibrations alone can mislead an untrained listener: distant surf, harbour traffic and even thermal winds can mimic a similar low murmur"
+            }
+          ]
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_read_paired_02_v1",
+      "questionFamilyId": "q_pilot_read_paired_02",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_FICTION_MCQ",
+      "stimulusId": "stim_pilot_paired_01",
+      "parts": [
+        {
+          "partId": "q_pilot_read_paired_02_p1",
+          "partIndex": 0,
+          "promptText": "What does the narrator's final sentence in Text A (\"I never tapped the barometer quite so proudly again\") mainly reveal?",
+          "skillId": "READ.FIC.CHARACTER_INFERENCE",
+          "secondarySkillIds": [
+            "READ.FIC.TONE_ATTITUDE"
+          ],
+          "difficultyInitial": 4.2,
+          "targetTimeSec": 75,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "literal_instrument_blame",
+            "exaggerated_conflict"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "The narrator realised the hallway barometer was broken and needed replacing."
+            },
+            {
+              "key": "B",
+              "text": "The narrator felt quietly humbled after discovering Hal's attentiveness outpaced performative habits."
+            },
+            {
+              "key": "C",
+              "text": "The narrator became resentful that Hal refused to praise his routine checks."
+            },
+            {
+              "key": "D",
+              "text": "The narrator decided that checking weather instruments was completely pointless."
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Link the ending back to the opening paragraph of Text A:\n\n1) At the start, the narrator admits he \"made a quiet show of tapping its face with my knuckle, hoping Old Hal would notice how diligently I kept watch\" — and later went outside \"determined to catch him exaggerating.\"\n2) When the barometer drops forty minutes AFTER Hal felt the swell in the banister, the narrator sees that quiet, experienced attention beat his performative display.\n3) Saying \"quite so proudly\" (not \"never touched it again\") shows gentle humility rather than anger or abandoning the barometer altogether — Option B.",
+          "distractorRationales": {
+            "A": "The barometer worked normally (\"slipped three notches\" forty minutes later); it simply reacted later than the swell vibrations.",
+            "C": "The tone is reflective and self-aware, not resentful toward Hal.",
+            "D": "Notice the careful qualifier \"quite so proudly\" — he still used the barometer, just without showing off."
+          },
+          "evidenceRefs": [
+            {
+              "refId": "ev_paired_a_show",
+              "stimulusRevision": 1,
+              "targetKind": "extract",
+              "extractLabel": "A",
+              "startOffset": 253,
+              "endOffset": 363,
+              "quote": "made a quiet show of tapping its face with my knuckle, hoping Old Hal would notice how diligently I kept watch"
+            },
+            {
+              "refId": "ev_paired_a_end",
+              "stimulusRevision": 1,
+              "targetKind": "extract",
+              "extractLabel": "A",
+              "startOffset": 1560,
+              "endOffset": 1612,
+              "quote": "I never tapped the barometer quite so proudly again."
+            }
+          ]
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_read_poem_01_v1",
+      "questionFamilyId": "q_pilot_read_poem_01",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_POETRY_MCQ",
+      "stimulusId": "stim_pilot_poem_01",
+      "parts": [
+        {
+          "partId": "q_pilot_read_poem_01_p1",
+          "partIndex": 0,
+          "promptText": "In stanza 3, why does the poet mention that visitors \"tilt a camera high / to crop the brown mud flat out of the frame\"?",
+          "skillId": "READ.POEM.FORM_TONE_EFFECT",
+          "secondarySkillIds": [
+            "READ.POEM.FIGURATIVE_IMAGERY"
+          ],
+          "difficultyInitial": 4.3,
+          "targetTimeSec": 75,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "literal_photography_tip",
+            "overstated_anger"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "To show that glare off the mud ruins photographs taken at midday."
+            },
+            {
+              "key": "B",
+              "text": "To illustrate how people edit away messy reality in favour of a neat postcard version of nature."
+            },
+            {
+              "key": "C",
+              "text": "To suggest that the visitors are trying to photograph the heron without startling it."
+            },
+            {
+              "key": "D",
+              "text": "To prove that the headland is far more ecologically important than the mudflats."
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Read stanza 3 alongside stanza 2 (the heron) and stanza 4 (the waking crabs and shells):\n\n1) The crowd \"sighs\", tilts cameras up to remove the brown mud flat, and keeps only \"the polished headland and the sky\" before declaring \"We came too late.\"\n2) The word \"polished\" contrasts with stanza 1's \"cluttered basement\" and stanza 4's thriving creatures hidden under stones.\n3) By literally cropping the mudflat out of their photos, the tourists symbolise choosing a tidy, surface-level view of scenery while missing the real living world right beneath them — Option B.",
+          "distractorRationales": {
+            "A": "The poem never mentions glare or camera exposure; they crop the mud because they find it unattractive (\"sighs\", \"We came too late\").",
+            "C": "The tourists show no awareness of the heron or shore creatures — they turn back toward the road.",
+            "D": "The poem argues the exact opposite: the mudflat is brimming with life, whereas \"polished headland\" is only surface scenery."
+          },
+          "evidenceRefs": [
+            {
+              "refId": "ev_poem_crop",
+              "stimulusRevision": 1,
+              "targetKind": "mainText",
+              "startOffset": 581,
+              "endOffset": 688,
+              "quote": "tilts a camera high\nto crop the brown mud flat out of the frame\nand keep the polished headland and the sky."
+            }
+          ]
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_read_poem_02_v1",
+      "questionFamilyId": "q_pilot_read_poem_02",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_POETRY_MCQ",
+      "stimulusId": "stim_pilot_poem_01",
+      "parts": [
+        {
+          "partId": "q_pilot_read_poem_02_p1",
+          "partIndex": 0,
+          "promptText": "What does comparing the silt to \"a scroll / of tiny vanishings and tiny deaths\" (lines 9–10) suggest about the heron?",
+          "skillId": "READ.POEM.FIGURATIVE_IMAGERY",
+          "secondarySkillIds": [
+            "READ.POEM.LITERAL_SENSE"
+          ],
+          "difficultyInitial": 4.2,
+          "targetTimeSec": 70,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "emotional_projection",
+            "literal_reading"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "The heron grieves for the creatures left stranded by the falling tide."
+            },
+            {
+              "key": "B",
+              "text": "The heron can interpret faint tracks and signs in the mud that hurried observers overlook."
+            },
+            {
+              "key": "C",
+              "text": "The heron is searching for old rubbish and discarded paper washed ashore."
+            },
+            {
+              "key": "D",
+              "text": "The heron struggles to walk across soft silt without slipping."
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Unpack the metaphor in stanza 2:\n\n1) A \"scroll\" is a written document that only someone who knows the language can read. Comparing the silt to a scroll of \"tiny vanishings and tiny deaths\" portrays the mudflat as full of subtle tracks, burrows, and remains.\n2) The heron moves with \"each careful step a pause between two breaths\", intently \"reading\" those tiny signs to hunt (\"his hunger knows the tide has set a feast\").\n3) Notice line 11 explicitly rules out sadness: \"He does not mourn the splendour of the blue.\" Therefore Option B is uniquely supported.",
+          "distractorRationales": {
+            "A": "The poem specifically contradicts grief: \"He does not mourn...\" and treats the low tide as a \"feast\".",
+            "C": "\"Scroll\" is a metaphor for tracks and traces in the silt, not literal paper rubbish.",
+            "D": "\"Each careful step\" shows deliberate hunting precision, not awkwardness or slipping."
+          },
+          "evidenceRefs": [
+            {
+              "refId": "ev_poem_scroll",
+              "stimulusRevision": 1,
+              "targetKind": "mainText",
+              "startOffset": 350,
+              "endOffset": 425,
+              "quote": "reading the silt as if it were a scroll\nof tiny vanishings and tiny deaths."
+            }
+          ]
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_read_cloze_01_v1",
+      "questionFamilyId": "q_pilot_read_cloze_01",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_VOCAB_CLOZE",
+      "stimulusId": "stim_pilot_cloze_01",
+      "parts": [
+        {
+          "partId": "q_pilot_read_cloze_01_p1",
+          "partIndex": 0,
+          "slotRef": "gap:1",
+          "promptText": "Choose the best word for Gap 1.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "near_synonym_precision"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "drift"
+            },
+            {
+              "key": "B",
+              "text": "migrate"
+            },
+            {
+              "key": "C",
+              "text": "roam"
+            },
+            {
+              "key": "D",
+              "text": "disperse"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "All four verbs fit grammatically, so check exact meaning: \"Every spring... more than a thousand kilometres south to cool alpine caves.\" Only \"migrate\" describes regular seasonal travel along a directed route to a specific destination (echoed by \"migrating moths\" at the end). Option B is correct.",
+          "distractorRationales": {
+            "A": "\"Drift\" implies passive movement pushed by wind without active navigation, contradicting the compass discovery.",
+            "C": "\"Roam\" implies aimless wandering over an area rather than a directed seasonal journey south.",
+            "D": "\"Disperse\" means scattering apart in different directions rather than converging on alpine caves."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p2",
+          "partIndex": 1,
+          "slotRef": "gap:2",
+          "promptText": "Choose the best word for Gap 2.",
+          "skillId": "READ.CLOZE.COLLOCATION",
+          "difficultyInitial": 3.9,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "apply_procedural",
+          "trapTags": [
+            "preposition_collocation"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "trust"
+            },
+            {
+              "key": "B",
+              "text": "rely"
+            },
+            {
+              "key": "C",
+              "text": "count"
+            },
+            {
+              "key": "D",
+              "text": "lean"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Look at both precision and natural scientific collocation with \"...on memories from an earlier flight.\" While \"count on\" and \"lean on\" exist informally for people, \"rely on memories\" is the precise, standard collocation in informational science prose. Option B is best.",
+          "distractorRationales": {
+            "A": "\"Trust\" does not collocate with \"on\" (\"trust memories\" or \"trust in\").",
+            "C": "\"Count on\" is informal and normally applies to people or expected outcomes rather than biological navigation memories.",
+            "D": "\"Lean on\" is physical or figurative for emotional support, not scientific navigation."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p3",
+          "partIndex": 2,
+          "slotRef": "gap:3",
+          "promptText": "Choose the best word for Gap 3.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "tone_collocation"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "baffled"
+            },
+            {
+              "key": "B",
+              "text": "deterred"
+            },
+            {
+              "key": "C",
+              "text": "startled"
+            },
+            {
+              "key": "D",
+              "text": "persuaded"
+            }
+          ],
+          "correctAnswerKey": "A",
+          "workedExplanation": "The sentence describes a decades-long scientific mystery (\"For decades, biologists were ___ by how...\") finally solved by \"Recent flight-simulator experiments.\" \"Baffled by\" accurately conveys sustained inability to explain a puzzle. Option A is correct.",
+          "distractorRationales": {
+            "B": "\"Deterred\" means discouraged from acting, whereas biologists actively studied the moths.",
+            "C": "\"Startled\" describes a sudden brief shock, which clashes with \"For decades\".",
+            "D": "\"Persuaded\" means convinced, contradicting the fact that they did not yet know the mechanism."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p4",
+          "partIndex": 3,
+          "slotRef": "gap:4",
+          "promptText": "Choose the best word for Gap 4.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "near_synonym_precision"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "integrate"
+            },
+            {
+              "key": "B",
+              "text": "alternate"
+            },
+            {
+              "key": "C",
+              "text": "separate"
+            },
+            {
+              "key": "D",
+              "text": "substitute"
+            }
+          ],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Look at the clue right after the blank: \"two independent compass systems simultaneously\" and later \"Only when both cues aligned...\" Using two systems together as one working guide means they \"integrate\" them — Option A.",
+          "distractorRationales": {
+            "B": "\"Alternate\" means switching back and forth one at a time, contradicting \"simultaneously\".",
+            "C": "\"Separate\" means keeping apart, the opposite of combining both cues.",
+            "D": "\"Substitute\" means replacing one with the other rather than using both together."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p5",
+          "partIndex": 4,
+          "slotRef": "gap:5",
+          "promptText": "Choose the best word for Gap 5.",
+          "skillId": "READ.CLOZE.DISCOURSE_CONNECTOR",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "contrast_vs_sequence_connector"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "nonetheless"
+            },
+            {
+              "key": "B",
+              "text": "second"
+            },
+            {
+              "key": "C",
+              "text": "otherwise"
+            },
+            {
+              "key": "D",
+              "text": "conversely"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Look at the parallel structure across the semicolon: \"First, they sense subtle shifts...; {{gap:5}}, they steer by prominent visual landmarks...\" Both sentences list the two cues in order, so \"second\" pairs cleanly with \"First\" — Option B.",
+          "distractorRationales": {
+            "A": "\"Nonetheless\" introduces a concession (\"in spite of that\"), which does not fit two cooperating compasses.",
+            "C": "\"Otherwise\" introduces a consequence if the first action fails.",
+            "D": "\"Conversely\" signals an opposite relationship, whereas the two systems reinforce each other."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p6",
+          "partIndex": 5,
+          "slotRef": "gap:6",
+          "promptText": "Choose the best word for Gap 6.",
+          "skillId": "READ.CLOZE.COLLOCATION",
+          "difficultyInitial": 4.2,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "experimental_verb_precision"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "extinguished"
+            },
+            {
+              "key": "B",
+              "text": "rotated"
+            },
+            {
+              "key": "C",
+              "text": "harvested"
+            },
+            {
+              "key": "D",
+              "text": "compressed"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "The next sentence explains the logic of the test: \"Only when both cues aligned did the insects steer...\" Keeping the visual silhouette fixed while changing the compass direction of the magnetic field means researchers \"rotated\" it — Option B.",
+          "distractorRationales": {
+            "A": "\"Extinguished\" applies to fires or lights, not turning a magnetic field's direction.",
+            "C": "\"Harvested\" means collecting crops or energy, nonsensical for a lab magnetic field.",
+            "D": "\"Compressed\" means squeezing smaller rather than changing directional alignment."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p7",
+          "partIndex": 6,
+          "slotRef": "gap:7",
+          "promptText": "Choose the best word for Gap 7.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "adverb_nuance"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "consistently"
+            },
+            {
+              "key": "B",
+              "text": "hesitantly"
+            },
+            {
+              "key": "C",
+              "text": "erratically"
+            },
+            {
+              "key": "D",
+              "text": "recklessly"
+            }
+          ],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Contrast this sentence with the previous one: when cues clashed, flight paths \"quickly broke down.\" When both cues aligned, the moths held a steady, accurate heading — they steered \"consistently\" toward the mountains. Option A is correct.",
+          "distractorRationales": {
+            "B": "\"Hesitantly\" suggests doubt and stopping, opposite to successful navigation.",
+            "C": "\"Erratically\" means unpredictably — that describes what happened when cues disagreed, not when they aligned.",
+            "D": "\"Recklessly\" implies careless danger, unsuitable for accurate compass flight."
+          }
+        },
+        {
+          "partId": "q_pilot_read_cloze_01_p8",
+          "partIndex": 7,
+          "slotRef": "gap:8",
+          "promptText": "Choose the best word for Gap 8.",
+          "skillId": "READ.CLOZE.COLLOCATION",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "verb_infinitive_collocation"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "intends"
+            },
+            {
+              "key": "B",
+              "text": "declines"
+            },
+            {
+              "key": "C",
+              "text": "threatens"
+            },
+            {
+              "key": "D",
+              "text": "endeavours"
+            }
+          ],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Notice the inanimate subject (\"expanding suburban glare\") and warning tone (\"Sadly\"). \"Threatens to disorient\" is the precise idiomatic collocation meaning \"poses a growing danger of disorienting\", without attributing conscious intention to streetlights. Option C is correct.",
+          "distractorRationales": {
+            "A": "\"Intends\" implies deliberate purpose, impossible for suburban glare.",
+            "B": "\"Declines to\" means refuses to, reversing the warning.",
+            "D": "\"Endeavours to\" means tries hard on purpose, which cannot describe unintentional light pollution."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_read_gapped_01_v1",
+      "questionFamilyId": "q_pilot_read_gapped_01",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_GAPPED_TEXT",
+      "stimulusId": "stim_pilot_gapped_01",
+      "sharedPoolConfig": {
+        "reuseAllowed": false,
+        "poolKeys": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G"
+        ]
+      },
+      "parts": [
+        {
+          "partId": "q_pilot_read_gapped_01_p1",
+          "partIndex": 0,
+          "slotRef": "gap:1",
+          "promptText": "Select the heading (A–G) that best summarises Paragraph 1.",
+          "skillId": "READ.GAP.PARAGRAPH_PROGRESSION",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 60,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "keyword_lure_decoy"
+          ],
+          "options": [],
+          "correctAnswerKey": "F",
+          "workedExplanation": "Paragraph 1 introduces hikers being startled by a sustained booming note in the Sahara, Gobi, and Western Australia. Heading F (\"An unexpected sustained sound encountered in scattered desert regions\") matches every element. Watch out for decoy D: Paragraph 1 explicitly says the boom is \"Rather than a brief whistle of wind\", and never compares night with noon!",
+          "distractorRationales": {
+            "A": "Musical pitch (high vs low note) is explained in Paragraph 5.",
+            "B": "Moisture/dew silencing dunes is Paragraph 6.",
+            "C": "Marco Polo and legends appear in Paragraph 2.",
+            "D": "Decoy lure: borrows \"wind\", \"whistle\", and \"valley\" from Paragraph 1, but reverses the text (which says it is NOT a whistle of wind) and invents a night-vs-noon comparison.",
+            "E": "Strict physical grain and slope ingredients are listed in Paragraph 3.",
+            "G": "Synchronised collisions acting as a loudspeaker are explained in Paragraph 4."
+          }
+        },
+        {
+          "partId": "q_pilot_read_gapped_01_p2",
+          "partIndex": 1,
+          "slotRef": "gap:2",
+          "promptText": "Select the heading (A–G) that best summarises Paragraph 2.",
+          "skillId": "READ.GAP.PARAGRAPH_PROGRESSION",
+          "difficultyInitial": 3.9,
+          "targetTimeSec": 60,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "chronology_anchor"
+          ],
+          "options": [],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Paragraph 2 recounts Marco Polo's thirteenth-century account of unseen drums and legends of buried temple bells \"Long before physicists carried microphones into desert basins.\" Heading C (\"Folklore and travellers' tales offered before scientific study\") captures the whole paragraph.",
+          "distractorRationales": {
+            "A": "Pitch is explained in Paragraph 5.",
+            "B": "Moisture is discussed in Paragraph 6.",
+            "D": "Decoy: Paragraph 2 does not discuss whistling wind at night vs noon.",
+            "E": "Physical sand ingredients belong to Paragraph 3.",
+            "F": "Modern desert walkers' encounter belongs to Paragraph 1.",
+            "G": "The physics of sliding grain collisions belongs to Paragraph 4."
+          }
+        },
+        {
+          "partId": "q_pilot_read_gapped_01_p3",
+          "partIndex": 2,
+          "slotRef": "gap:3",
+          "promptText": "Select the heading (A–G) that best summarises Paragraph 3.",
+          "skillId": "READ.GAP.COHESIVE_BRIDGE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 65,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "conditions_vs_mechanism"
+          ],
+          "options": [],
+          "correctAnswerKey": "E",
+          "workedExplanation": "Paragraph 3 highlights rarity (\"fewer than forty dune fields worldwide\") and lists the strict physical prerequisites: grain roundness/size, dry outer layer over firmer base, and steepness. Heading E (\"The rare physical ingredients a sand slope needs in order to boom\") matches directly.",
+          "distractorRationales": {
+            "A": "Grain size appears here as one requirement, whereas Paragraph 5 is devoted to how diameter controls musical pitch.",
+            "B": "Dryness is only one brief condition here; Paragraph 6 focuses fully on moisture silencing dunes.",
+            "C": "Historical folklore belongs to Paragraph 2.",
+            "D": "Decoy: unrelated to wind whistling at night.",
+            "F": "Introductory encounter belongs to Paragraph 1.",
+            "G": "Paragraph 3 lists static conditions; Paragraph 4 explains the moving collision mechanism."
+          }
+        },
+        {
+          "partId": "q_pilot_read_gapped_01_p4",
+          "partIndex": 3,
+          "slotRef": "gap:4",
+          "promptText": "Select the heading (A–G) that best summarises Paragraph 4.",
+          "skillId": "READ.GAP.COHESIVE_BRIDGE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 65,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "conditions_vs_mechanism"
+          ],
+          "options": [],
+          "correctAnswerKey": "G",
+          "workedExplanation": "Paragraph 4 explains what happens once a slide starts: uniform grains fall into step during collisions, turning the top metre of sand into a \"natural loudspeaker.\" Heading G (\"How synchronised grain collisions turn a sliding layer into a speaker\") matches precisely.",
+          "distractorRationales": {
+            "A": "Pitch differences are covered in Paragraph 5.",
+            "B": "Dew and clumping belong to Paragraph 6.",
+            "C": "Historical legends belong to Paragraph 2.",
+            "D": "Decoy: wind whistling at night is never claimed.",
+            "E": "Paragraph 3 covered required ingredients; Paragraph 4 explains the active vibration mechanism.",
+            "F": "Paragraph 1 introduced the phenomenon to readers."
+          }
+        },
+        {
+          "partId": "q_pilot_read_gapped_01_p5",
+          "partIndex": 4,
+          "slotRef": "gap:5",
+          "promptText": "Select the heading (A–G) that best summarises Paragraph 5.",
+          "skillId": "READ.GAP.PARAGRAPH_PROGRESSION",
+          "difficultyInitial": 4,
+          "targetTimeSec": 60,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "keyword_overlap_grain_size"
+          ],
+          "options": [],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Paragraph 5 distinguishes loudness from pitch and explains how grain diameter produces higher hums, deeper bass rumbles, or even two musical notes at once. Heading A (\"What governs the musical pitch a booming dune produces\") summarises the exact point.",
+          "distractorRationales": {
+            "B": "Moisture belongs to Paragraph 6.",
+            "C": "Historical tales belong to Paragraph 2.",
+            "D": "Decoy: Paragraph 5 discusses grain diameter and musical pitch, not night winds.",
+            "E": "Paragraph 3 lists general conditions for booming; Paragraph 5 focuses solely on pitch.",
+            "F": "Paragraph 1 introduces the phenomenon.",
+            "G": "Paragraph 4 explains how collisions amplify the sound."
+          }
+        },
+        {
+          "partId": "q_pilot_read_gapped_01_p6",
+          "partIndex": 5,
+          "slotRef": "gap:6",
+          "promptText": "Select the heading (A–G) that best summarises Paragraph 6.",
+          "skillId": "READ.GAP.PARAGRAPH_PROGRESSION",
+          "difficultyInitial": 3.9,
+          "targetTimeSec": 55,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "condition_vs_silencer"
+          ],
+          "options": [],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Paragraph 6 explains that a microscopic film of dew acts like weak glue, making sand slump into silent clumps instead of vibrating. Heading B (\"Why a trace of moisture can silence a singing slope\") captures the exact cause and effect.",
+          "distractorRationales": {
+            "A": "Pitch is covered in Paragraph 5.",
+            "C": "Folklore belongs to Paragraph 2.",
+            "D": "Decoy: nothing about wind whistling louder at night.",
+            "E": "Paragraph 3 lists the general ingredients needed to sing, not the mechanism by which dew silences a dune.",
+            "F": "Paragraph 1 introduces the phenomenon.",
+            "G": "Paragraph 4 explains how dry grains amplify sound."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_read_match_01_v1",
+      "questionFamilyId": "q_pilot_read_match_01",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_MULTIPLE_MATCH",
+      "stimulusId": "stim_pilot_match_01",
+      "sharedPoolConfig": {
+        "reuseAllowed": true,
+        "poolKeys": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      "parts": [
+        {
+          "partId": "q_pilot_read_match_01_p1",
+          "partIndex": 0,
+          "slotRef": "stmt:1",
+          "promptText": "Which writer took on night shifts primarily to protect time with a family member?",
+          "skillId": "READ.MATCH.PRECISE_CONDITION",
+          "difficultyInitial": 3.9,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "recall_locate",
+          "trapTags": [
+            "motive_qualifier"
+          ],
+          "options": [],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Tariq (Extract A) explains: \"I switched to night baking five years ago primarily so I could collect my daughter from school every afternoon instead of missing her homework hours.\"",
+          "distractorRationales": {
+            "B": "Elena works at night because telescopes require dark skies.",
+            "C": "Callum enjoys the quiet late ferry without mentioning family obligations.",
+            "D": "Meera works at night because microbats and possums are active after dusk."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p2",
+          "partIndex": 1,
+          "slotRef": "stmt:2",
+          "promptText": "Which writer corrects an overly glamorous assumption people hold about what their job actually achieves?",
+          "skillId": "READ.MATCH.PRECISE_CONDITION",
+          "difficultyInitial": 4.3,
+          "targetTimeSec": 55,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "glamorous_lure_in_A_vs_role_in_B"
+          ],
+          "options": [],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Read carefully between A and B: Tariq (A) says people romanticise the smell and overlook heavy sacks, but he still bakes loaves. Elena (B) directly corrects what people imagine her job *achieves*: \"Visitors often imagine I spend my evenings discovering new comets, whereas my actual job is keeping the telescope's mirrors chilled...\" Option B matches the precise qualifier.",
+          "distractorRationales": {
+            "A": "Tariq notes people romanticise the smell and forget physical effort, rather than misidentifying what his job produces.",
+            "C": "Callum contrasts morning and late-night passengers, not outsiders' assumptions about his duties.",
+            "D": "Meera corrects an assumption about the creek being lifeless, not a glamorous image of her role."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p3",
+          "partIndex": 2,
+          "slotRef": "stmt:3",
+          "promptText": "Which writer describes growing to appreciate a quiet atmosphere they once found intimidating?",
+          "skillId": "READ.MATCH.VIEWPOINT_CHANGE",
+          "difficultyInitial": 4.2,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "weather_keyword_lure"
+          ],
+          "options": [],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Callum (Extract C) tracks a clear personal shift: \"In my first winter on deck I genuinely dreaded thick harbour fog, yet nowadays I find that hushed post-midnight stillness far preferable to the blinding salt glare of summer noon.\"",
+          "distractorRationales": {
+            "A": "Tariq enjoys commuters at the foggy window without ever having feared night stillness.",
+            "B": "Elena appreciates clear nights and remains frustrated by clouds — no shift from dread to preference.",
+            "D": "Meera dismisses neighbours' fears rather than describing a fear she personally overcame."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p4",
+          "partIndex": 3,
+          "slotRef": "stmt:4",
+          "promptText": "Which writer mentions that evidence collected on shift resulted in changes to public infrastructure?",
+          "skillId": "READ.MATCH.PRECISE_CONDITION",
+          "difficultyInitial": 4,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "recall_locate",
+          "trapTags": [
+            "impact_detail"
+          ],
+          "options": [],
+          "correctAnswerKey": "D",
+          "workedExplanation": "Meera (Extract D) notes: \"our survey logs recently convinced the local council to shield harsh floodlights along two creek-side paths\" — a direct infrastructure change driven by her data.",
+          "distractorRationales": {
+            "A": "Tariq's bakery serves commuters but does not alter public infrastructure.",
+            "B": "Elena supports astronomers' imaging schedules without altering local public infrastructure.",
+            "C": "Callum checks existing channel markers rather than changing public infrastructure."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p5",
+          "partIndex": 4,
+          "slotRef": "stmt:5",
+          "promptText": "Which writer finds daytime rest more difficult to manage than staying alert during work hours?",
+          "skillId": "READ.MATCH.CROSS_TEXT_COMPARE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "sleep_vs_work_contrast"
+          ],
+          "options": [],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Tariq (Extract A) explicitly contrasts the two: \"Staying awake beside deck ovens is surprisingly manageable... The real battle begins at midday, when I pull the curtains shut and try to persuade my brain to sleep while leaf-blowers and delivery vans rumble outside.\"",
+          "distractorRationales": {
+            "B": "Elena's main frustration is unexpected cloud cover, not daytime sleep.",
+            "C": "Callum contrasts midnight stillness with summer noon glare on the water, not daytime sleeping.",
+            "D": "Meera mentions tripping on tree roots rather than daytime sleep issues."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p6",
+          "partIndex": 5,
+          "slotRef": "stmt:6",
+          "promptText": "Which writer relies on verbal verification with a co-worker because darkness hides a physical obstacle?",
+          "skillId": "READ.MATCH.PRECISE_CONDITION",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "solo_vs_colleague"
+          ],
+          "options": [],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Callum (Extract C) states that waterlogged driftwood is nearly invisible against dark swells, \"so our skipper and I call out every lit channel marker aloud to double-check one another.\"",
+          "distractorRationales": {
+            "A": "Tariq relies on timers and mentions no co-worker or darkness obstacle.",
+            "B": "Elena mentions an international team's observing window, not calling out obstacles aloud with a co-worker.",
+            "D": "Meera works alone beside the creek and trips over roots herself."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p7",
+          "partIndex": 6,
+          "slotRef": "stmt:7",
+          "promptText": "Which writer stresses that an abrupt change in conditions can erase several hours of technical setup?",
+          "skillId": "READ.MATCH.PRECISE_CONDITION",
+          "difficultyInitial": 4,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "recall_locate",
+          "trapTags": [
+            "weather_keyword_lure"
+          ],
+          "options": [],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Elena (Extract B) highlights \"an unforecast sheet of cloud sliding over the peak after four hours of calibration—wiping out an entire international team's observing window in ten minutes flat.\"",
+          "distractorRationales": {
+            "A": "Tariq works indoors with controlled ovens and timers.",
+            "C": "Callum mentions winter fog but never says it erases hours of setup.",
+            "D": "Meera does not mention weather cancelling hours of technical preparation."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p8",
+          "partIndex": 7,
+          "slotRef": "stmt:8",
+          "promptText": "Which writer contrasts outsiders' dramatic safety worries with an everyday clumsiness risk?",
+          "skillId": "READ.MATCH.CROSS_TEXT_COMPARE",
+          "difficultyInitial": 4.3,
+          "targetTimeSec": 55,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "hazard_contrast"
+          ],
+          "options": [],
+          "correctAnswerKey": "D",
+          "workedExplanation": "Meera (Extract D) notes that dog-walkers ask if she feels uneasy alone beside dark water, \"yet the truth is my biggest hazard is usually catching a boot on a hidden fig root while craning my neck at the canopy.\"",
+          "distractorRationales": {
+            "A": "Tariq contrasts romantic smells with heavy flour sacks, not safety fears vs clumsiness.",
+            "B": "Elena mentions cold fingers without contrasting outsiders' safety worries.",
+            "C": "Waterlogged driftwood is a real maritime hazard, not an imagined outsider fear."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p9",
+          "partIndex": 8,
+          "slotRef": "stmt:9",
+          "promptText": "Which writer notes that a relaxed atmosphere among the public does not reduce the mental focus their job demands?",
+          "skillId": "READ.MATCH.CROSS_TEXT_COMPARE",
+          "difficultyInitial": 4.4,
+          "targetTimeSec": 55,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "calm_passengers_trap"
+          ],
+          "options": [],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Callum (Extract C) describes the quiet late-night passengers and immediately adds the key pivot: \"Still, calm passengers do not mean an effortless crossing: waterlogged driftwood sits almost invisible against ink-black swells...\" Option C matches this exact caveat.",
+          "distractorRationales": {
+            "A": "Tariq mentions alert ovens and brief commuters outside the glass, not calm public crowds masking work vigilance.",
+            "B": "Elena works in a serene dome without public crowds present.",
+            "D": "Meera mentions occasional dog-walkers rather than serving a relaxed public group."
+          }
+        },
+        {
+          "partId": "q_pilot_read_match_01_p10",
+          "partIndex": 9,
+          "slotRef": "stmt:10",
+          "promptText": "Which writer treats physical discomfort from harsh temperatures as a minor price compared with another frustration?",
+          "skillId": "READ.MATCH.PRECISE_CONDITION",
+          "difficultyInitial": 4.3,
+          "targetTimeSec": 55,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "heat_vs_cold_qualifier"
+          ],
+          "options": [],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Elena (Extract B) mentions her \"gloved fingers grow stiff checking fibre cables in sub-zero air\" and then explicitly ranks it below clouds: \"What tests my patience is not the cold or the solitary hours, but an unforecast sheet of cloud...\"",
+          "distractorRationales": {
+            "A": "Tariq says oven heat actually helps keep him sharp rather than describing temperature discomfort.",
+            "C": "Callum mentions summer noon glare and winter fog, not physical temperature discomfort outranked by another frustration.",
+            "D": "Meera wears chest waders without mentioning harsh temperatures or discomfort."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_math_overlap_01_v1",
+      "questionFamilyId": "q_pilot_math_overlap_01",
+      "version": 1,
+      "section": "MATH",
+      "formatType": "MATH_MCQ_5",
+      "visual": {
+        "visualType": "inline_svg",
+        "altText": "Two identical 14 cm by 6 cm rectangles positioned offset from one another so that their corner overlap forms a shaded square",
+        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 285\"><rect width=\"560\" height=\"285\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"96\" y=\"104\" width=\"224\" height=\"96\" fill=\"#E5F3EC\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"240\" y=\"88\" width=\"224\" height=\"96\" fill=\"#E6EEF2\" fill-opacity=\"0.82\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"240\" y=\"104\" width=\"80\" height=\"80\" fill=\"#F29A63\" fill-opacity=\"0.55\" stroke=\"#113C36\" stroke-width=\"2\" stroke-dasharray=\"5 3\"/><text x=\"280\" y=\"140\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"12\" font-weight=\"600\" fill=\"#113C36\">square</text><text x=\"280\" y=\"156\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"12\" font-weight=\"600\" fill=\"#113C36\">overlap</text><line x1=\"96\" y1=\"218\" x2=\"320\" y2=\"218\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"96\" y1=\"212\" x2=\"96\" y2=\"224\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"320\" y1=\"212\" x2=\"320\" y2=\"224\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"208\" y=\"238\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">14 cm</text><line x1=\"80\" y1=\"104\" x2=\"80\" y2=\"200\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"74\" y1=\"104\" x2=\"86\" y2=\"104\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"74\" y1=\"200\" x2=\"86\" y2=\"200\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"70\" y=\"157\" text-anchor=\"end\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">6 cm</text><line x1=\"240\" y1=\"72\" x2=\"464\" y2=\"72\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"240\" y1=\"66\" x2=\"240\" y2=\"78\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"464\" y1=\"66\" x2=\"464\" y2=\"78\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"352\" y=\"64\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">14 cm</text><line x1=\"480\" y1=\"88\" x2=\"480\" y2=\"184\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"474\" y1=\"88\" x2=\"486\" y2=\"88\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"474\" y1=\"184\" x2=\"486\" y2=\"184\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"490\" y=\"141\" text-anchor=\"start\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">6 cm</text><text x=\"280\" y=\"268\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"12\" fill=\"#78756E\">[diagram not to scale]</text></svg>",
+        "caption": "Two identical 14 cm × 6 cm rectangles overlapping in a square"
+      },
+      "parts": [
+        {
+          "partId": "q_pilot_math_overlap_01_p1",
+          "partIndex": 0,
+          "promptText": "Two identical rectangular cards, each 14 cm long and 6 cm wide, are placed flat on a table so that their overlapping region is a square, as shown.\n\nThe TOTAL area of the table covered by the combined shape (counting the overlap only once) is 143 cm².\n\nWhat is the PERIMETER of the entire combined shape?",
+          "skillId": "MATH.GEO2D.COMPOSITE_AREA",
+          "secondarySkillIds": [
+            "MATH.GEO2D.COMPOSITE_PERIMETER"
+          ],
+          "difficultyInitial": 4.5,
+          "targetTimeSec": 85,
+          "cognitiveDemand": "evaluate_transfer",
+          "trapTags": [
+            "subtracted_overlap_area_from_perimeter",
+            "subtracted_only_two_interior_sides",
+            "stopped_at_overlap_side"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "55 cm"
+            },
+            {
+              "key": "B",
+              "text": "60 cm"
+            },
+            {
+              "key": "C",
+              "text": "65 cm"
+            },
+            {
+              "key": "D",
+              "text": "70 cm"
+            },
+            {
+              "key": "E",
+              "text": "75 cm"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "1) Find the area of both rectangles if they did NOT overlap:\nArea of 1 rectangle = 14 cm × 6 cm = 84 cm².\nArea of 2 separate rectangles = 2 × 84 cm² = 168 cm².\n\n2) Deduce the area and side length of the square overlap:\nBecause the combined shape covers 143 cm² instead of 168 cm², the overlapping square was counted twice in 168 cm².\nOverlap area = 168 cm² − 143 cm² = 25 cm².\nSince the overlap is a square and 5 × 5 = 25, each side of the overlapping square is 5 cm.\n\n3) Find the outer perimeter of the combined shape:\nPerimeter of 1 rectangle = 2 × (14 + 6) = 40 cm.\nTotal perimeter of 2 separate rectangles = 2 × 40 = 80 cm.\nNow look closely at the 4 dashed edges of the 5 cm × 5 cm overlap square: the top and right dashed edges belong to the left rectangle, and the bottom and left dashed edges belong to the right rectangle. ALL FOUR 5 cm edges lie INSIDE the combined shape, so none of them are part of the outer perimeter!\nHidden interior boundary = 4 × 5 cm = 20 cm.\nCombined outer perimeter = 80 cm − 20 cm = 60 cm.\n\n(Quick check by tracing around the outside when the offset is 1 cm: 14 + 1 + 9 + 6 + 14 + 1 + 9 + 6 = 60 cm!)\n\nTherefore, the correct answer is B (60 cm).",
+          "distractorRationales": {
+            "A": "55 cm comes from subtracting the overlap AREA (25) directly from the combined perimeter (80 − 25 = 55), mixing area and length units.",
+            "C": "65 cm subtracts only 3 sides of the overlap square (80 − 15 = 65) instead of all 4 interior sides.",
+            "D": "70 cm is the classic trap of subtracting only 2 sides of the 5 cm overlap (80 − 10 = 70), forgetting that BOTH rectangles lose two 5 cm segments inside the overlap.",
+            "E": "75 cm subtracts only a single 5 cm side length from 80 cm."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_math_transfer_01_v1",
+      "questionFamilyId": "q_pilot_math_transfer_01",
+      "version": 1,
+      "section": "MATH",
+      "formatType": "MATH_MCQ_5",
+      "parts": [
+        {
+          "partId": "q_pilot_math_transfer_01_p1",
+          "partIndex": 0,
+          "promptText": "At the start of the week, Maya has 3 times as many fundraiser stickers as Noah.\n\nOn Wednesday, Maya gives 18 of her stickers to Noah. Then Noah's aunt donates 6 extra stickers to Noah (while Maya receives none).\n\nAfter both changes, Noah has 3/4 as many stickers as Maya.\n\nHow many stickers did Maya have at the START of the week?",
+          "skillId": "MATH.ALG.TWO_UNKNOWN_SYSTEMS",
+          "secondarySkillIds": [
+            "MATH.FRAC.RATIO_PROPORTION",
+            "MATH.ALG.WORKING_BACKWARDS"
+          ],
+          "difficultyInitial": 4.5,
+          "targetTimeSec": 85,
+          "cognitiveDemand": "evaluate_transfer",
+          "trapTags": [
+            "gave_final_instead_of_start",
+            "gave_wrong_person",
+            "forgot_donor_loss"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "54"
+            },
+            {
+              "key": "B",
+              "text": "72"
+            },
+            {
+              "key": "C",
+              "text": "84"
+            },
+            {
+              "key": "D",
+              "text": "90"
+            },
+            {
+              "key": "E",
+              "text": "108"
+            }
+          ],
+          "correctAnswerKey": "D",
+          "workedExplanation": "Use Year 6 unit bars (no calculator or formal algebra needed):\n\n1) Represent the starting amounts in equal units:\nNoah at start = 1 unit\nMaya at start = 3 units\n\n2) Track BOTH changes carefully:\nMaya gives 18 away → Maya now has (3 units − 18).\nNoah receives 18 from Maya AND 6 from his aunt → Noah gains 18 + 6 = 24, so Noah now has (1 unit + 24).\n\n3) Use the final 3/4 fraction to make two equal groups:\nNoah now has 3/4 as many as Maya, which means:\n4 × (Noah's new amount) = 3 × (Maya's new amount).\n\nCalculate both sides in units:\n4 × (1 unit + 24) = 4 units + 96\n3 × (3 units − 18) = 9 units − 54\n\n4) Compare the two equal totals:\n9 units − 54 = 4 units + 96\nThe extra 5 units (9 units − 4 units) must bridge the gap from −54 up to +96:\n5 units = 96 + 54 = 150\n1 unit = 150 ÷ 5 = 30.\n\n5) Answer the exact question asked (Maya at the START):\nMaya at start = 3 units = 3 × 30 = 90 stickers.\n\n(Quick check: Start Maya = 90, Noah = 30. After transfer: Maya = 90 − 18 = 72; Noah = 30 + 18 + 6 = 54. Check fraction: 54/72 = (3×18)/(4×18) = 3/4. Exact match!)\n\nTherefore, the correct answer is D (90).",
+          "distractorRationales": {
+            "A": "54 is Noah's FINAL sticker count (30 + 24), not Maya's starting count.",
+            "B": "72 is Maya's FINAL sticker count (90 − 18) — stopping one step before adding back the 18 stickers she gave away.",
+            "C": "84 comes from adding only the net difference (18 − 6 = 12) back onto Maya's final 72 instead of all 18 stickers she gave away.",
+            "E": "108 comes from adding 18 to Maya's starting count (90 + 18) instead of recognising she already started with 90."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_think_whose_01_v1",
+      "questionFamilyId": "q_pilot_think_whose_01",
+      "version": 1,
+      "section": "THINK",
+      "formatType": "THINK_MCQ_4",
+      "stemPrefix": "Boxed rules:\n• Every Friday, the school library stays open after 4 pm ONLY IF both Mr Cho and at least two Year 6 monitors are on duty.\n• Whenever the library stays open after 4 pm, the side courtyard gate is left unlocked. However, the caretaker also unlocks that gate on evenings when the choir rehearses in the hall.",
+      "parts": [
+        {
+          "partId": "q_pilot_think_whose_01_p1",
+          "partIndex": 0,
+          "promptText": "On a Friday at 4:30 pm, two students make the following claims:\n\nTessa: \"The side courtyard gate is locked right now, and the roster confirms three Year 6 monitors are on duty—so Mr Cho cannot be on duty today.\"\n\nLiam: \"I know Mr Cho is on duty and three Year 6 monitors are on duty this Friday, so the side courtyard gate is definitely unlocked right now.\"\n\nIf the information in the box is true, whose reasoning is correct?",
+          "skillId": "THINK.DEDUCT.WHOSE_REASONING_CORRECT",
+          "secondarySkillIds": [
+            "THINK.DEDUCT.CONDITIONAL_CONTRAPOSITIVE"
+          ],
+          "difficultyInitial": 4.6,
+          "targetTimeSec": 75,
+          "cognitiveDemand": "evaluate_transfer",
+          "trapTags": [
+            "reversed_only_if",
+            "necessary_vs_sufficient",
+            "two_link_chain"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "Tessa only"
+            },
+            {
+              "key": "B",
+              "text": "Liam only"
+            },
+            {
+              "key": "C",
+              "text": "Both Tessa and Liam"
+            },
+            {
+              "key": "D",
+              "text": "Neither Tessa nor Liam"
+            }
+          ],
+          "correctAnswerKey": "D",
+          "workedExplanation": "Carefully check the direction of each rule in plain everyday English—especially the words \"ONLY IF\":\n\nRule 1 says: If the library stays open after 4 pm → Mr Cho AND at least two monitors MUST be on duty.\nCrucial check: Does Rule 1 promise that the library WILL stay open whenever Mr Cho and two monitors are on duty? NO! For example, Mr Cho and three monitors could all be on duty, yet the library might still close at 4 pm for a staff meeting or stocktake.\n\nRule 2 says: If the library stays open after 4 pm → the courtyard gate MUST be unlocked (and choir rehearsal also unlocks the gate).\n\n1) Test Tessa's claim:\nThe courtyard gate is LOCKED at 4:30 pm. By Rule 2, that proves the library is NOT open after 4 pm (if it were open, the gate would have to be unlocked). However, knowing the library is closed does NOT prove Mr Cho is absent—as shown above, both Mr Cho and three monitors could be on duty while the library is closed for another reason! So Tessa's conclusion is NOT guaranteed.\n\n2) Test Liam's claim:\nMr Cho and three monitors are on duty. Because Rule 1 says \"stays open ONLY IF...\" (not \"always stays open whenever...\"), having Mr Cho and three monitors does NOT guarantee the library stayed open after 4 pm. If the library closed at 4 pm (and no choir is rehearsing), the gate can still be locked! So Liam's conclusion is NOT guaranteed either.\n\nTherefore, neither Tessa nor Liam is correct — Option D.",
+          "distractorRationales": {
+            "A": "Tessa rightly deduces from the locked gate that the library is closed, but then reverses \"only if\" by assuming the library can close ONLY when someone on the roster is missing.",
+            "B": "Liam treats Mr Cho + three monitors as a guarantee that the library stays open, ignoring that \"only if\" states a requirement for staying open, not a guarantee.",
+            "C": "Both students make the same underlying mistake of reading \"stays open only if\" backward as \"always stays open whenever.\""
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_think_fold_01_v1",
+      "questionFamilyId": "q_pilot_think_fold_01",
+      "version": 1,
+      "section": "THINK",
+      "formatType": "THINK_MCQ_4",
+      "visual": {
+        "visualType": "inline_svg",
+        "altText": "Three-step diagram showing a square paper folded bottom to top, then right to left, followed by cutting a rectangular notch in the middle of the left edge and a quarter-circle bite from the bottom-right corner",
+        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 198\"><rect width=\"560\" height=\"198\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"28\" y=\"34\" width=\"110\" height=\"110\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"22\" y1=\"89\" x2=\"144\" y2=\"89\" stroke=\"#4A5955\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/><path d=\"M116,126 Q134,89 116,52\" fill=\"none\" stroke=\"#F29A63\" stroke-width=\"2.5\"/><polygon points=\"113,47 123,53 113,59\" fill=\"#F29A63\"/><text x=\"83\" y=\"172\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"13\" fill=\"#4A5955\">1. Fold bottom to top</text><line x1=\"158\" y1=\"89\" x2=\"184\" y2=\"89\" stroke=\"#78756E\" stroke-width=\"2\"/><polygon points=\"190,89 181,84 181,94\" fill=\"#78756E\"/><rect x=\"210\" y=\"61\" width=\"110\" height=\"55\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"265\" y1=\"55\" x2=\"265\" y2=\"122\" stroke=\"#4A5955\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/><path d=\"M304,50 Q265,30 226,50\" fill=\"none\" stroke=\"#F29A63\" stroke-width=\"2.5\"/><polygon points=\"221,52 231,43 232,54\" fill=\"#F29A63\"/><text x=\"265\" y=\"172\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"13\" fill=\"#4A5955\">2. Fold right to left</text><line x1=\"340\" y1=\"89\" x2=\"366\" y2=\"89\" stroke=\"#78756E\" stroke-width=\"2\"/><polygon points=\"372,89 363,84 363,94\" fill=\"#78756E\"/><rect x=\"408\" y=\"47\" width=\"84\" height=\"84\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"408\" y=\"79\" width=\"18\" height=\"20\" fill=\"#B83A28\" fill-opacity=\"0.30\" stroke=\"#B83A28\" stroke-width=\"1.8\" stroke-dasharray=\"3 2\"/><path d=\"M492,131 L468,131 A24,24 0 0,1 492,107 Z\" fill=\"#B83A28\" fill-opacity=\"0.30\" stroke=\"#B83A28\" stroke-width=\"1.8\" stroke-dasharray=\"3 2\"/><text x=\"450\" y=\"172\" text-anchor=\"middle\" font-family=\"'AnthropicSansText', system-ui, sans-serif\" font-size=\"13\" fill=\"#4A5955\">3. Cut both shaded pieces</text></svg>",
+        "caption": "Folding sequence and two shaded cuts (dotted lines show folds)"
+      },
+      "parts": [
+        {
+          "partId": "q_pilot_think_fold_01_p1",
+          "partIndex": 0,
+          "promptText": "A square sheet of paper is folded in half from bottom to top, and then folded in half again from right to left. Two shaded pieces are cut out of the folded square as shown: a rectangular notch from the middle of the left edge and a quarter-circle from the bottom-right corner.\n\nWhich diagram shows the paper when it is completely unfolded? (Dotted lines show the folds.)",
+          "skillId": "THINK.SPATIAL.FOLD_CUT_TILE_ASSEMBLY",
+          "secondarySkillIds": [
+            "THINK.SPATIAL.PATTERN_ROTATION_SYMMETRY"
+          ],
+          "difficultyInitial": 4.5,
+          "targetTimeSec": 75,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "single_instead_of_double_edge_notch",
+            "swapped_left_right_with_top_bottom",
+            "swapped_centre_corner_with_outer_corners"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "",
+              "visual": {
+                "visualType": "inline_svg",
+                "altText": "Unfolded square with a circular hole in the centre and two rectangular notches along the top edge and two along the bottom edge",
+                "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 180 140\"><rect width=\"180\" height=\"140\" fill=\"#FFFFFF\"/><polygon points=\"35,15 55.5,15 55.5,28 69.5,28 69.5,15 110.5,15 110.5,28 124.5,28 124.5,15 145,15 145,125 124.5,125 124.5,112 110.5,112 110.5,125 69.5,125 69.5,112 55.5,112 55.5,125 35,125\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"90\" y1=\"15\" x2=\"90\" y2=\"125\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><line x1=\"35\" y1=\"70\" x2=\"145\" y2=\"70\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><circle cx=\"90\" cy=\"70\" r=\"15\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"2\"/></svg>"
+              }
+            },
+            {
+              "key": "B",
+              "text": "",
+              "visual": {
+                "visualType": "inline_svg",
+                "altText": "Unfolded square with a circular hole in the centre and one rectangular notch in the middle of the left edge and one in the middle of the right edge",
+                "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 180 140\"><rect width=\"180\" height=\"140\" fill=\"#FFFFFF\"/><polygon points=\"35,15 145,15 145,63 132,63 132,77 145,77 145,125 35,125 35,77 48,77 48,63 35,63\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"90\" y1=\"15\" x2=\"90\" y2=\"125\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><line x1=\"35\" y1=\"70\" x2=\"145\" y2=\"70\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><circle cx=\"90\" cy=\"70\" r=\"15\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"2\"/></svg>"
+              }
+            },
+            {
+              "key": "C",
+              "text": "",
+              "visual": {
+                "visualType": "inline_svg",
+                "altText": "Unfolded square with a circular hole in the centre and two rectangular notches along the left edge and two along the right edge",
+                "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 180 140\"><rect width=\"180\" height=\"140\" fill=\"#FFFFFF\"/><polygon points=\"35,15 145,15 145,35.5 132,35.5 132,49.5 145,49.5 145,90.5 132,90.5 132,104.5 145,104.5 145,125 35,125 35,104.5 48,104.5 48,90.5 35,90.5 35,49.5 48,49.5 48,35.5 35,35.5\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"90\" y1=\"15\" x2=\"90\" y2=\"125\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><line x1=\"35\" y1=\"70\" x2=\"145\" y2=\"70\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><circle cx=\"90\" cy=\"70\" r=\"15\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"2\"/></svg>"
+              }
+            },
+            {
+              "key": "D",
+              "text": "",
+              "visual": {
+                "visualType": "inline_svg",
+                "altText": "Unfolded square with curved bites removed from all four outer corners and two rectangular notches along the left edge and two along the right edge",
+                "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 180 140\"><rect width=\"180\" height=\"140\" fill=\"#FFFFFF\"/><path d=\"M 50,15 L 130,15 A 15,15 0 0,0 145,30 L 145,35.5 L 132,35.5 L 132,49.5 L 145,49.5 L 145,90.5 L 132,90.5 L 132,104.5 L 145,104.5 L 145,110 A 15,15 0 0,0 130,125 L 50,125 A 15,15 0 0,0 35,110 L 35,104.5 L 48,104.5 L 48,90.5 L 35,90.5 L 35,49.5 L 48,49.5 L 48,35.5 L 35,35.5 L 35,30 A 15,15 0 0,0 50,15 Z\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"90\" y1=\"15\" x2=\"90\" y2=\"125\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/><line x1=\"35\" y1=\"70\" x2=\"145\" y2=\"70\" stroke=\"#CFC6B9\" stroke-width=\"1.2\" stroke-dasharray=\"4 3\"/></svg>"
+              }
+            }
+          ],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Track each edge of the folded quarter-square carefully, then unfold one step at a time in reverse:\n\n1) Identify which sides of the final quarter-square are FOLDED edges and which are FREE outer edges:\n• Fold 1 (bottom to top) puts the horizontal fold along the BOTTOM edge, leaving the TOP edge free.\n• Fold 2 (right to left) puts the vertical fold along the RIGHT edge, leaving the LEFT edge free.\n• So the final quarter-square is the TOP-LEFT quarter of the original paper!\n\n2) Track the quarter-circle cut (bottom-right corner of the folded square):\nThat corner sits where the bottom fold AND right fold meet—the exact CENTRE of the unfolded sheet. Unfolding both folds turns that quarter-circle into 1 full circular hole in the centre (this immediately eliminates D).\n\n3) Track the rectangular notch (middle of the LEFT free edge):\n• In the top-left quarter, the middle of the left edge sits one-quarter of the way down the full left side (NOT at the horizontal fold!).\n• Undo Fold 2 (unfold left → right across the vertical fold): the notch mirrors onto the upper RIGHT edge as well.\n• Undo Fold 1 (unfold top → bottom across the horizontal fold): both upper notches mirror into the lower half, producing TWO notches along the left edge and TWO notches along the right edge (4 edge notches in total).\n\nTherefore, the unfolded sheet matches Option C.",
+          "distractorRationales": {
+            "A": "Places the pairs of notches on the TOP and BOTTOM edges instead of the LEFT and RIGHT edges (confusing which free edge was cut).",
+            "B": "Shows only 1 notch per side (centred on the horizontal fold), which would only happen if the notch had been cut at the bottom-left corner rather than the middle of the left edge.",
+            "D": "Turns the quarter-circle into 4 outer corner bites — that only happens if you cut the TOP-LEFT free corner instead of the BOTTOM-RIGHT folded centre corner."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "q_pilot_writ_news_01_v1",
+      "questionFamilyId": "q_pilot_writ_news_01",
+      "version": 1,
+      "section": "WRIT",
+      "formatType": "WRIT_TYPED_TASK",
+      "stimulusId": "stim_pilot_writ_01",
+      "writingSpec": {
+        "genre": "Newspaper report",
+        "audience": "Local community newspaper readers",
+        "purpose": "Inform readers clearly and vividly about an unusual local event",
+        "bulletSuggestions": [
+          "explain how and why the balloon landed on the school oval",
+          "describe the scene and how students and teachers reacted",
+          "include direct comments from at least two different witnesses (such as the pilot, principal or a student)"
+        ],
+        "recommendedWordRange": [
+          280,
+          460
+        ],
+        "timeLimitSec": 1800
+      },
+      "parts": [
+        {
+          "partId": "q_pilot_writ_news_01_p1",
+          "partIndex": 0,
+          "promptText": "Write a newspaper report about this incident for your local community paper.",
+          "skillId": "WRIT.CRIT.TOPIC_PROMPT_ADHERENCE",
+          "secondarySkillIds": [
+            "WRIT.CRIT.IDEAS_CREATIVITY",
+            "WRIT.CRIT.PURPOSE_AUDIENCE_VOICE",
+            "WRIT.CRIT.STRUCTURE_LAYOUT",
+            "WRIT.CRIT.STYLE_VOCABULARY",
+            "WRIT.CRIT.GRAMMAR_SPELLING_PUNCT"
+          ],
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 1800,
+          "cognitiveDemand": "evaluate_transfer",
+          "trapTags": [
+            "narrative_drift_into_first_person",
+            "missing_headline_and_lead"
+          ],
+          "options": [],
+          "correctAnswerKey": "",
+          "workedExplanation": "Assessed on all 6 NSW Selective Writing criteria (5 marks each, 30 marks total):\n\n1) Topic & Instruction Adherence: Stay strictly within a local newspaper report about the 7:45 am emergency landing on Riverbend Primary School's oval (no injuries). Do not drift into a first-person diary or fantasy story.\n2) Ideas & Creativity: Invent credible, specific details—for example, a sudden wind shift or low fuel forcing a calm precautionary landing, how the grounds staff cleared the area, and contrasting eyewitness viewpoints.\n3) Purpose, Audience & Voice: Maintain an objective, crisp journalistic third-person voice suited to local community readers, using reported and accurately punctuated direct quotes.\n4) Structure & Layout: Use newspaper conventions cleanly—a punchy headline, optional byline/dateline, an inverted-pyramid lead paragraph answering Who/What/When/Where/Why, short journalistic paragraphs, and a forward-looking closing sentence (e.g., resuming normal classes or future safety checks).\n5) Style & Vocabulary: Choose precise verbs and concrete sensory detail (rustling nylon canopy, hiss of the burner, bewildered early arrivals) without melodramatic filler.\n6) Grammar, Punctuation & Spelling: Control tense (past tense for the incident, present tense inside direct speech), accurate quotation-mark punctuation, and varied sentence openings.\n\nCommon pitfalls: writing 'I was walking to school when...' (first-person narrative drift), forgetting a headline/lead paragraph, or inventing unrealistic disasters that contradict 'Nobody was injured.'",
+          "distractorRationales": {}
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    }
+  ]
+}
