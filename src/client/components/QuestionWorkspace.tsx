@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, Maximize2, X, XCircle } from 'lucide-react';
+import { useI18n } from '../i18n';
 import type {
   EvidenceCitationRef,
   MarkingResult,
@@ -9,13 +10,10 @@ import type {
   StudentQuestionView,
   VisualSpec,
 } from '../../shared/contracts';
-import { SKILLS_TAXONOMY } from '../../shared/skills';
 import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../optionLayout';
 import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
 import { VisualRenderer } from './VisualRenderer';
 import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
-
-const SKILL_NAME_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayName]));
 
 export const SECTION_LABELS: Record<string, string> = {
   READ: 'Reading',
@@ -86,6 +84,7 @@ export function QuestionWorkspace({
   embedded = false,
   frozen = false,
 }: QuestionWorkspaceProps) {
+  const { t, sectionLabel, formatLabel, skillName } = useI18n();
   const [internalGapIdx, setInternalGapIdx] = useState(0);
   const [mobileTab, setMobileTab] = useState<'stimulus' | 'answer'>('stimulus');
   const [expandedBreakdown, setExpandedBreakdown] = useState(false);
@@ -136,8 +135,10 @@ export function QuestionWorkspace({
           <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-elevated)] border border-[var(--border-hairline)] space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-bold text-[var(--text-primary)]">
-                Worked Explanation
-                {fullParts.length > 1 ? ` (Part ${safePartIdx + 1} of ${fullParts.length})` : ''}
+                {t('ws.workedExplanation')}
+                {fullParts.length > 1
+                  ? t('ws.partOfTotal', { current: safePartIdx + 1, total: fullParts.length })
+                  : ''}
               </div>
               {mode === 'review' && primaryRes && (
                 <span
@@ -152,18 +153,21 @@ export function QuestionWorkspace({
                   {primaryRes.isCorrect ? (
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Correct ({primaryRes.correctAnswerKey})</span>
+                      <span>{t('ws.correctWithKey', { key: primaryRes.correctAnswerKey })}</span>
                     </>
                   ) : primaryRes.selectedAnswer === null ? (
                     <>
                       <XCircle className="w-3.5 h-3.5" />
-                      <span>Unanswered (Answer: {primaryRes.correctAnswerKey})</span>
+                      <span>{t('ws.unansweredWithKey', { key: primaryRes.correctAnswerKey })}</span>
                     </>
                   ) : (
                     <>
                       <XCircle className="w-3.5 h-3.5" />
                       <span>
-                        Picked {primaryRes.selectedAnswer} (Answer: {primaryRes.correctAnswerKey})
+                        {t('ws.pickedWithKey', {
+                          picked: primaryRes.selectedAnswer,
+                          key: primaryRes.correctAnswerKey,
+                        })}
                       </span>
                     </>
                   )}
@@ -172,7 +176,7 @@ export function QuestionWorkspace({
             </div>
 
             {fullParts.length > 1 && (
-              <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Select question part explanation">
+              <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={t('ws.workedExplanation')}>
                 {fullParts.map((part, pIdx) => (
                   <button
                     key={part.partId}
@@ -186,7 +190,7 @@ export function QuestionWorkspace({
                         : 'border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                     }`}
                   >
-                    Part {pIdx + 1}
+                    {t('ws.partLabel', { num: pIdx + 1 })}
                   </button>
                 ))}
               </div>
@@ -200,7 +204,7 @@ export function QuestionWorkspace({
 
             {mode === 'review' && primaryRes?.distractorRationale && (
               <p className="text-xs text-[var(--status-warn)] bg-[var(--status-warn-bg)]/60 px-2.5 py-1.5 rounded-[var(--radius-sm)] whitespace-pre-line">
-                <strong>Why {primaryRes.selectedAnswer} is a distractor:</strong>{' '}
+                <strong>{t('ws.whyDistractor', { key: primaryRes.selectedAnswer || '' })}</strong>{' '}
                 {primaryRes.distractorRationale}
               </p>
             )}
@@ -224,7 +228,7 @@ export function QuestionWorkspace({
                         }`}
                       >
                         <BookOpen className="w-3 h-3 text-sky-700" />
-                        <span>Evidence [{ev.refId}]</span>
+                        <span>{t('ws.evidenceBadge', { id: ev.refId })}</span>
                       </button>
                     );
                   })}
@@ -243,8 +247,8 @@ export function QuestionWorkspace({
           >
             <span>
               {fullParts.length > 1
-                ? `All ${fullParts.length} Parts Breakdown, Distractors & Skills`
-                : 'Distractor Rationale, Evidence & Skill Metadata'}
+                ? t('ws.allPartsBreakdown', { count: fullParts.length })
+                : t('ws.distractorBreakdown')}
             </span>
             {expandedBreakdown ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </button>
@@ -265,11 +269,11 @@ export function QuestionWorkspace({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-bold text-[var(--text-primary)]">
-                        {fullParts.length > 1 ? `Part ${pIdx + 1}: ` : ''}
-                        Answer Key: {answerKey || '—'}
+                        {fullParts.length > 1 ? `${t('ws.partLabel', { num: pIdx + 1 })}: ` : ''}
+                        {t('ws.answerKeyLabel')} {answerKey || '—'}
                       </span>
                       <span className="text-[var(--text-muted)]">
-                        {SKILL_NAME_MAP.get(part.skillId) || part.skillId}
+                        {skillName(part.skillId)}
                       </span>
                     </div>
                     {mode === 'review' && res && (
@@ -283,10 +287,10 @@ export function QuestionWorkspace({
                         }`}
                       >
                         {res.isCorrect
-                          ? 'Correct'
+                          ? t('ws.correct')
                           : res.selectedAnswer === null
-                            ? 'Unanswered'
-                            : `Picked ${res.selectedAnswer}`}
+                            ? t('ws.unanswered')
+                            : t('ws.picked', { key: res.selectedAnswer })}
                       </div>
                     )}
                     {explanation && (
@@ -294,7 +298,7 @@ export function QuestionWorkspace({
                     )}
                     {res?.distractorRationale && (
                       <p className="text-[var(--status-warn)] whitespace-pre-line">
-                        <strong>Distractor note:</strong> {res.distractorRationale}
+                        <strong>{t('ws.distractorNote')}</strong> {res.distractorRationale}
                       </p>
                     )}
                     {rationales && Object.keys(rationales).length > 0 && (
@@ -321,7 +325,7 @@ export function QuestionWorkspace({
                             }`}
                           >
                             <BookOpen className="w-3 h-3 text-sky-700" />
-                            <span>Evidence [{ev.refId}]</span>
+                            <span>{t('ws.evidenceBadge', { id: ev.refId })}</span>
                           </button>
                         ))}
                       </div>
@@ -360,7 +364,7 @@ export function QuestionWorkspace({
               : 'text-[#4A5955]'
           }`}
         >
-          Passage and visual
+          {t('ws.passageAndVisual')}
         </button>
         <button
           type="button"
@@ -371,7 +375,7 @@ export function QuestionWorkspace({
               : 'text-[#4A5955]'
           }`}
         >
-          Question and answer
+          {t('ws.questionAndAnswer')}
         </button>
       </div>
 
@@ -384,7 +388,7 @@ export function QuestionWorkspace({
       >
         {/* LEFT PANE: #FFFFFF Open-Book Reading / Stimulus Sheet */}
         <section
-          aria-label="Question stimulus and problem context"
+          aria-label={t('ws.passageAndVisual')}
           className={`${mobileTab === 'stimulus' ? 'block' : 'hidden lg:block'} ${
             embedded
               ? 'xl:col-span-6 p-5 border-b xl:border-b-0 xl:border-r max-h-[540px] xl:overflow-y-auto'
@@ -393,10 +397,10 @@ export function QuestionWorkspace({
         >
           <div className="flex flex-wrap items-center gap-2 text-xs text-[#78756E] mb-4">
             <span className="font-sans-display font-semibold text-[#113C36]">
-              {SECTION_LABELS[question.section] || question.section}
+              {sectionLabel(question.section)}
             </span>
             <span className="px-2 py-0.5 rounded-full bg-[#F3EFE8] text-[#4A5955] font-medium">
-              {FORMAT_LABELS[question.formatType] || question.formatType.replace(/_/g, ' ')}
+              {formatLabel(question.formatType)}
             </span>
           </div>
 
@@ -475,12 +479,14 @@ export function QuestionWorkspace({
 
             {isWriting && readOnly && (
               <div className="p-4 rounded-[12px] border border-[#E5DFD5] bg-white space-y-2 text-xs text-[#4A5955]">
-                <div className="font-sans-display font-semibold text-[#113C36]">Writing task specifications</div>
-                <div>Genre: {question.writingSpec?.genre || 'Essay'}</div>
-                <div>Audience: {question.writingSpec?.audience || 'General'}</div>
+                <div className="font-sans-display font-semibold text-[#113C36]">{t('ws.writingSpecsTitle')}</div>
+                <div>{t('ws.genreLabel', { genre: question.writingSpec?.genre || 'Essay' })}</div>
+                <div>{t('ws.audienceLabel', { audience: question.writingSpec?.audience || 'General' })}</div>
                 <div>
-                  Target words: {question.writingSpec?.recommendedWordRange?.[0] ?? 250} to{' '}
-                  {question.writingSpec?.recommendedWordRange?.[1] ?? 480}
+                  {t('ws.targetWords', {
+                    min: question.writingSpec?.recommendedWordRange?.[0] ?? 250,
+                    max: question.writingSpec?.recommendedWordRange?.[1] ?? 480,
+                  })}
                 </div>
               </div>
             )}
@@ -490,12 +496,18 @@ export function QuestionWorkspace({
                 <div className="flex items-center justify-between gap-2 text-xs text-[#4A5955]">
                   <span>
                     {readOnly
-                      ? `Answer options (${activePart.options[0]?.key} to ${activePart.options[activePart.options.length - 1]?.key})`
-                      : `Select one answer (${activePart.options[0]?.key} to ${activePart.options[activePart.options.length - 1]?.key})`}
+                      ? t('ws.answerOptionsRange', {
+                          first: activePart.options[0]?.key || 'A',
+                          last: activePart.options[activePart.options.length - 1]?.key || 'D',
+                        })
+                      : t('ws.selectAnswerRange', {
+                          first: activePart.options[0]?.key || 'A',
+                          last: activePart.options[activePart.options.length - 1]?.key || 'D',
+                        })}
                   </span>
                   {!readOnly && (
                     <span className="text-[#78756E]">
-                      Keys 1–{activePart.options.length}, N/P, F
+                      {t('ws.shortcutsHint', { count: activePart.options.length })}
                     </span>
                   )}
                 </div>
@@ -568,12 +580,12 @@ export function QuestionWorkspace({
                               </div>
                               {readOnly && isCorrect && (
                                 <span className="text-[10px] font-sans-display font-semibold text-[#1D6346] shrink-0">
-                                  Correct
+                                  {t('ws.correct')}
                                 </span>
                               )}
                               {isWrongSelected && (
                                 <span className="text-[10px] font-sans-display font-semibold text-[#B42318] shrink-0">
-                                  Your pick
+                                  {t('ws.yourPick')}
                                 </span>
                               )}
                             </div>
@@ -593,7 +605,7 @@ export function QuestionWorkspace({
                             <button
                               type="button"
                               aria-label={`Eliminate option ${opt.key}`}
-                              title="Cross out option"
+                              title={t('ws.crossOutOption')}
                               onClick={() => onToggleEliminate(activePart.partId, opt.key)}
                               className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-colors ${
                                 elim
@@ -610,8 +622,8 @@ export function QuestionWorkspace({
                               opt.visual.visualType === 'inline_svg') && (
                               <button
                                 type="button"
-                                aria-label={`Zoom option ${opt.key}`}
-                                title={`Zoom option ${opt.key}`}
+                                aria-label={t('ws.zoomOption', { key: opt.key })}
+                                title={t('ws.zoomOption', { key: opt.key })}
                                 onClick={() => setZoomedOption({ key: opt.key, visual: opt.visual! })}
                                 className="absolute bottom-3.5 right-3.5 z-10 w-6 h-6 rounded-[7px] border border-[#E5DFD5] bg-white/90 hover:bg-white text-[#78756E] hover:text-[#113C36] flex items-center justify-center cursor-pointer transition-colors"
                               >
@@ -685,12 +697,12 @@ export function QuestionWorkspace({
                             </div>
                             {readOnly && isCorrect && (
                               <span className="text-[11px] font-sans-display font-semibold text-[#1D6346] shrink-0">
-                                Correct
+                                {t('ws.correct')}
                               </span>
                             )}
                             {isWrongSelected && (
                               <span className="text-[11px] font-sans-display font-semibold text-[#B42318] shrink-0">
-                                Your pick
+                                {t('ws.yourPick')}
                               </span>
                             )}
                           </button>
@@ -698,7 +710,7 @@ export function QuestionWorkspace({
                             <button
                               type="button"
                               aria-label={`Eliminate option ${opt.key}`}
-                              title="Cross out option"
+                              title={t('ws.crossOutOption')}
                               onClick={() => onToggleEliminate(activePart.partId, opt.key)}
                               className={`px-2.5 rounded-[12px] border cursor-pointer transition-colors ${
                                 elim
@@ -730,7 +742,7 @@ export function QuestionWorkspace({
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={`Zoomed preview for option ${zoomedOption.key}`}
+            aria-label={t('ws.optionHeading', { key: zoomedOption.key })}
             className="fixed inset-0 z-50 m-0 bg-black/60 flex items-center justify-center p-6"
             onClick={() => setZoomedOption(null)}
           >
@@ -740,12 +752,12 @@ export function QuestionWorkspace({
             >
               <div className="flex items-center justify-between">
                 <h3 className="font-sans-display font-semibold text-sm text-[#113C36]">
-                  Option {zoomedOption.key}
+                  {t('ws.optionHeading', { key: zoomedOption.key })}
                 </h3>
                 <button
                   type="button"
                   onClick={() => setZoomedOption(null)}
-                  aria-label="Close option zoom preview"
+                  aria-label={t('ws.closeOptionZoom')}
                   className="p-1.5 rounded-[8px] hover:bg-[#F3EFE8] text-[#4A5955] cursor-pointer"
                 >
                   <X className="w-4 h-4" />

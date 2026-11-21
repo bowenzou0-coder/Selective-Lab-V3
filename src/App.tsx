@@ -7,10 +7,12 @@ import { HomeView } from './client/components/HomeView';
 import { ProgressView } from './client/components/ProgressView';
 import { SessionPlayerView } from './client/components/SessionPlayerView';
 import { StudioShell } from './client/components/TopNav';
+import { useI18n } from './client/i18n';
 
 const signedOut: AuthState = { authenticated: false, role: null, studentId: null };
 
 export default function App() {
+  const { t } = useI18n();
   const [path, setPath] = useState<string>(() => window.location.pathname || '/');
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -34,7 +36,7 @@ export default function App() {
       .catch((err: unknown) => {
         if (active) {
           setAuth(signedOut);
-          setAuthError(err instanceof Error ? err.message : 'Unable to check sign-in status.');
+          setAuthError(err instanceof Error ? err.message : t('app.authCheckError'));
         }
       })
       .finally(() => {
@@ -48,7 +50,7 @@ export default function App() {
         email: undefined,
         activeSessionId: null,
       }));
-      setAuthError('Your session expired. Please sign in again.');
+      setAuthError(t('app.sessionExpired'));
     };
     window.addEventListener('nsw-auth-expired', onExpired);
     return () => {
@@ -113,7 +115,7 @@ export default function App() {
       window.history.replaceState({}, '', '/');
       setPath('/');
     } catch {
-      setLogoutError('Unable to sign out. Please try again.');
+      setLogoutError(t('app.logoutError'));
     }
   };
 
@@ -121,7 +123,7 @@ export default function App() {
     return (
       <>
         <div className="min-h-screen flex items-center justify-center bg-[#F3EFE8] text-sm text-[#4A5955] font-sans-text">
-          Loading Selective Lab...
+          {t('app.loading')}
         </div>
         <SpeedInsights />
       </>
@@ -142,7 +144,7 @@ export default function App() {
       role="status"
       className="w-full bg-[var(--status-warn-bg)] border-b border-[var(--status-warn)]/25 px-4 py-1.5 text-center text-xs font-medium text-[var(--status-warn)]"
     >
-      Disposable preview storage ({auth?.backendName}) — data resets on server restart.
+      {t('app.demoBanner', { backend: auth?.backendName || '' })}
     </div>
   ) : null;
 

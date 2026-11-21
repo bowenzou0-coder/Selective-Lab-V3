@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Clock, Play, RotateCcw } from 'lucide-react';
 import { api, type DashboardResponse } from '../api';
+import { getLocalizedSectionMixParts, useI18n, type MessageKey } from '../i18n';
 import type { MockTestBatch, SectionCode, SessionMode } from '../../shared/contracts';
-import { SKILLS_TAXONOMY } from '../../shared/skills';
 import {
   IsometricBookStarIllustration,
   IsometricCompassTimerIllustration,
@@ -11,36 +11,39 @@ import {
   SectionThumbnail,
 } from './StudioIllustrations';
 
-const SKILL_NAME_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayName]));
-
 interface HomeViewProps {
   onOpenSession: (sessionId: string, isLocked?: boolean) => void;
   onNavigate: (path: string) => void;
 }
 
-const SECTION_DRILLS: { code: SectionCode; label: string; detail: string; mode: SessionMode }[] = [
+const SECTION_DRILLS: {
+  code: SectionCode;
+  labelKey: MessageKey;
+  detailKey: MessageKey;
+  mode: SessionMode;
+}[] = [
   {
     code: 'READ',
-    label: 'Reading',
-    detail: 'Fiction, vocabulary cloze, poetry, gapped text, and matching',
+    labelKey: 'section.READ',
+    detailKey: 'home.drillREADDetail',
     mode: 'section_drill',
   },
   {
     code: 'MATH',
-    label: 'Mathematical Reasoning',
-    detail: 'Five-option problem solving, geometry, and visual diagrams',
+    labelKey: 'section.MATH',
+    detailKey: 'home.drillMATHDetail',
     mode: 'section_drill',
   },
   {
     code: 'THINK',
-    label: 'Thinking Skills',
-    detail: 'Four-option logic, spatial puzzles, and critical reasoning',
+    labelKey: 'section.THINK',
+    detailKey: 'home.drillTHINKDetail',
     mode: 'section_drill',
   },
   {
     code: 'WRIT',
-    label: 'Writing Sprint',
-    detail: 'Timed 30-minute typed essay with banded A to E rubric feedback',
+    labelKey: 'home.modalWritingTitle',
+    detailKey: 'home.drillWRITDetail',
     mode: 'writing_sprint',
   },
 ];
@@ -60,11 +63,11 @@ function getOfficialSectionMinutes(scope: 'ALL' | SectionCode): number {
   return 40;
 }
 
-function getGreeting(): string {
+function getGreetingKey(): 'home.greetMorning' | 'home.greetAfternoon' | 'home.greetEvening' {
   const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 12) return 'home.greetMorning';
+  if (hour < 17) return 'home.greetAfternoon';
+  return 'home.greetEvening';
 }
 
 function inferSessionThumbKind(title?: string, mode?: string): SectionCode | 'DAILY' | 'MOCK' {
@@ -80,6 +83,7 @@ function inferSessionThumbKind(title?: string, mode?: string): SectionCode | 'DA
 }
 
 export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
+  const { t, isZh, sectionLabel, sectionShortLabel, skillName, formatDate } = useI18n();
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState<string | null>(null);
@@ -122,7 +126,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         }
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'Failed to load dashboard.');
+        if (active) setError(err instanceof Error ? err.message : t('home.unableLoadDash'));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -130,7 +134,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
     return () => {
       active = false;
     };
-  }, [onOpenSession]);
+  }, [onOpenSession, t]);
 
   const launch = async (
     key: string,
@@ -149,7 +153,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         onOpenSession(activeId, true);
         return;
       }
-      setError(err instanceof Error ? err.message : 'Unable to start session.');
+      setError(err instanceof Error ? err.message : t('home.unableStartSession'));
       setLaunching(null);
       setPendingLaunch(null);
     }
@@ -186,21 +190,21 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
   }[] = [
     {
       key: 'PT1',
-      label: 'Practice Test 1 (Official)',
+      label: t('home.paperPT1'),
       isOfficial: true,
       officialBatch: 'PT1',
       counts: data?.batchCounts.PT1 ?? { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
     },
     {
       key: 'PT2',
-      label: 'Practice Test 2 (Official)',
+      label: t('home.paperPT2'),
       isOfficial: true,
       officialBatch: 'PT2',
       counts: data?.batchCounts.PT2 ?? { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
     },
     {
       key: 'PT3',
-      label: 'Practice Test 3 (Benchmark holdout)',
+      label: t('home.paperPT3'),
       isOfficial: true,
       officialBatch: 'PT3',
       counts: data?.batchCounts.PT3 ?? { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
@@ -246,23 +250,18 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
     (dailyLimits.THINK || 0) +
     (dailyLimits.WRIT || 0);
 
-  const dailyMixSummaryParts = [
-    dailyLimits.READ > 0 ? `Reading ${dailyLimits.READ}` : '',
-    dailyLimits.MATH > 0 ? `Maths ${dailyLimits.MATH}` : '',
-    dailyLimits.THINK > 0 ? `Thinking ${dailyLimits.THINK}` : '',
-    dailyLimits.WRIT > 0 ? `Writing ${dailyLimits.WRIT}` : '',
-  ].filter(Boolean);
+  const dailyMixSummaryParts = getLocalizedSectionMixParts(dailyLimits, sectionShortLabel);
 
   const requestDailyLaunch = () => {
     const goalMin = data?.dailyGoalMinutes ?? 25;
     setPendingLaunch({
       key: 'daily',
-      title: "Today's practice set",
+      title: t('home.modalTodaysSetTitle'),
       questionCountLabel:
         dailyTotalQuestions > 0
-          ? `${dailyTotalQuestions} questions (${dailyMixSummaryParts.join(', ')})`
-          : 'Mixed review and priority skills',
-      durationLabel: `${goalMin} minutes`,
+          ? `${t('home.modalDrillCount', { count: dailyTotalQuestions })} (${dailyMixSummaryParts.join(isZh ? '、' : ', ')})`
+          : t('home.todayPlanFallback'),
+      durationLabel: t('home.modalDailyDuration', { min: goalMin }),
       payload: { mode: 'daily_adaptive' },
     });
   };
@@ -280,9 +279,17 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         : Math.max(4, Math.round((defaultMins * qCount) / Math.max(1, defaultCount)));
     setPendingLaunch({
       key: `drill_${drill.code}`,
-      title: drill.code === 'WRIT' ? 'Writing sprint' : `${drill.label} drill`,
-      questionCountLabel: `${qCount} question${qCount === 1 ? '' : 's'}`,
-      durationLabel: `${min} minutes`,
+      title:
+        drill.code === 'WRIT'
+          ? t('home.modalWritingTitle')
+          : t('home.modalDrillTitle', { section: t(drill.labelKey) }),
+      questionCountLabel:
+        drill.code === 'WRIT'
+          ? t('home.modalWritingCount')
+          : qCount === 1 && !isZh
+            ? '1 question'
+            : t('home.modalDrillCount', { count: qCount }),
+      durationLabel: t('home.modalMinutesLabel', { min }),
       payload: {
         mode: drill.mode,
         sectionFilter: drill.code,
@@ -295,19 +302,13 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
   const handleLaunchMock = () => {
     const sectionFilter = mockScope === 'ALL' ? undefined : mockScope;
     const scopeLabel =
-      mockScope === 'ALL'
-        ? 'Full 4-section exam'
-        : mockScope === 'READ'
-          ? 'Reading'
-          : mockScope === 'MATH'
-            ? 'Mathematical Reasoning'
-            : mockScope === 'THINK'
-              ? 'Thinking Skills'
-              : 'Writing';
+      mockScope === 'ALL' ? t('home.modalFullExam') : sectionLabel(mockScope);
 
     const title =
       mockMode === 'pool'
-        ? `Fresh Question Bank mock (${scopeLabel})`
+        ? t('home.modalMockTitle', {
+            label: mockScope === 'ALL' ? t('home.modalFullExam') : t('home.modalSectionPractice', { section: scopeLabel }),
+          })
         : `${selectedPaper.label} — ${scopeLabel}`;
 
     const basePayload: Parameters<typeof api.createSession>[0] =
@@ -337,8 +338,11 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       setPendingLaunch({
         key: 'mock',
         title,
-        questionCountLabel: `${mockQuestionCount} question${mockQuestionCount === 1 ? '' : 's'}`,
-        durationLabel: `${mins} minutes`,
+        questionCountLabel:
+          mockQuestionCount === 1 && !isZh
+            ? '1 question'
+            : t('home.modalDrillCount', { count: mockQuestionCount }),
+        durationLabel: t('home.modalMinutesLabel', { min: mins }),
         payload: {
           ...basePayload,
           customTimeLimitSec: mins * 60,
@@ -353,8 +357,12 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
     setPendingLaunch({
       key: 'mock',
       title,
-      questionCountLabel: `${mockQuestionCount} question${mockQuestionCount === 1 ? '' : 's'}`,
-      durationLabel: mult <= 0 ? 'Untimed practice' : `${scaledMin} minutes`,
+      questionCountLabel:
+        mockQuestionCount === 1 && !isZh
+          ? '1 question'
+          : t('home.modalDrillCount', { count: mockQuestionCount }),
+      durationLabel:
+        mult <= 0 ? t('home.modalUntimedLabel') : t('home.modalMinutesLabel', { min: scaledMin }),
       isUntimed: mult <= 0,
       payload: {
         ...basePayload,
@@ -400,7 +408,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             >
               <div className="space-y-1">
                 <p className="text-xs font-sans-display font-medium text-[#78756E]">
-                  Before you begin
+                  {t('home.modalEyebrow')}
                 </p>
                 <h2
                   id="ready-modal-title"
@@ -412,13 +420,13 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
 
               <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
                 <div>
-                  <dt className="text-[#78756E]">Questions</dt>
+                  <dt className="text-[#78756E]">{t('home.modalQuestions')}</dt>
                   <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
                     {pendingLaunch.questionCountLabel}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[#78756E]">Time allowed</dt>
+                  <dt className="text-[#78756E]">{t('home.modalTimeAllowed')}</dt>
                   <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
                     {pendingLaunch.durationLabel}
                   </dd>
@@ -429,8 +437,8 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
                   {pendingLaunch.isUntimed
-                    ? 'Once started, your workspace stays inside this paper until you submit. Reloading keeps your answers saved.'
-                    : 'Once started, the exam clock runs continuously on the server until you submit. Reloading keeps you inside the test.'}
+                    ? t('home.modalWarnUntimed')
+                    : t('home.modalWarnTimed')}
                 </span>
               </div>
 
@@ -441,7 +449,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   onClick={() => setPendingLaunch(null)}
                   className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
                 >
-                  Cancel
+                  {t('home.modalCancel')}
                 </button>
                 <button
                   type="button"
@@ -450,7 +458,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                 >
                   <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>{launching ? 'Starting...' : 'Confirm and start'}</span>
+                  <span>{launching ? t('home.modalStarting') : t('home.modalConfirmStart')}</span>
                 </button>
               </div>
             </div>
@@ -462,10 +470,10 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div className="space-y-1">
           <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
-            {getGreeting()}, ready to practise
+            {t(getGreetingKey())}
           </h1>
           <p className="text-[15px] text-[#4A5955]">
-            Choose your daily set, warm up with a timed section drill, or sit a fresh mock from the Question Bank.
+            {t('home.subtitle')}
           </p>
         </div>
 
@@ -476,24 +484,27 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             className="px-4 py-2.5 rounded-[10px] border border-[#113C36] bg-[#E5F0EA] hover:bg-[#d8e9df] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Resume active paper</span>
+            <span>{t('home.resumeActive')}</span>
           </button>
         )}
       </header>
 
       {/* Editorial Studio 3-Card Hero Band */}
-      <section aria-label="Featured study modes" className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <section aria-label={t('home.todaysPractice')} className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Card 1: Today's Practice — Warm Apricot (#F9CAA7) */}
         <div className="lg:col-span-5 rounded-[16px] bg-[#F9CAA7] p-6 flex flex-col justify-between gap-5 border border-[#EAB690]/70">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-2">
               <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
-                Today&apos;s practice
+                {t('home.todaysPractice')}
               </h2>
               <p className="text-[13px] text-[#113C36]/80 leading-relaxed max-w-[28ch]">
                 {dailyTotalQuestions > 0
-                  ? `${dailyTotalQuestions} questions planned today: ${dailyMixSummaryParts.join(', ')}.`
-                  : 'A tailored blend of due reviews and your next target skills.'}
+                  ? t('home.todayPlanLine', {
+                      total: dailyTotalQuestions,
+                      mix: dailyMixSummaryParts.join(isZh ? '、' : ', '),
+                    })
+                  : t('home.todayPlanFallback')}
               </p>
             </div>
             <IsometricBookStarIllustration className="w-[104px] h-[86px] shrink-0 -mt-1 -mr-1" />
@@ -506,7 +517,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   {loading ? '—' : `${todayMinutes}m`}
                 </div>
                 <div className="mt-1.5 text-xs font-medium text-[#113C36]/75 tabular-nums">
-                  of {dailyGoalMinutes}m daily goal
+                  {t('home.ofDailyGoal', { min: dailyGoalMinutes })}
                 </div>
               </div>
               <div className="h-10 w-px bg-[#113C36]/15" aria-hidden="true" />
@@ -515,7 +526,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   {loading ? '—' : `${streakDays}d`}
                 </div>
                 <div className="mt-1.5 text-xs font-medium text-[#113C36]/75">
-                  study streak
+                  {t('home.studyStreak')}
                 </div>
               </div>
             </div>
@@ -528,12 +539,15 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                 className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-2 transition-colors disabled:opacity-60 cursor-pointer whitespace-nowrap"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>{launching === 'daily' ? 'Preparing...' : "Start today's practice"}</span>
+                <span>{launching === 'daily' ? t('home.preparing') : t('home.startTodaysPractice')}</span>
               </button>
 
               {data && data.todaySlotsAttempted > 0 && (
                 <span className="text-xs font-medium text-[#113C36]/80 tabular-nums">
-                  {data.todaySlotsCorrect} of {data.todaySlotsAttempted} right today
+                  {t('home.todayAccuracy', {
+                    correct: data.todaySlotsCorrect,
+                    attempted: data.todaySlotsAttempted,
+                  })}
                 </span>
               )}
             </div>
@@ -545,10 +559,10 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1.5">
               <span className="inline-block px-2.5 py-0.5 rounded-full bg-white/80 text-[12px] font-medium text-[#4A5955]">
-                30 minutes
+                {t('home.minutesBadge', { min: 30 })}
               </span>
               <h2 className="font-serif-display font-bold text-[24px] leading-[1.18] tracking-[-0.02em] text-[#113C36] pt-1">
-                Write under exam time
+                {t('home.writeHeadline')}
               </h2>
             </div>
             <IsometricPenManuscriptIllustration className="w-[88px] h-[72px] shrink-0 -mr-1" />
@@ -556,7 +570,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
 
           <div className="space-y-4">
             <p className="text-[13px] text-[#4A5955] leading-relaxed">
-              Plan in the scratchpad, type without spellcheck, and receive detailed Band A to E rubric feedback.
+              {t('home.writeDesc')}
             </p>
             <button
               type="button"
@@ -564,7 +578,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
               onClick={() => requestDrillLaunch(writingDrill)}
               className="w-full sm:w-auto px-5 py-2.5 rounded-[10px] bg-[#F29A63] hover:bg-[#E6874C] text-[#113C36] text-sm font-sans-display font-semibold transition-colors disabled:opacity-60 cursor-pointer whitespace-nowrap"
             >
-              Start writing sprint
+              {t('home.startWritingSprint')}
             </button>
           </div>
         </div>
@@ -574,10 +588,10 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
           <div className="space-y-2.5">
             <IsometricCompassTimerIllustration className="w-[86px] h-[70px] -ml-1" />
             <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36] leading-snug">
-              Mock exam simulator
+              {t('home.mockHeroTitle')}
             </h2>
             <p className="text-[13px] text-[#4A5955] leading-relaxed">
-              Build a fresh unseen mock from the Question Bank or sit a fixed official practice paper.
+              {t('home.mockHeroDesc')}
             </p>
           </div>
 
@@ -588,7 +602,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             }}
             className="w-full sm:w-auto px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-colors cursor-pointer whitespace-nowrap"
           >
-            Configure a mock
+            {t('home.configureMock')}
           </button>
         </div>
       </section>
@@ -598,7 +612,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         <section className="rounded-[14px] bg-[#FAF8F5] border border-[#E5DFD5] px-5 py-4 space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-sans-display font-semibold text-sm text-[#113C36]">
-              Suggested focus areas today
+              {t('home.focusTitle')}
             </h2>
             <div className="flex flex-wrap gap-1.5">
               {focusPlan.focusSkillIds.map((skillId) => (
@@ -606,7 +620,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   key={skillId}
                   className="px-2.5 py-1 rounded-full bg-white border border-[#E5DFD5] text-xs font-medium text-[#113C36]"
                 >
-                  {SKILL_NAME_MAP.get(skillId) || skillId}
+                  {skillName(skillId)}
                 </span>
               ))}
             </div>
@@ -619,10 +633,10 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       <section id="practice-drills" className="space-y-3 scroll-mt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
-            Practice drills by section
+            {t('home.drillsTitle')}
           </h2>
           <span className="text-xs text-[#78756E]">
-            Pick your question count for a focused warm-up from the Question Bank
+            {t('home.drillsSubtitle')}
           </span>
         </div>
 
@@ -638,6 +652,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
               drill.code === 'WRIT'
                 ? 30
                 : Math.max(4, Math.round((defaultMins * qCount) / Math.max(1, defaultCount)));
+            const drillLabel = t(drill.labelKey);
             return (
               <div
                 key={drill.code}
@@ -647,10 +662,10 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   <SectionThumbnail kind={drill.code} />
                   <div className="min-w-0">
                     <div className="font-sans-display font-semibold text-[15px] text-[#113C36]">
-                      {drill.label}
+                      {drillLabel}
                     </div>
                     <p className="text-[13px] text-[#4A5955] truncate sm:whitespace-normal">
-                      {drill.detail}
+                      {t(drill.detailKey)}
                     </p>
                   </div>
                 </div>
@@ -660,7 +675,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                     <div
                       className="inline-flex items-center rounded-full bg-[#F3EFE8] p-0.5 text-xs"
                       role="group"
-                      aria-label={`${drill.label} question count`}
+                      aria-label={drillLabel}
                     >
                       {[5, 10, 15].map((n) => (
                         <button
@@ -683,12 +698,12 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                       ))}
                     </div>
                   ) : (
-                    <span className="px-2.5 py-1 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#4A5955]">
-                      1 task
+                    <span className="px-2.5 py-1 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#4A5955] whitespace-nowrap">
+                      {t('home.oneTask')}
                     </span>
                   )}
-                  <span className="px-2.5 py-1 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#4A5955] tabular-nums">
-                    {mins} min
+                  <span className="px-2.5 py-1 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#4A5955] tabular-nums whitespace-nowrap">
+                    {t('home.minShort', { min: mins })}
                   </span>
                   <button
                     type="button"
@@ -696,7 +711,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                     onClick={() => requestDrillLaunch(drill)}
                     className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-xs font-sans-display font-semibold text-[#113C36] transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
                   >
-                    Start drill
+                    {t('home.startDrill')}
                   </button>
                 </div>
               </div>
@@ -713,51 +728,51 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div className="space-y-1">
             <h2 className="font-sans-display font-semibold text-[19px] tracking-[-0.015em] text-[#113C36]">
-              Mock test simulator
+              {t('home.mockSectionTitle')}
             </h2>
             <p className="text-[13px] text-[#4A5955]">
-              Draw a fresh unseen mock straight from the Question Bank, or sit an official practice paper or imported batch.
+              {t('home.mockSectionDesc')}
             </p>
           </div>
 
           <div
-            className="inline-flex items-center p-1 rounded-[12px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit"
+            className="inline-flex items-center p-1 rounded-[12px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit max-w-full flex-wrap"
             role="group"
-            aria-label="Mock test source"
+            aria-label={t('home.mockSectionTitle')}
           >
             <button
               type="button"
               onClick={() => setMockMode('pool')}
-              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-colors ${
+              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
                 mockMode === 'pool'
                   ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                   : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
-              Fresh pool mock
+              {t('home.freshPoolMock')}
             </button>
             <button
               type="button"
               onClick={() => setMockMode('batch')}
-              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-colors ${
+              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
                 mockMode === 'batch'
                   ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                   : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
-              Specific paper or batch
+              {t('home.specificPaperBatch')}
             </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {mockMode === 'pool' ? (
-            <div>
+            <div className="min-w-0">
               <label
                 htmlFor="pool-mock-count"
                 className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
               >
-                Questions to pull
+                {t('home.questionsToPull')}
               </label>
               <select
                 id="pool-mock-count"
@@ -767,40 +782,40 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                 className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36] disabled:bg-[#F3EFE8]"
               >
                 {mockScope === 'WRIT' ? (
-                  <option value="1">1 writing prompt</option>
+                  <option value="1">{t('home.writingPromptCount')}</option>
                 ) : mockScope === 'ALL' ? (
                   <>
-                    <option value="30">30 questions (Quick full mock)</option>
-                    <option value="60">60 questions (Half mock)</option>
-                    <option value="105">105 questions (Official full)</option>
-                    <option value="ALL">All available ({poolLiveForScope})</option>
+                    <option value="30">{t('home.quickFullMock')}</option>
+                    <option value="60">{t('home.halfMock')}</option>
+                    <option value="105">{t('home.officialFullMock')}</option>
+                    <option value="ALL">{t('home.allAvailable', { count: poolLiveForScope })}</option>
                   </>
                 ) : (
                   <>
-                    <option value="10">10 questions</option>
-                    <option value="20">20 questions</option>
-                    <option value="30">30 questions</option>
-                    <option value="35">35 questions</option>
-                    <option value="40">40 questions</option>
-                    <option value="ALL">All available ({poolLiveForScope})</option>
+                    <option value="10">{t('home.nQuestions', { count: 10 })}</option>
+                    <option value="20">{t('home.nQuestions', { count: 20 })}</option>
+                    <option value="30">{t('home.nQuestions', { count: 30 })}</option>
+                    <option value="35">{t('home.nQuestions', { count: 35 })}</option>
+                    <option value="40">{t('home.nQuestions', { count: 40 })}</option>
+                    <option value="ALL">{t('home.allAvailable', { count: poolLiveForScope })}</option>
                   </>
                 )}
               </select>
             </div>
           ) : (
-            <div>
+            <div className="min-w-0">
               <label
                 htmlFor="mock-batch-select"
                 className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
               >
-                Paper or batch ({allPaperOptions.length} available)
+                {t('home.paperOrBatch', { count: allPaperOptions.length })}
               </label>
               {allPaperOptions.length > 8 && (
                 <input
                   type="search"
                   value={paperSearch}
                   onChange={(e) => setPaperSearch(e.target.value)}
-                  placeholder="Search papers or batches..."
+                  placeholder={t('home.searchPapers')}
                   className="w-full mb-1.5 px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
                 />
               )}
@@ -819,12 +834,12 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             </div>
           )}
 
-          <div>
+          <div className="min-w-0">
             <label
               htmlFor="mock-scope-select"
               className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
             >
-              Test scope
+              {t('home.testScope')}
             </label>
             <select
               id="mock-scope-select"
@@ -840,41 +855,41 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
               }}
               className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
             >
-              <option value="READ">Reading (40 min)</option>
-              <option value="MATH">Mathematical Reasoning (40 min)</option>
-              <option value="THINK">Thinking Skills (40 min)</option>
-              <option value="WRIT">Writing (30 min)</option>
-              <option value="ALL">Full 4-section exam (150 min)</option>
+              <option value="READ">{t('home.scopeREAD')}</option>
+              <option value="MATH">{t('home.scopeMATH')}</option>
+              <option value="THINK">{t('home.scopeTHINK')}</option>
+              <option value="WRIT">{t('home.scopeWRIT')}</option>
+              <option value="ALL">{t('home.scopeALL')}</option>
             </select>
           </div>
 
-          <div>
+          <div className="min-w-0">
             <label
               htmlFor="mock-timer-select"
               className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
             >
-              Timer setting
+              {t('home.timerSetting')}
             </label>
             <div className="flex gap-2">
               <select
                 id="mock-timer-select"
                 value={timerPreset}
                 onChange={(e) => setTimerPreset(e.target.value as typeof timerPreset)}
-                className="flex-1 px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
+                className="flex-1 min-w-0 px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
               >
-                <option value="1.0">1.0× Official time</option>
-                <option value="0.75">0.75× Speed pace</option>
-                <option value="1.25">1.25× Extended time</option>
-                <option value="1.5">1.5× Extended time</option>
-                <option value="custom">Custom minutes</option>
-                <option value="0">Untimed practice</option>
+                <option value="1.0">{t('home.timer10')}</option>
+                <option value="0.75">{t('home.timer075')}</option>
+                <option value="1.25">{t('home.timer125')}</option>
+                <option value="1.5">{t('home.timer15')}</option>
+                <option value="custom">{t('home.timerCustom')}</option>
+                <option value="0">{t('home.timerUntimed')}</option>
               </select>
               {timerPreset === 'custom' && (
                 <input
                   type="number"
                   min={1}
                   max={240}
-                  aria-label="Custom timer minutes"
+                  aria-label={t('home.timerCustom')}
                   value={customMinutes}
                   onChange={(e) => setCustomMinutes(e.target.value)}
                   className="w-20 px-2.5 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm tabular-nums text-[#113C36]"
@@ -885,27 +900,29 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
-          <div className="flex items-center gap-2 text-xs text-[#4A5955]">
+          <div className="flex items-center gap-2 text-xs text-[#4A5955] min-w-0 flex-1">
             <Clock className="w-3.5 h-3.5 text-[#78756E] shrink-0" />
             <span>
               {mockMode === 'pool'
-                ? `${poolUnseenForScope} unseen ready in the Question Bank (${poolLiveForScope} live). Pulls unseen questions first and keeps benchmark holdout papers untouched.`
+                ? t('home.poolHint', { unseen: poolUnseenForScope, live: poolLiveForScope })
                 : selectedPaper.officialBatch === 'PT3'
-                  ? 'Practice Test 3 is kept separate from daily drills so your benchmark score stays fresh.'
-                  : `${batchQuestionCount} question${batchQuestionCount === 1 ? '' : 's'} ready in this paper.`}
+                  ? t('home.pt3Hint')
+                  : batchQuestionCount === 1
+                    ? t('home.batchCountHintOne')
+                    : t('home.batchCountHintMany', { count: batchQuestionCount })}
             </span>
           </div>
           <button
             type="button"
             disabled={launching !== null || mockQuestionCount === 0}
             onClick={handleLaunchMock}
-            className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
+            className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
           >
             {launching === 'mock'
-              ? 'Starting mock...'
+              ? t('home.startingMock')
               : mockMode === 'pool'
-                ? `Start ${mockQuestionCount}-question mock`
-                : 'Start mock test'}
+                ? t('home.startNMock', { count: mockQuestionCount })
+                : t('home.startMockTest')}
           </button>
         </div>
       </section>
@@ -915,14 +932,14 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
-              Recent sessions
+              {t('home.recentSessions')}
             </h2>
             <button
               type="button"
               onClick={() => onNavigate('/progress')}
-              className="text-xs font-sans-display font-semibold text-[#4A5955] hover:text-[#113C36] underline underline-offset-4 cursor-pointer"
+              className="text-xs font-sans-display font-semibold text-[#4A5955] hover:text-[#113C36] underline underline-offset-4 cursor-pointer whitespace-nowrap"
             >
-              View full progress
+              {t('home.viewFullProgress')}
             </button>
           </div>
 
@@ -936,18 +953,21 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   <SectionThumbnail kind={inferSessionThumbKind(s.title, s.mode)} />
                   <div className="min-w-0">
                     <div className="font-sans-display font-semibold text-[14px] text-[#113C36] truncate">
-                      {s.title || (s.mode === 'spaced_review' ? 'Daily practice set' : s.mode.replace(/_/g, ' '))}
+                      {s.title || (s.mode === 'spaced_review' ? t('home.dailyPracticeSet') : s.mode.replace(/_/g, ' '))}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#78756E] tabular-nums">
-                      <span>{new Date(s.startedAt).toLocaleDateString()}</span>
+                      <span>{formatDate(s.startedAt)}</span>
                       <span className="px-2 py-0.5 rounded-full bg-[#F3EFE8] text-[#4A5955] font-medium">
                         {s.status === 'submitted'
-                          ? `${s.correctSlots} / ${s.totalSlots} correct`
-                          : 'In progress'}
+                          ? t('home.slotsCorrect', {
+                              correct: s.correctSlots,
+                              total: s.totalSlots,
+                            })
+                          : t('home.inProgress')}
                       </span>
                       {s.expiredAutoSubmitted && (
                         <span className="px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] font-medium">
-                          Submitted at deadline
+                          {t('home.submittedAtDeadline')}
                         </span>
                       )}
                     </div>
@@ -959,7 +979,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   onClick={() => onOpenSession(s.sessionId, s.status === 'in_progress')}
                   className="px-3.5 py-1.5 text-xs font-sans-display font-semibold rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] cursor-pointer whitespace-nowrap shrink-0 transition-colors"
                 >
-                  {s.status === 'submitted' ? 'Review' : 'Resume'}
+                  {s.status === 'submitted' ? t('home.review') : t('home.resume')}
                 </button>
               </div>
             ))}

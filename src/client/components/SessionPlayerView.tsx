@@ -23,11 +23,9 @@ import type {
   SessionRecord,
   StudentQuestionView,
 } from '../../shared/contracts';
-import { SKILLS_TAXONOMY } from '../../shared/skills';
+import { LanguageToggle, useI18n } from '../i18n';
 import { PostSubmissionReview } from './PostSubmissionReview';
 import { QuestionWorkspace } from './QuestionWorkspace';
-
-const SKILL_NAME_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayName]));
 
 function formatTimer(totalSec: number): string {
   const s = Math.max(0, Math.floor(totalSec));
@@ -97,6 +95,7 @@ export function SessionPlayerView({
   onNavigate,
   onActiveSessionCleared,
 }: SessionPlayerViewProps) {
+  const { t, isZh, skillName } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [session, setSession] = useState<SessionRecord | null>(null);
@@ -330,7 +329,7 @@ export function SessionPlayerView({
         }
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'Unable to load session.');
+        if (active) setError(err instanceof Error ? err.message : t('session.unableLoad'));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -596,7 +595,7 @@ export function SessionPlayerView({
       setWritingReview(res.writingReview);
       onActiveSessionClearedRef.current?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to submit session.');
+      setError(err instanceof Error ? err.message : t('session.unableSubmit'));
       if (isTimeUp) {
         window.setTimeout(() => {
           autoSubmittedRef.current = false;
@@ -650,7 +649,7 @@ export function SessionPlayerView({
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-sm text-[var(--text-secondary)]">
-        Loading exam workspace...
+        {t('session.loading')}
       </div>
     );
   }
@@ -666,7 +665,7 @@ export function SessionPlayerView({
           onClick={() => onNavigate('/')}
           className="px-4 py-2 rounded-[var(--radius-sm)] border border-[var(--border-strong)] text-sm font-medium cursor-pointer"
         >
-          Back to Home
+          {t('auth.backToStudio')}
         </button>
       </div>
     );
@@ -712,7 +711,7 @@ export function SessionPlayerView({
                   await flushCheckpoint();
                   onNavigate(session.mode === 'admin_calibration' ? '/admin' : '/');
                 }}
-                aria-label="Exit session and return"
+                aria-label={t('session.exitAria')}
                 className="p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
@@ -725,46 +724,46 @@ export function SessionPlayerView({
               </span>
 
               {saveStatus === 'saving' && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white/80 border border-[#E5DFD5] text-[11px] font-medium text-[#4A5955]">
-                  Saving...
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white/80 border border-[#E5DFD5] text-[11px] font-medium text-[#4A5955] whitespace-nowrap">
+                  {t('session.saving')}
                 </span>
               )}
               {saveStatus === 'saved' && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#E5F3EC] text-[#1D6346] text-[11px] font-medium">
-                  <CloudCheck className="w-3 h-3" />
-                  <span>Saved</span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#E5F3EC] text-[#1D6346] text-[11px] font-medium whitespace-nowrap">
+                  <CloudCheck className="w-3 h-3 shrink-0" />
+                  <span>{t('session.saved')}</span>
                 </span>
               )}
               {saveStatus === 'unsent' && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-medium">
-                  <span>Unsent draft</span>
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-medium whitespace-nowrap">
+                  <span>{t('session.unsentDraft')}</span>
                   <button
                     type="button"
                     onClick={() => flushCheckpoint()}
                     className="underline hover:text-[#113C36] cursor-pointer"
                   >
-                    Save now
+                    {t('session.saveNow')}
                   </button>
                 </span>
               )}
               {saveStatus === 'failed' && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDECEB] text-[#B42318] text-[11px] font-medium">
-                  <CloudOff className="w-3 h-3" />
-                  <span>Save failed</span>
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDECEB] text-[#B42318] text-[11px] font-medium whitespace-nowrap">
+                  <CloudOff className="w-3 h-3 shrink-0" />
+                  <span>{t('session.saveFailed')}</span>
                   <button
                     type="button"
                     onClick={() => flushCheckpoint()}
                     className="inline-flex items-center gap-1 underline hover:text-[#113C36] cursor-pointer"
                   >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                    Retry
+                    <RefreshCw className="w-2.5 h-2.5 shrink-0" />
+                    {t('session.retry')}
                   </button>
                 </span>
               )}
               {saveStatus === 'conflict' && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-semibold">
-                  <AlertTriangle className="w-3 h-3" />
-                  <span>Updated on another device</span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-semibold whitespace-nowrap">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  <span>{t('session.conflictChip')}</span>
                 </span>
               )}
             </div>
@@ -775,8 +774,8 @@ export function SessionPlayerView({
             <button
               type="button"
               onClick={() => setTimerHidden((v) => !v)}
-              aria-label={timerHidden ? 'Show countdown timer' : 'Hide countdown timer'}
-              title={timerHidden ? 'Click to show timer' : 'Click to hide timer'}
+              aria-label={timerHidden ? t('session.showTimer') : t('session.hideTimer')}
+              title={timerHidden ? t('session.showTimer') : t('session.hideTimer')}
               className={`inline-flex items-center gap-2 px-4 py-1 rounded-[10px] border cursor-pointer transition-colors ${
                 remainingSec !== null && remainingSec <= 30 && !timerHidden
                   ? 'border-[#B42318]/50 bg-[#FDECEB] text-[#B42318]'
@@ -803,10 +802,10 @@ export function SessionPlayerView({
             </button>
           </div>
 
-          {/* Right: Question X of Y, Flag, Navigator, Finish test */}
+          {/* Right: Question X of Y, Flag, Navigator, Language, Finish test */}
           <div className="flex items-center justify-start md:justify-end gap-2 flex-wrap">
             <div className="text-xs font-medium text-[#4A5955] tabular-nums whitespace-nowrap mr-1">
-              Question {currentIndex + 1} of {questions.length}
+              {t('session.qOfTotal', { current: currentIndex + 1, total: questions.length })}
             </div>
 
             <button
@@ -820,7 +819,7 @@ export function SessionPlayerView({
               }`}
             >
               <Flag className="w-3.5 h-3.5" />
-              <span>{isFlagged ? 'Flagged' : 'Flag'}</span>
+              <span>{isFlagged ? t('session.flagged') : t('session.flag')}</span>
             </button>
 
             <button
@@ -830,7 +829,7 @@ export function SessionPlayerView({
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-medium text-[#113C36] cursor-pointer whitespace-nowrap transition-colors"
             >
               <Grid className="w-3.5 h-3.5" />
-              <span>Navigator</span>
+              <span>{t('session.navigator')}</span>
               <ChevronDown className="w-3.5 h-3.5 opacity-70" />
             </button>
 
@@ -845,9 +844,11 @@ export function SessionPlayerView({
                 }`}
               >
                 <ShieldAlert className="w-3.5 h-3.5" />
-                <span>Inspector</span>
+                <span>{t('session.inspector')}</span>
               </button>
             )}
+
+            <LanguageToggle compact />
 
             <button
               type="button"
@@ -855,7 +856,7 @@ export function SessionPlayerView({
               onClick={() => setSubmitConfirmOpen(true)}
               className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-colors"
             >
-              {submitting ? 'Submitting...' : 'Finish test'}
+              {submitting ? t('session.submitting') : t('session.finishTest')}
             </button>
           </div>
         </div>
@@ -866,17 +867,21 @@ export function SessionPlayerView({
             <div className="max-w-[1440px] mx-auto space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#4A5955]">
                 <span className="font-medium tabular-nums">
-                  {answeredSlotsCount} of {totalSlotsCount} slots answered across {questions.length} questions
+                  {t('session.slotsAnsweredSummary', {
+                    answered: answeredSlotsCount,
+                    total: totalSlotsCount,
+                    questions: questions.length,
+                  })}
                 </span>
                 <div className="flex items-center gap-3 text-[11px] text-[#78756E]">
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#113C36]" /> Current
+                    <span className="w-2.5 h-2.5 rounded-xs bg-[#113C36]" /> {t('session.legendCurrent')}
                   </span>
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#E5F0EA] border border-[#1D6346]/50" /> Answered
+                    <span className="w-2.5 h-2.5 rounded-xs bg-[#E5F0EA] border border-[#1D6346]/50" /> {t('session.legendAnswered')}
                   </span>
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#A35116]" /> Flagged
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#A35116]" /> {t('session.legendFlagged')}
                   </span>
                 </div>
               </div>
@@ -904,7 +909,7 @@ export function SessionPlayerView({
                       {idx + 1}
                       {isQFlagged && (
                         <span
-                          aria-label="Flagged"
+                          aria-label={t('session.flagged')}
                           className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#A35116] border border-white"
                         />
                       )}
@@ -922,7 +927,9 @@ export function SessionPlayerView({
         <div className="border-b border-[#A35116]/25 bg-[#FDF0E2] px-6 py-2.5">
           <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[#A35116]">
             <span>
-              An unsent local draft from {new Date(recoverableDraft.savedAtMs).toLocaleTimeString()} was found in this browser.
+              {t('session.localDraftFound', {
+                time: new Date(recoverableDraft.savedAtMs).toLocaleTimeString(isZh ? 'zh-CN' : 'en-AU'),
+              })}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -934,9 +941,9 @@ export function SessionPlayerView({
                   saveQueueRef.current?.markDirty();
                   void flushCheckpoint();
                 }}
-                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer whitespace-nowrap"
               >
-                Restore and save draft
+                {t('session.restoreDraft')}
               </button>
               <button
                 type="button"
@@ -945,9 +952,9 @@ export function SessionPlayerView({
                   setRecoverableDraft(null);
                   setSaveStatus('saved');
                 }}
-                className="px-3 py-1 rounded-[8px] border border-[#A35116] font-sans-display font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] border border-[#A35116] font-sans-display font-semibold cursor-pointer whitespace-nowrap"
               >
-                Discard unsent draft
+                {t('session.discardDraft')}
               </button>
             </div>
           </div>
@@ -959,7 +966,7 @@ export function SessionPlayerView({
         <div role="alert" className="border-b border-[#B42318]/25 bg-[#FDECEB] px-6 py-2.5">
           <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[#B42318]">
             <span>
-              Another device saved a newer version of this session (revision {conflictState.currentRevision}).
+              {t('session.conflictBanner', { rev: conflictState.currentRevision })}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -973,9 +980,9 @@ export function SessionPlayerView({
                   setConflictState(null);
                   setSaveStatus('saved');
                 }}
-                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer whitespace-nowrap"
               >
-                Load latest saved answers
+                {t('session.loadLatestServer')}
               </button>
               <button
                 type="button"
@@ -984,9 +991,9 @@ export function SessionPlayerView({
                   saveQueueRef.current?.setRevision(conflictState.currentRevision);
                   void flushCheckpoint(conflictState.currentRevision);
                 }}
-                className="px-3 py-1 rounded-[8px] border border-[#B42318] font-sans-display font-semibold cursor-pointer"
+                className="px-3 py-1 rounded-[8px] border border-[#B42318] font-sans-display font-semibold cursor-pointer whitespace-nowrap"
               >
-                Keep this device&apos;s answers
+                {t('session.keepDeviceAnswers')}
               </button>
             </div>
           </div>
@@ -998,7 +1005,7 @@ export function SessionPlayerView({
           role="status"
           className="border-b border-[#B42318]/25 bg-[#FDECEB] px-6 py-2.5 text-center text-xs font-medium text-[#B42318]"
         >
-          Time has ended — locking answers and submitting your paper now...
+          {t('session.timeEnded')}
         </div>
       )}
 
@@ -1015,7 +1022,7 @@ export function SessionPlayerView({
         <div className="border-b border-[#E5DFD5] bg-[#F3EFE8] px-6 py-4">
           <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-start justify-between gap-4 text-xs">
             <div className="space-y-1.5 flex-1 min-w-0">
-              <div className="font-mono-code font-semibold text-[#113C36]">
+              <div className="font-mono-code font-semibold text-[#113C36] break-all">
                 Admin Inspector | {activeInspectorQ.questionId} | Pool: {activeInspectorQ.poolType} | QC:{' '}
                 {activeInspectorQ.qcStatus}
                 {activeInspectorQ.provenance.sourceReference
@@ -1036,7 +1043,7 @@ export function SessionPlayerView({
                   >
                     {activeInspectorQ.parts.length > 1 ? `P${idx + 1}: ` : ''}
                     <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> (Diff {p.difficultyInitial},{' '}
-                    {SKILL_NAME_MAP.get(p.skillId) || p.skillId})
+                    {skillName(p.skillId)})
                   </button>
                 ))}
               </div>
@@ -1053,24 +1060,24 @@ export function SessionPlayerView({
               <button
                 type="button"
                 onClick={() => handleInspectorQcChange(activeInspectorQ.questionId, 'active')}
-                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer ${
+                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap ${
                   activeInspectorQ.qcStatus === 'active'
                     ? 'border-[#1D6346] bg-[#E5F3EC] text-[#1D6346]'
                     : 'border-[#CFC6B9] bg-white'
                 }`}
               >
-                Mark active
+                {t('session.markActive')}
               </button>
               <button
                 type="button"
                 onClick={() => handleInspectorQcChange(activeInspectorQ.questionId, 'quarantined')}
-                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer ${
+                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap ${
                   activeInspectorQ.qcStatus === 'quarantined'
                     ? 'border-[#B42318] bg-[#FDECEB] text-[#B42318]'
                     : 'border-[#CFC6B9] bg-white'
                 }`}
               >
-                Quarantine
+                {t('session.quarantine')}
               </button>
             </div>
           </div>
@@ -1118,7 +1125,7 @@ export function SessionPlayerView({
               className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Previous</span>
+              <span>{t('session.previous')}</span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -1128,7 +1135,7 @@ export function SessionPlayerView({
                   onClick={() => handleGoIndex(currentIndex + 1)}
                   className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
-                  <span>Next</span>
+                  <span>{t('session.next')}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               ) : (
@@ -1138,7 +1145,7 @@ export function SessionPlayerView({
                   onClick={() => setSubmitConfirmOpen(true)}
                   className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-colors"
                 >
-                  {submitting ? 'Submitting...' : 'Finish test'}
+                  {submitting ? t('session.submitting') : t('session.finishTest')}
                 </button>
               )}
             </div>
@@ -1163,30 +1170,30 @@ export function SessionPlayerView({
               className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
             >
               <div className="space-y-1">
-                <p className="text-xs font-sans-display font-medium text-[#78756E]">Finish test</p>
+                <p className="text-xs font-sans-display font-medium text-[#78756E]">{t('session.submitModalEyebrow')}</p>
                 <h2
                   id="submit-confirm-title"
                   className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
                 >
-                  Ready to submit your answers?
+                  {t('session.submitModalTitle')}
                 </h2>
               </div>
 
               <dl className="grid grid-cols-3 gap-2.5 p-3.5 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs text-center tabular-nums">
                 <div>
-                  <dt className="text-[#78756E]">Answered</dt>
+                  <dt className="text-[#78756E]">{t('session.answered')}</dt>
                   <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#1D6346]">
                     {answeredSlotsCount}/{totalSlotsCount}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[#78756E]">Unanswered</dt>
+                  <dt className="text-[#78756E]">{t('session.unanswered')}</dt>
                   <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#113C36]">
                     {Math.max(0, totalSlotsCount - answeredSlotsCount)}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[#78756E]">Flagged</dt>
+                  <dt className="text-[#78756E]">{t('session.flagged')}</dt>
                   <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#A35116]">
                     {flaggedQuestionIds.length}
                   </dd>
@@ -1194,7 +1201,7 @@ export function SessionPlayerView({
               </dl>
 
               <p className="text-xs text-[#4A5955] leading-relaxed">
-                Submitting records your final answers and opens the full review screen with worked explanations.
+                {t('session.submitModalNote')}
               </p>
 
               <div className="flex items-center justify-end gap-2.5 pt-1">
@@ -1204,7 +1211,7 @@ export function SessionPlayerView({
                   onClick={() => setSubmitConfirmOpen(false)}
                   className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
                 >
-                  Keep working
+                  {t('session.keepWorking')}
                 </button>
                 <button
                   type="button"
@@ -1212,7 +1219,7 @@ export function SessionPlayerView({
                   onClick={handleSubmit}
                   className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-60"
                 >
-                  {submitting ? 'Submitting...' : 'Confirm and submit'}
+                  {submitting ? t('session.submitting') : t('session.confirmAndSubmit')}
                 </button>
               </div>
             </div>

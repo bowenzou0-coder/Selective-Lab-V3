@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from 'react';
+import { useI18n } from '../../i18n';
 import {
   Archive,
   CheckCircle2,
@@ -24,8 +25,6 @@ import {
   type PaginatedQuestionsResponse,
 } from '../../api';
 import {
-  getCompletionStatusLabel,
-  getPoolStatusLabel,
   poolStatusToQcStatus,
   qcStatusToPoolStatus,
   type BankPoolStatus,
@@ -40,7 +39,7 @@ import type {
   StimulusGroup,
 } from '../../../shared/contracts';
 import { SKILLS_TAXONOMY } from '../../../shared/skills';
-import { FORMAT_LABELS, QuestionWorkspace, SECTION_LABELS } from '../QuestionWorkspace';
+import { FORMAT_LABELS, QuestionWorkspace } from '../QuestionWorkspace';
 
 interface QuestionBankStudioProps {
   initialBatchId?: string;
@@ -51,33 +50,36 @@ interface QuestionBankStudioProps {
   onDataMutated?: () => void;
 }
 
-const SECTION_PILLS: { value: '' | SectionCode; label: string }[] = [
-  { value: '', label: 'All sections' },
-  { value: 'READ', label: 'Reading' },
-  { value: 'MATH', label: 'Maths' },
-  { value: 'THINK', label: 'Thinking' },
-  { value: 'WRIT', label: 'Writing' },
-];
+const SECTION_VALUES: ('' | SectionCode)[] = ['', 'READ', 'MATH', 'THINK', 'WRIT'];
+const POOL_STATUS_VALUES: ('' | BankPoolStatus)[] = ['', 'live', 'paused', 'archived'];
+const COMPLETION_VALUES: ('' | QuestionCompletionStatus)[] = ['', 'unseen', 'in_review', 'done', 'needs_repair'];
 
-const POOL_STATUS_PILLS: { value: '' | BankPoolStatus; label: string }[] = [
-  { value: '', label: 'All statuses' },
-  { value: 'live', label: 'In pool' },
-  { value: 'paused', label: 'Paused' },
-  { value: 'archived', label: 'Archived' },
-];
+interface CompactSelectProps {
+  label?: string;
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel?: string;
+  className?: string;
+  children: ReactNode;
+}
 
-const COMPLETION_PILLS: { value: '' | QuestionCompletionStatus; label: string }[] = [
-  { value: '', label: 'All progress' },
-  { value: 'unseen', label: 'Unseen' },
-  { value: 'in_review', label: 'In review' },
-  { value: 'done', label: 'Done' },
-  { value: 'needs_repair', label: 'Needs repair' },
-];
-
-function formatDateShort(iso?: string): string {
-  if (!iso) return 'Never';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? 'Unknown' : d.toLocaleDateString();
+function CompactSelect({ label, value, onChange, ariaLabel, className = '', children }: CompactSelectProps) {
+  return (
+    <label className={`flex flex-col gap-1 min-w-0 ${className}`}>
+      {label && <span className="text-[11px] font-medium text-[#78756E] truncate">{label}</span>}
+      <div className="relative min-w-0">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label={ariaLabel || label}
+          className="w-full appearance-none pl-3 pr-8 py-1.5 rounded-[10px] border border-[#E5DFD5] bg-white hover:border-[#CBC2B3] focus:outline-none focus:border-[#113C36] text-[12px] font-medium text-[#113C36] truncate cursor-pointer transition-colors"
+        >
+          {children}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-[#78756E] pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+      </div>
+    </label>
+  );
 }
 
 function getPoolBadgeClasses(status: BankPoolStatus): string {
@@ -101,6 +103,17 @@ export function QuestionBankStudio({
   onError,
   onDataMutated,
 }: QuestionBankStudioProps) {
+  const {
+    t,
+    isZh,
+    sectionLabel,
+    sectionShortLabel,
+    formatLabel,
+    poolStatusLabel,
+    completionStatusLabel,
+    skillName,
+    formatDate,
+  } = useI18n();
   // Primary filters (low-friction, single row)
   const [search, setSearch] = useState('');
   const [section, setSection] = useState<'' | SectionCode>('');
@@ -198,7 +211,7 @@ export function QuestionBankStudio({
           : res.questions[0].questionId;
       });
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Unable to load the Question Bank.');
+      onError(err instanceof Error ? err.message : isZh ? '无法加载题库。' : 'Unable to load the Question Bank.');
     } finally {
       setLoading(false);
     }
@@ -329,7 +342,11 @@ export function QuestionBankStudio({
     );
     try {
       await api.updateQuestionStatus(qid, nextQcStatus);
-      onNotice(`Set ${qid} to ${getPoolStatusLabel(nextStatus)}.`);
+      onNotice(
+        isZh
+          ? `已将 ${qid} 状态设为“${poolStatusLabel(nextStatus)}”。`
+          : `Set ${qid} to ${poolStatusLabel(nextStatus)}.`
+      );
       await loadQuestions();
       onDataMutated?.();
     } catch (err) {
@@ -337,7 +354,7 @@ export function QuestionBankStudio({
       setQuestions((prev) =>
         prev.map((q) => (q.questionId === qid ? { ...q, qcStatus: current.qcStatus } : q))
       );
-      onError(err instanceof Error ? err.message : 'Unable to update question status.');
+      onError(err instanceof Error ? err.message : isZh ? '无法更新题目状态。' : 'Unable to update question status.');
     } finally {
       setUpdatingStatusQid(null);
     }
@@ -352,12 +369,14 @@ export function QuestionBankStudio({
       setConfirmBulkDelete(false);
       onNotice(
         label ||
-          `Updated ${res.updatedCount} question${res.updatedCount === 1 ? '' : 's'} to ${getPoolStatusLabel(nextStatus)}.`
+          (isZh
+            ? `已将 ${res.updatedCount} 道题目设为“${poolStatusLabel(nextStatus)}”。`
+            : `Updated ${res.updatedCount} question${res.updatedCount === 1 ? '' : 's'} to ${poolStatusLabel(nextStatus)}.`)
       );
       await loadQuestions();
       onDataMutated?.();
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Bulk status update failed.');
+      onError(err instanceof Error ? err.message : isZh ? '批量更新状态失败。' : 'Bulk status update failed.');
     } finally {
       setBulkBusy(false);
     }
@@ -373,12 +392,14 @@ export function QuestionBankStudio({
       setConfirmDeleteQid(null);
       setConfirmBulkDelete(false);
       onNotice(
-        `Permanently deleted ${res.deletedCount} question${res.deletedCount === 1 ? '' : 's'} from the Question Bank.`
+        isZh
+          ? `已从题库永久删除 ${res.deletedCount} 道题目。`
+          : `Permanently deleted ${res.deletedCount} question${res.deletedCount === 1 ? '' : 's'} from the Question Bank.`
       );
       await loadQuestions();
       onDataMutated?.();
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to delete question(s).');
+      onError(err instanceof Error ? err.message : isZh ? '删除题目失败。' : 'Failed to delete question(s).');
     } finally {
       setDeletingBusy(false);
     }
@@ -414,7 +435,7 @@ export function QuestionBankStudio({
         if (useDirectIds) {
           const idPool = questions.slice(0, limitNum).map((q) => q.questionId);
           if (idPool.length === 0) {
-            onError('No questions match your current filters.');
+            onError(isZh ? '没有符合当前筛选条件的题目。' : 'No questions match your current filters.');
             return;
           }
           res = await api.createCalibrationSession({
@@ -440,7 +461,7 @@ export function QuestionBankStudio({
       }
       onOpenSession(res.sessionId);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Could not launch practice session.');
+      onError(err instanceof Error ? err.message : isZh ? '无法启动练习。' : 'Could not launch practice session.');
     } finally {
       setLaunchingSim(false);
     }
@@ -462,10 +483,10 @@ export function QuestionBankStudio({
         imageBase64: dataUrl,
         filename: file.name,
       });
-      onNotice(`Uploaded visual asset for ${qid}.`);
+      onNotice(isZh ? `已上传 ${qid} 的配图资源。` : `Uploaded visual asset for ${qid}.`);
       await loadQuestions();
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to attach visual.');
+      onError(err instanceof Error ? err.message : isZh ? '上传配图失败。' : 'Failed to attach visual.');
     } finally {
       setUploadingQid(null);
       e.target.value = '';
@@ -501,13 +522,13 @@ export function QuestionBankStudio({
     <div className="space-y-5">
       {/* Pool Health & Freshness Strip */}
       {poolHealth && (
-        <section className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-5 space-y-4">
+        <section className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-5 space-y-4 overflow-hidden">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0 flex-1">
               <h2 className="font-sans-display font-semibold text-[16px] text-[#113C36]">
-                Question Bank pool health
+                {t('bank.poolHealthTitle')}
               </h2>
-              <p className="text-xs text-[#4A5955] max-w-2xl leading-relaxed">
+              <p className="text-xs text-[#4A5955] max-w-2xl leading-relaxed break-words">
                 {poolHealth.refreshAdvice}
               </p>
             </div>
@@ -516,13 +537,16 @@ export function QuestionBankStudio({
                 type="button"
                 aria-expanded={showGlossary}
                 onClick={() => setShowGlossary((v) => !v)}
-                className="px-3 py-1 rounded-full border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-medium text-[#4A5955] inline-flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1 rounded-full border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-medium text-[#4A5955] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               >
-                <HelpCircle className="w-3.5 h-3.5 text-[#113C36]" />
-                <span>What are Holdout &amp; Needs repair?</span>
+                <HelpCircle className="w-3.5 h-3.5 text-[#113C36] shrink-0" />
+                <span>{t('bank.glossaryBtn')}</span>
               </button>
-              <span className={`px-3 py-1 rounded-full border text-xs font-medium tabular-nums ${urgencyStyles}`}>
-                {poolHealth.unseenLivePercent}% unseen ({poolHealth.estimatedRunwayDays}d runway)
+              <span className={`px-3 py-1 rounded-full border text-xs font-medium tabular-nums whitespace-nowrap ${urgencyStyles}`}>
+                {t('bank.unseenRunwayBadge', {
+                  pct: poolHealth.unseenLivePercent,
+                  days: poolHealth.estimatedRunwayDays,
+                })}
               </span>
               {masteredLiveIds.length > 0 && (
                 <button
@@ -532,13 +556,15 @@ export function QuestionBankStudio({
                     handleBulkStatus(
                       masteredLiveIds,
                       'archived',
-                      `Archived ${masteredLiveIds.length} mastered question${masteredLiveIds.length === 1 ? '' : 's'} out of the active pool.`
+                      isZh
+                        ? `已将 ${masteredLiveIds.length} 道已掌握题目移至“已归档”。`
+                        : `Archived ${masteredLiveIds.length} mastered question${masteredLiveIds.length === 1 ? '' : 's'} out of the active pool.`
                     )
                   }
-                  className="px-3.5 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  className="px-3.5 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
                 >
-                  <Archive className="w-3.5 h-3.5" />
-                  <span>Archive mastered ({masteredLiveIds.length})</span>
+                  <Archive className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('bank.archiveMasteredBtn', { count: masteredLiveIds.length })}</span>
                 </button>
               )}
             </div>
@@ -546,492 +572,512 @@ export function QuestionBankStudio({
 
           {showGlossary && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-[12px] bg-white border border-[#E5DFD5] p-4 text-xs text-[#4A5955] leading-relaxed">
-              <div className="space-y-1">
+              <div className="space-y-1 min-w-0">
                 <div className="font-sans-display font-semibold text-[#113C36]">
-                  Holdout (Benchmark holdout)
+                  {t('bank.holdoutGlossaryTitle')}
                 </div>
-                <p>
-                  Official benchmark questions (like Practice Test 3) kept isolated from Daily Practice so you never spoil them ahead of time. Leave them untouched until you want an honest, unseen mock exam score — you only need to Pause or Delete one if the question itself has a typo or broken diagram.
-                </p>
+                <p className="break-words">{t('bank.holdoutGlossaryBody')}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1 min-w-0">
                 <div className="font-sans-display font-semibold text-[#113C36]">
-                  Needs repair (student progress status)
+                  {t('bank.repairGlossaryTitle')}
                 </div>
-                <p>
-                  This does <strong>not</strong> mean the question is broken — it means you previously got it wrong (or lapsed on a review). Spaced repetition automatically brings &ldquo;Needs repair&rdquo; questions back sooner until you answer them cleanly. You can also filter by &ldquo;Needs repair&rdquo; and click <strong>Practice filtered</strong> for a targeted mistake drill.
-                </p>
+                <p className="break-words">{t('bank.repairGlossaryBody')}</p>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <div className="rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E]">In pool</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="min-w-0 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
+              <div className="text-xs text-[#78756E] truncate">{t('bank.cardInPool')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#113C36] tabular-nums">
                 {poolHealth.liveCount}
               </div>
-              <div className="text-[11px] text-[#78756E] tabular-nums">
-                +{poolHealth.holdoutCount} benchmark holdout
+              <div className="text-[11px] text-[#78756E] tabular-nums break-words leading-snug">
+                {t('bank.cardHoldoutSub', { count: poolHealth.holdoutCount })}
               </div>
             </div>
-            <div className="rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E]">Unseen</div>
+            <div className="min-w-0 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
+              <div className="text-xs text-[#78756E] truncate">{t('bank.cardUnseen')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#113C36] tabular-nums">
                 {poolHealth.unseenLiveCount}
               </div>
-              <div className="text-[11px] text-[#78756E] tabular-nums">
-                R {poolHealth.bySectionLive.READ.unseen} / M {poolHealth.bySectionLive.MATH.unseen} / T {poolHealth.bySectionLive.THINK.unseen}
+              <div className="text-[11px] text-[#78756E] tabular-nums break-words leading-snug">
+                R {poolHealth.bySectionLive.READ.unseen} · M {poolHealth.bySectionLive.MATH.unseen} · T {poolHealth.bySectionLive.THINK.unseen}
               </div>
             </div>
-            <div className="rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E]">Done (mastered)</div>
+            <div className="min-w-0 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
+              <div className="text-xs text-[#78756E] truncate">{t('bank.cardDone')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#1F7A4C] tabular-nums">
                 {poolHealth.doneLiveCount}
               </div>
-              <div className="text-[11px] text-[#78756E] tabular-nums">
-                {poolHealth.inReviewLiveCount} in review, {poolHealth.needsRepairLiveCount} repair
+              <div className="text-[11px] text-[#78756E] tabular-nums break-words leading-snug">
+                {t('bank.cardReviewRepairSub', {
+                  review: poolHealth.inReviewLiveCount,
+                  repair: poolHealth.needsRepairLiveCount,
+                })}
               </div>
             </div>
-            <div className="rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E]">Paused</div>
+            <div className="min-w-0 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
+              <div className="text-xs text-[#78756E] truncate">{t('bank.cardPaused')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#A35116] tabular-nums">
                 {poolHealth.pausedCount}
               </div>
-              <div className="text-[11px] text-[#78756E]">Held out for QA</div>
+              <div className="text-[11px] text-[#78756E] break-words leading-snug">{t('bank.cardPausedSub')}</div>
             </div>
-            <div className="rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E]">Archived</div>
+            <div className="min-w-0 col-span-2 sm:col-span-1 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
+              <div className="text-xs text-[#78756E] truncate">{t('bank.cardArchived')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#78756E] tabular-nums">
                 {poolHealth.archivedCount}
               </div>
-              <div className="text-[11px] text-[#78756E]">Retired from rotation</div>
+              <div className="text-[11px] text-[#78756E] break-words leading-snug">{t('bank.cardArchivedSub')}</div>
             </div>
           </div>
         </section>
       )}
 
-      {/* Streamlined Primary Filter Bar + Inline Quick Practice Strip */}
-      <section className="rounded-[16px] bg-white border border-[#E5DFD5] p-4 space-y-3.5">
-        {/* Row 1: Search + Primary Pills + More Filters Toggle */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search className="w-4 h-4 text-[#78756E] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="search"
-              aria-label="Search Question Bank"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Search question ID, prompt text, or passage..."
-              className="w-full pl-9 pr-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] focus:bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
-            />
+      {/* Clean Two-Zone Filter & Quick Practice Card */}
+      <section className="rounded-[16px] bg-white border border-[#E5DFD5] overflow-hidden">
+        <div className="p-4 space-y-3">
+          {/* Row 1: Search + Filters toggle + Clear + Refresh */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="w-4 h-4 text-[#78756E] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="search"
+                aria-label={t('bank.searchPlaceholder')}
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                placeholder={t('bank.searchPlaceholder')}
+                className="w-full pl-9 pr-8 py-2 rounded-[10px] border border-[#E5DFD5] bg-[#FAF8F5] focus:bg-white text-sm text-[#113C36] placeholder:text-[#78756E] focus:outline-none focus:border-[#113C36] transition-colors"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setPage(1);
+                  }}
+                  aria-label={t('bank.clearFilters')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-[#78756E] hover:text-[#113C36] cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowMoreFilters((v) => !v)}
+                aria-expanded={showMoreFilters}
+                className={`px-3 py-2 rounded-[10px] border text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap ${
+                  showMoreFilters || activeAdvancedFilterCount > 0
+                    ? 'bg-[#E5F0EA] border-[#C5DDD1] text-[#113C36]'
+                    : 'bg-white border-[#E5DFD5] text-[#4A5955] hover:bg-[#FAF8F5]'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {t('bank.filtersBtn')}
+                  {activeAdvancedFilterCount > 0 ? ` (${activeAdvancedFilterCount})` : ''}
+                </span>
+                {showMoreFilters ? (
+                  <ChevronUp className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                )}
+              </button>
+
+              {(search || section || poolStatus || completionStatus || activeAdvancedFilterCount > 0) && (
+                <button
+                  type="button"
+                  onClick={resetAllFilters}
+                  className="px-2.5 py-2 rounded-[10px] border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#ECE8E1] text-xs font-sans-display font-semibold text-[#4A5955] hover:text-[#113C36] inline-flex items-center gap-1 cursor-pointer whitespace-nowrap transition-colors"
+                >
+                  <X className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('bank.clearFilters')}</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void loadQuestions()}
+                className="px-3 py-2 rounded-[10px] border border-[#E5DFD5] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${loading ? 'animate-spin' : ''}`} />
+                <span>{t('bank.refresh')}</span>
+              </button>
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowMoreFilters((v) => !v)}
-            aria-expanded={showMoreFilters}
-            className={`px-3.5 py-2 rounded-[10px] border text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
-              showMoreFilters || activeAdvancedFilterCount > 0
-                ? 'bg-[#E5F0EA] border-[#113C36]/30 text-[#113C36]'
-                : 'bg-white border-[#CFC6B9] text-[#4A5955] hover:bg-[#FAF8F5]'
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>
-              More filters{activeAdvancedFilterCount > 0 ? ` (${activeAdvancedFilterCount})` : ''}
-            </span>
-            {showMoreFilters ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void loadQuestions()}
-            className="px-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-
-          {(search || section || poolStatus || completionStatus || activeAdvancedFilterCount > 0) && (
-            <button
-              type="button"
-              onClick={resetAllFilters}
-              className="px-2.5 py-2 rounded-[10px] text-xs font-sans-display font-semibold text-[#78756E] hover:text-[#113C36] inline-flex items-center gap-1 cursor-pointer"
+          {/* Row 2: 5-tab Section Segmented Bar + Pool & Progress Compact Selects */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div
+              role="group"
+              aria-label={t('bank.allSections')}
+              className="inline-flex flex-wrap items-center p-1 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] gap-0.5 max-w-full"
             >
-              <X className="w-3.5 h-3.5" />
-              <span>Clear</span>
-            </button>
+              {SECTION_VALUES.map((secVal) => {
+                const active = section === secVal;
+                const label = secVal ? sectionShortLabel(secVal) : t('bank.allSections');
+                return (
+                  <button
+                    key={secVal || 'all-sec'}
+                    type="button"
+                    onClick={() => {
+                      setSection(secVal);
+                      setSkillId('');
+                      setPage(1);
+                    }}
+                    className={`px-3 py-1 rounded-[9px] text-[12px] font-medium whitespace-nowrap cursor-pointer transition-colors ${
+                      active
+                        ? 'bg-[#113C36] text-white shadow-xs'
+                        : 'text-[#4A5955] hover:text-[#113C36] hover:bg-white/80'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <CompactSelect
+                value={poolStatus}
+                onChange={(v) => {
+                  setPoolStatus(v as '' | BankPoolStatus);
+                  setPage(1);
+                }}
+                ariaLabel={t('bank.poolLabel')}
+                className="min-w-[144px]"
+              >
+                {POOL_STATUS_VALUES.map((val) => (
+                  <option key={val || 'all-pool'} value={val}>
+                    {val ? poolStatusLabel(val) : t('bank.allStatuses')}
+                  </option>
+                ))}
+              </CompactSelect>
+
+              <CompactSelect
+                value={completionStatus}
+                onChange={(v) => {
+                  setCompletionStatus(v as '' | QuestionCompletionStatus);
+                  setPage(1);
+                }}
+                ariaLabel={t('bank.progressLabel')}
+                className="min-w-[152px]"
+              >
+                {COMPLETION_VALUES.map((val) => (
+                  <option key={val || 'all-comp'} value={val}>
+                    {val ? completionStatusLabel(val) : t('bank.allProgress')}
+                  </option>
+                ))}
+              </CompactSelect>
+            </div>
+          </div>
+
+          {/* Expandable Secondary Filters Drawer (1 field per grid track) */}
+          {showMoreFilters && (
+            <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] p-3.5 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                <div className="min-w-0 space-y-1">
+                  <span className="block text-[11px] font-medium text-[#78756E] truncate">
+                    {t('bank.batchLabel', { count: batchSummaries.length })}
+                  </span>
+                  {batchSummaries.length > 12 && (
+                    <input
+                      type="text"
+                      value={batchSearch}
+                      onChange={(e) => setBatchSearch(e.target.value)}
+                      placeholder={t('batch.searchPlaceholder')}
+                      className="w-full px-2.5 py-1 rounded-[8px] border border-[#E5DFD5] bg-white text-[12px] text-[#113C36] focus:outline-none focus:border-[#113C36]"
+                    />
+                  )}
+                  <CompactSelect
+                    value={batchId}
+                    onChange={(v) => {
+                      setBatchId(v);
+                      setPage(1);
+                    }}
+                    ariaLabel={t('bank.batchLabel', { count: batchSummaries.length })}
+                  >
+                    <option value="">{t('bank.allBatches')}</option>
+                    {filteredBatchOptions.map((b) => (
+                      <option key={b.batchId} value={b.batchId}>
+                        {t('bank.batchOption', {
+                          label: b.batchLabel,
+                          unseen: b.unseen,
+                          total: b.total,
+                        })}
+                      </option>
+                    ))}
+                  </CompactSelect>
+                </div>
+
+                <CompactSelect
+                  label={t('bank.skillLabel')}
+                  value={skillId}
+                  onChange={(v) => {
+                    setSkillId(v);
+                    setPage(1);
+                  }}
+                >
+                  <option value="">{t('bank.allSkills')}</option>
+                  {filteredSkills.map((s) => (
+                    <option key={s.skillId} value={s.skillId}>
+                      {skillName(s.skillId)}
+                    </option>
+                  ))}
+                </CompactSelect>
+
+                <CompactSelect
+                  label={t('bank.formatLabel')}
+                  value={formatType}
+                  onChange={(v) => {
+                    setFormatType(v);
+                    setPage(1);
+                  }}
+                >
+                  <option value="">{t('bank.allFormats')}</option>
+                  {Object.keys(FORMAT_LABELS).map((k) => (
+                    <option key={k} value={k}>
+                      {formatLabel(k)}
+                    </option>
+                  ))}
+                </CompactSelect>
+
+                <CompactSelect
+                  label={t('bank.isolationLabel')}
+                  value={poolType}
+                  onChange={(v) => {
+                    setPoolType(v);
+                    setPage(1);
+                  }}
+                >
+                  <option value="">{t('bank.allPools')}</option>
+                  <option value="practice">{t('bank.practicePool')}</option>
+                  <option value="benchmark_holdout">{t('bank.holdoutPool')}</option>
+                </CompactSelect>
+
+                <CompactSelect
+                  label={t('bank.sortLabel')}
+                  value={sort}
+                  onChange={(v) => setSort(v as typeof sort)}
+                >
+                  <option value="id_asc">{t('bank.sortIdAsc')}</option>
+                  <option value="updated_desc">{t('bank.sortUpdatedDesc')}</option>
+                  <option value="version_desc">{t('bank.sortVersionDesc')}</option>
+                </CompactSelect>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#4A5955] pt-0.5">
+                <label className="inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={flaggedOnly}
+                    onChange={(e) => {
+                      setFlaggedOnly(e.target.checked);
+                      setPage(1);
+                    }}
+                    className="accent-[#113C36]"
+                  />
+                  <span>{t('bank.flaggedOnly')}</span>
+                </label>
+                <label className="inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={missingVisual}
+                    onChange={(e) => {
+                      setMissingVisual(e.target.checked);
+                      setPage(1);
+                    }}
+                    className="accent-[#113C36]"
+                  />
+                  <span>{t('bank.missingVisual')}</span>
+                </label>
+                <label className="inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={missingExplanation}
+                    onChange={(e) => {
+                      setMissingExplanation(e.target.checked);
+                      setPage(1);
+                    }}
+                    className="accent-[#113C36]"
+                  />
+                  <span>{t('bank.missingExplanation')}</span>
+                </label>
+                <label className="inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={includeHistorical}
+                    onChange={(e) => {
+                      setIncludeHistorical(e.target.checked);
+                      setPage(1);
+                    }}
+                    className="accent-[#113C36]"
+                  />
+                  <span>{t('bank.includeHistorical')}</span>
+                </label>
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Row 2: Section, 3-State Pool Status, and Completion pills */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by section">
-            {SECTION_PILLS.map((pill) => (
-              <button
-                key={pill.label}
-                type="button"
-                onClick={() => {
-                  setSection(pill.value);
-                  setSkillId('');
-                  setPage(1);
-                }}
-                className={`px-2.5 py-1 rounded-full font-medium cursor-pointer transition-colors ${
-                  section === pill.value
-                    ? 'bg-[#113C36] text-white'
-                    : 'bg-[#F3EFE8] text-[#4A5955] hover:bg-[#E8E2D7]'
-                }`}
+        {/* Dedicated Footer Strip: Quick Practice OR Selection Bulk Bar (never collide) */}
+        {checkedQids.length === 0 ? (
+          <div className="px-4 py-3 bg-[#FAF8F5] border-t border-[#E5DFD5] flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2.5 text-xs min-w-0">
+              <span className="inline-flex items-center gap-1.5 font-sans-display font-semibold text-[#113C36] whitespace-nowrap">
+                <Sparkles className="w-3.5 h-3.5 text-[#113C36] shrink-0" />
+                <span>{t('bank.quickPractice')}</span>
+              </span>
+
+              <CompactSelect
+                value={simLimit}
+                onChange={setSimLimit}
+                ariaLabel={t('bank.quickPractice')}
+                className="min-w-[126px]"
               >
-                {pill.label}
-              </button>
-            ))}
-          </div>
+                <option value="5">{t('home.nQuestions', { count: 5 })}</option>
+                <option value="10">{t('home.nQuestions', { count: 10 })}</option>
+                <option value="15">{t('home.nQuestions', { count: 15 })}</option>
+                <option value="25">{t('home.nQuestions', { count: 25 })}</option>
+                <option value="ALL">{t('bank.allMatching')}</option>
+              </CompactSelect>
 
-          <div className="h-4 w-px bg-[#E5DFD5] hidden sm:block" aria-hidden="true" />
-
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by pool status">
-            {POOL_STATUS_PILLS.map((pill) => (
-              <button
-                key={pill.label}
-                type="button"
-                onClick={() => {
-                  setPoolStatus(pill.value);
-                  setPage(1);
-                }}
-                className={`px-2.5 py-1 rounded-full font-medium cursor-pointer transition-colors ${
-                  poolStatus === pill.value
-                    ? 'bg-[#113C36] text-white'
-                    : 'bg-[#F3EFE8] text-[#4A5955] hover:bg-[#E8E2D7]'
-                }`}
+              <CompactSelect
+                value={simTimerMin}
+                onChange={setSimTimerMin}
+                ariaLabel={t('home.timerSetting')}
+                className="min-w-[112px]"
               >
-                {pill.label}
-              </button>
-            ))}
-          </div>
+                <option value="0">{t('bank.untimed')}</option>
+                <option value="10">{t('home.minShort', { min: 10 })}</option>
+                <option value="20">{t('home.minShort', { min: 20 })}</option>
+                <option value="40">{t('home.minShort', { min: 40 })}</option>
+              </CompactSelect>
 
-          <div className="h-4 w-px bg-[#E5DFD5] hidden sm:block" aria-hidden="true" />
-
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by student progress">
-            {COMPLETION_PILLS.map((pill) => (
-              <button
-                key={pill.label}
-                type="button"
-                onClick={() => {
-                  setCompletionStatus(pill.value);
-                  setPage(1);
-                }}
-                className={`px-2.5 py-1 rounded-full font-medium cursor-pointer transition-colors ${
-                  completionStatus === pill.value
-                    ? 'bg-[#113C36] text-white'
-                    : 'bg-[#F3EFE8] text-[#4A5955] hover:bg-[#E8E2D7]'
-                }`}
-              >
-                {pill.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Collapsible More Filters Drawer */}
-        {showMoreFilters && (
-          <div className="pt-3 border-t border-[#E5DFD5] space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <label htmlFor="bank-batch-filter" className="block text-xs font-medium text-[#4A5955] mb-1">
-                  Batch ({batchSummaries.length} available)
-                </label>
-                {batchSummaries.length > 12 && (
-                  <input
-                    type="text"
-                    value={batchSearch}
-                    onChange={(e) => setBatchSearch(e.target.value)}
-                    placeholder="Type to narrow batches..."
-                    className="w-full mb-1.5 px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-[#FAF8F5] text-xs text-[#113C36]"
-                  />
-                )}
-                <select
-                  id="bank-batch-filter"
-                  value={batchId}
-                  onChange={(e) => {
-                    setBatchId(e.target.value);
-                    setPage(1);
-                  }}
-                  className="w-full px-2.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
-                >
-                  <option value="">All batches</option>
-                  {filteredBatchOptions.map((b) => (
-                    <option key={b.batchId} value={b.batchId}>
-                      {b.batchLabel} ({b.unseen} unseen / {b.total})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="bank-skill-filter" className="block text-xs font-medium text-[#4A5955] mb-1">
-                  Skill
-                </label>
-                <select
-                  id="bank-skill-filter"
-                  value={skillId}
-                  onChange={(e) => {
-                    setSkillId(e.target.value);
-                    setPage(1);
-                  }}
-                  className="w-full px-2.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
-                >
-                  <option value="">All skills</option>
-                  {filteredSkills.map((s) => (
-                    <option key={s.skillId} value={s.skillId}>
-                      {s.displayName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="bank-format-filter" className="block text-xs font-medium text-[#4A5955] mb-1">
-                  Question format
-                </label>
-                <select
-                  id="bank-format-filter"
-                  value={formatType}
-                  onChange={(e) => {
-                    setFormatType(e.target.value);
-                    setPage(1);
-                  }}
-                  className="w-full px-2.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
-                >
-                  <option value="">All formats</option>
-                  {Object.entries(FORMAT_LABELS).map(([k, label]) => (
-                    <option key={k} value={k}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="bank-pooltype-filter" className="block text-xs font-medium text-[#4A5955] mb-1">
-                  Exam isolation & sort
-                </label>
-                <div className="flex gap-2">
-                  <select
-                    id="bank-pooltype-filter"
-                    value={poolType}
-                    onChange={(e) => {
-                      setPoolType(e.target.value);
-                      setPage(1);
-                    }}
-                    className="flex-1 px-2.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
-                  >
-                    <option value="">Practice + holdout</option>
-                    <option value="practice">Practice pool</option>
-                    <option value="benchmark_holdout">Benchmark holdout</option>
-                  </select>
-                  <select
-                    aria-label="Sort order"
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value as typeof sort)}
-                    className="px-2.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
-                  >
-                    <option value="id_asc">ID</option>
-                    <option value="updated_desc">Newest</option>
-                    <option value="version_desc">Version</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-4 text-xs text-[#4A5955]">
-              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+              <label className="inline-flex items-center gap-1.5 text-[#4A5955] cursor-pointer whitespace-nowrap">
                 <input
                   type="checkbox"
-                  checked={flaggedOnly}
-                  onChange={(e) => {
-                    setFlaggedOnly(e.target.checked);
-                    setPage(1);
-                  }}
+                  checked={simSandbox}
+                  onChange={(e) => setSimSandbox(e.target.checked)}
                   className="accent-[#113C36]"
                 />
-                <span>Flagged only</span>
-              </label>
-              <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={missingVisual}
-                  onChange={(e) => {
-                    setMissingVisual(e.target.checked);
-                    setPage(1);
-                  }}
-                  className="accent-[#113C36]"
-                />
-                <span>Missing visual</span>
-              </label>
-              <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={missingExplanation}
-                  onChange={(e) => {
-                    setMissingExplanation(e.target.checked);
-                    setPage(1);
-                  }}
-                  className="accent-[#113C36]"
-                />
-                <span>Missing explanation</span>
-              </label>
-              <label className="inline-flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={includeHistorical}
-                  onChange={(e) => {
-                    setIncludeHistorical(e.target.checked);
-                    setPage(1);
-                  }}
-                  className="accent-[#113C36]"
-                />
-                <span>Include older versions</span>
+                <span>{t('bank.sandboxClean')}</span>
               </label>
             </div>
-          </div>
-        )}
-
-        {/* Inline Quick Practice & Bulk Actions Bar (replaces the old Calibration Simulator tab) */}
-        <div className="pt-3 border-t border-[#E5DFD5] flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2.5 text-xs">
-            <span className="inline-flex items-center gap-1.5 font-sans-display font-semibold text-[#113C36]">
-              <Sparkles className="w-3.5 h-3.5 text-[#113C36]" />
-              <span>Quick practice</span>
-            </span>
-
-            <select
-              aria-label="Practice question count"
-              value={simLimit}
-              onChange={(e) => setSimLimit(e.target.value)}
-              className="px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-[#FAF8F5] text-xs text-[#113C36]"
-            >
-              <option value="5">5 questions</option>
-              <option value="10">10 questions</option>
-              <option value="15">15 questions</option>
-              <option value="25">25 questions</option>
-              <option value="ALL">All matching</option>
-            </select>
-
-            <select
-              aria-label="Practice timer"
-              value={simTimerMin}
-              onChange={(e) => setSimTimerMin(e.target.value)}
-              className="px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-[#FAF8F5] text-xs text-[#113C36]"
-            >
-              <option value="0">Untimed</option>
-              <option value="10">10 min</option>
-              <option value="20">20 min</option>
-              <option value="40">40 min</option>
-            </select>
-
-            <label className="inline-flex items-center gap-1.5 text-[#4A5955] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={simSandbox}
-                onChange={(e) => setSimSandbox(e.target.checked)}
-                className="accent-[#113C36]"
-              />
-              <span>Sandbox (keep stats clean)</span>
-            </label>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {checkedQids.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  disabled={bulkBusy}
-                  onClick={() => handleBulkStatus(checkedQids, 'live')}
-                  className="px-2.5 py-1.5 rounded-[8px] border border-[#C5DDD1] bg-[#E5F0EA] text-[#113C36] text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50"
-                >
-                  Move to pool ({checkedQids.length})
-                </button>
-                <button
-                  type="button"
-                  disabled={bulkBusy}
-                  onClick={() => handleBulkStatus(checkedQids, 'paused')}
-                  className="px-2.5 py-1.5 rounded-[8px] border border-[#EED3B6] bg-[#FDF0E2] text-[#A35116] text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50"
-                >
-                  Pause
-                </button>
-                <button
-                  type="button"
-                  disabled={bulkBusy || deletingBusy}
-                  onClick={() => handleBulkStatus(checkedQids, 'archived')}
-                  className="px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-[#F3EFE8] text-[#4A5955] text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50"
-                >
-                  Archive
-                </button>
-                {confirmBulkDelete ? (
-                  <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] bg-[#FDECEB] border border-[#B83A28]/30">
-                    <button
-                      type="button"
-                      disabled={deletingBusy}
-                      onClick={() => void handleDeleteQuestions(checkedQids)}
-                      className="px-2 py-0.5 rounded-[6px] bg-[#B83A28] hover:bg-[#992D1E] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50"
-                    >
-                      {deletingBusy ? 'Deleting...' : `Confirm delete (${checkedQids.length})`}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={deletingBusy}
-                      onClick={() => setConfirmBulkDelete(false)}
-                      className="px-2 py-0.5 text-xs font-medium text-[#4A5955] hover:text-[#113C36] cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={bulkBusy || deletingBusy}
-                    onClick={() => setConfirmBulkDelete(true)}
-                    className="px-2.5 py-1.5 rounded-[8px] border border-[#B83A28]/30 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete ({checkedQids.length})</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  disabled={launchingSim}
-                  onClick={() => handleLaunchQuickPractice(true)}
-                  className="px-3.5 py-1.5 rounded-[10px] bg-[#F29A63] hover:bg-[#E6874C] text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <Play className="w-3 h-3 fill-current" />
-                  <span>Practice selected ({checkedQids.length})</span>
-                </button>
-              </>
-            )}
 
             <button
               type="button"
               disabled={launchingSim || totalMatching === 0}
               onClick={() => handleLaunchQuickPractice(false)}
-              className="px-3.5 py-1.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 transition-colors"
             >
-              <Play className="w-3 h-3 fill-current" />
-              <span>{launchingSim ? 'Launching...' : 'Practice filtered'}</span>
+              <Play className="w-3 h-3 fill-current shrink-0" />
+              <span>{launchingSim ? t('bank.launching') : t('bank.practiceFiltered')}</span>
             </button>
           </div>
-        </div>
+        ) : (
+          <div className="px-4 py-3 bg-[#E5F0EA]/65 border-t border-[#C5DDD1] flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2.5 text-xs">
+              <span className="font-sans-display font-semibold text-[#113C36] tabular-nums whitespace-nowrap">
+                {t('bank.selectedCount', { count: checkedQids.length })}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setCheckedQids([]);
+                  setConfirmBulkDelete(false);
+                }}
+                className="text-xs font-medium text-[#4A5955] hover:text-[#113C36] underline underline-offset-4 cursor-pointer whitespace-nowrap"
+              >
+                {t('bank.clearSelection')}
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => handleBulkStatus(checkedQids, 'live')}
+                className="px-2.5 py-1.5 rounded-[8px] border border-[#C5DDD1] bg-white hover:bg-[#E5F0EA] text-[#113C36] text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                {t('bank.moveToPool')}
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => handleBulkStatus(checkedQids, 'paused')}
+                className="px-2.5 py-1.5 rounded-[8px] border border-[#EED3B6] bg-[#FDF0E2] text-[#A35116] text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                {t('bank.pause')}
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy || deletingBusy}
+                onClick={() => handleBulkStatus(checkedQids, 'archived')}
+                className="px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white text-[#4A5955] text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                {t('bank.archive')}
+              </button>
+              {confirmBulkDelete ? (
+                <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] bg-[#FDECEB] border border-[#B83A28]/30 whitespace-nowrap">
+                  <button
+                    type="button"
+                    disabled={deletingBusy}
+                    onClick={() => void handleDeleteQuestions(checkedQids)}
+                    className="px-2 py-0.5 rounded-[6px] bg-[#B83A28] hover:bg-[#992D1E] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-50"
+                  >
+                    {deletingBusy
+                      ? t('bank.deleting')
+                      : t('bank.confirmDelete', { count: checkedQids.length })}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deletingBusy}
+                    onClick={() => setConfirmBulkDelete(false)}
+                    className="px-2 py-0.5 text-xs font-medium text-[#4A5955] hover:text-[#113C36] cursor-pointer"
+                  >
+                    {t('home.modalCancel')}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={bulkBusy || deletingBusy}
+                  onClick={() => setConfirmBulkDelete(true)}
+                  className="px-2.5 py-1.5 rounded-[8px] border border-[#B83A28]/30 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                >
+                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('bank.delete')}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={launchingSim}
+                onClick={() => handleLaunchQuickPractice(true)}
+                className="px-3.5 py-1.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                <Play className="w-3 h-3 fill-current shrink-0" />
+                <span>{t('bank.practiceSelected', { count: checkedQids.length })}</span>
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Master-Detail Question Bank Split */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Left List */}
-        <section className="lg:col-span-5 rounded-[16px] bg-white border border-[#E5DFD5] overflow-hidden">
-          <div className="px-4 py-3 bg-[#FAF8F5] border-b border-[#E5DFD5] flex items-center justify-between gap-2 text-xs">
-            <label className="inline-flex items-center gap-2 font-medium text-[#4A5955] cursor-pointer">
+        <section className="lg:col-span-5 min-w-0 rounded-[16px] bg-white border border-[#E5DFD5] overflow-hidden">
+          <div className="px-4 py-3 bg-[#FAF8F5] border-b border-[#E5DFD5] flex flex-wrap items-center justify-between gap-2 text-xs">
+            <label className="inline-flex items-center gap-2 font-medium text-[#4A5955] cursor-pointer whitespace-nowrap">
               <input
                 type="checkbox"
                 checked={allOnPageChecked}
@@ -1039,11 +1085,13 @@ export function QuestionBankStudio({
                 className="accent-[#113C36]"
               />
               <span className="tabular-nums">
-                {totalMatching} question{totalMatching === 1 ? '' : 's'}
+                {totalMatching === 1
+                  ? t('bank.questionOne')
+                  : t('bank.questionMany', { count: totalMatching })}
               </span>
             </label>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 shrink-0">
               <select
                 aria-label="Items per page"
                 value={pageSize}
@@ -1053,13 +1101,13 @@ export function QuestionBankStudio({
                 }}
                 className="px-2 py-1 rounded-[8px] border border-[#CFC6B9] bg-white text-xs text-[#4A5955]"
               >
-                <option value={25}>25 / page</option>
-                <option value={50}>50 / page</option>
-                <option value={100}>100 / page</option>
+                <option value={25}>{t('bank.perPage', { count: 25 })}</option>
+                <option value={50}>{t('bank.perPage', { count: 50 })}</option>
+                <option value={100}>{t('bank.perPage', { count: 100 })}</option>
               </select>
               <button
                 type="button"
-                aria-label="Previous page"
+                aria-label={t('session.previous')}
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 className="p-1 rounded-[8px] border border-[#CFC6B9] bg-white text-[#4A5955] disabled:opacity-40 cursor-pointer"
@@ -1071,7 +1119,7 @@ export function QuestionBankStudio({
               </span>
               <button
                 type="button"
-                aria-label="Next page"
+                aria-label={t('session.next')}
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 className="p-1 rounded-[8px] border border-[#CFC6B9] bg-white text-[#4A5955] disabled:opacity-40 cursor-pointer"
@@ -1083,16 +1131,16 @@ export function QuestionBankStudio({
 
           <div className="divide-y divide-[#E5DFD5] max-h-[680px] overflow-y-auto">
             {loading && questions.length === 0 ? (
-              <div className="p-8 text-center text-sm text-[#78756E]">Loading Question Bank...</div>
+              <div className="p-8 text-center text-sm text-[#78756E]">{t('bank.loading')}</div>
             ) : questions.length === 0 ? (
               <div className="p-8 text-center space-y-2">
-                <p className="text-sm font-medium text-[#113C36]">No questions match these filters.</p>
+                <p className="text-sm font-medium text-[#113C36]">{t('bank.empty')}</p>
                 <button
                   type="button"
                   onClick={resetAllFilters}
                   className="text-xs font-sans-display font-semibold text-[#113C36] underline underline-offset-4 cursor-pointer"
                 >
-                  Reset filters
+                  {t('bank.resetFilters')}
                 </button>
               </div>
             ) : (
@@ -1116,7 +1164,7 @@ export function QuestionBankStudio({
                       aria-label={`Select ${q.questionId}`}
                       checked={isChecked}
                       onChange={() => toggleCheck(q.questionId)}
-                      className="mt-1 accent-[#113C36] cursor-pointer"
+                      className="mt-1 accent-[#113C36] shrink-0 cursor-pointer"
                     />
                     <button
                       type="button"
@@ -1127,38 +1175,40 @@ export function QuestionBankStudio({
                       }}
                       className="flex-1 min-w-0 text-left space-y-1.5 cursor-pointer"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-1.5">
-                        <span className="font-mono-code text-[11px] font-semibold text-[#113C36] truncate">
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <span className="font-mono-code text-[11px] font-semibold text-[#113C36] truncate min-w-0 flex-1">
                           {q.questionId}
                         </span>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 shrink-0 whitespace-nowrap">
                           <span
                             className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${getPoolBadgeClasses(pStatus)}`}
                           >
-                            {getPoolStatusLabel(pStatus)}
+                            {poolStatusLabel(pStatus)}
                           </span>
                           <span
                             className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${getCompletionBadgeClasses(compStatus)}`}
                           >
-                            {getCompletionStatusLabel(compStatus)}
+                            {completionStatusLabel(compStatus)}
                           </span>
                         </div>
                       </div>
-                      <p className="text-xs text-[#4A5955] line-clamp-2 leading-relaxed">
+                      <p className="text-xs text-[#4A5955] line-clamp-2 leading-relaxed break-words">
                         {q.stemPrefix ||
                           q.parts[0]?.promptText ||
                           (q.stimulusId ? stimuliById[q.stimulusId]?.title : '') ||
-                          'Untitled question'}
+                          t('bank.untitled')}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#78756E]">
-                        <span>{SECTION_LABELS[q.section] || q.section}</span>
-                        <span>{FORMAT_LABELS[q.formatType] || q.formatType}</span>
+                        <span>{sectionLabel(q.section)}</span>
+                        <span>{formatLabel(q.formatType)}</span>
                         {q.poolType === 'benchmark_holdout' && (
-                          <span className="text-[#A35116] font-medium">Holdout</span>
+                          <span className="text-[#A35116] font-medium">{t('bank.holdoutTag')}</span>
                         )}
                         {flagsCount > 0 && (
                           <span className="text-[#B83A28] font-medium">
-                            {flagsCount} flag{flagsCount === 1 ? '' : 's'}
+                            {flagsCount === 1
+                              ? t('bank.flagOne')
+                              : t('bank.flagMany', { count: flagsCount })}
                           </span>
                         )}
                       </div>
@@ -1171,58 +1221,64 @@ export function QuestionBankStudio({
         </section>
 
         {/* Right Preview & Controls */}
-        <section className="lg:col-span-7 rounded-[16px] bg-white border border-[#E5DFD5] p-5 space-y-4">
+        <section className="lg:col-span-7 min-w-0 rounded-[16px] bg-white border border-[#E5DFD5] p-5 space-y-4 overflow-hidden">
           {!selectedQuestion ? (
             <div className="py-16 text-center text-sm text-[#78756E]">
-              Select any question on the left to inspect its student view, answer key, and pool status.
+              {t('bank.selectOnePrompt')}
             </div>
           ) : (
             <>
               <div className="flex flex-wrap items-start justify-between gap-3 pb-3.5 border-b border-[#E5DFD5]">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-mono-code text-sm font-semibold text-[#113C36]">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <h3 className="font-mono-code text-sm font-semibold text-[#113C36] break-all">
                       {selectedQuestion.questionId}
                     </h3>
-                    <span className="px-2 py-0.5 rounded-full bg-[#F3EFE8] text-[11px] font-medium text-[#4A5955]">
+                    <span className="px-2 py-0.5 rounded-full bg-[#F3EFE8] text-[11px] font-medium text-[#4A5955] whitespace-nowrap">
                       v{selectedQuestion.version}
                     </span>
                     {selectedQuestion.batchLabel && (
-                      <span className="px-2 py-0.5 rounded-full bg-[#FAF8F5] border border-[#E5DFD5] text-[11px] text-[#4A5955]">
+                      <span
+                        title={selectedQuestion.batchLabel}
+                        className="px-2 py-0.5 rounded-full bg-[#FAF8F5] border border-[#E5DFD5] text-[11px] text-[#4A5955] max-w-full truncate inline-block"
+                      >
                         {selectedQuestion.batchLabel}
                       </span>
                     )}
                   </div>
                   <div className="text-xs text-[#78756E] flex flex-wrap gap-3">
                     <span>
-                      Progress:{' '}
+                      {t('bank.progressMeta')}{' '}
                       <strong className="text-[#113C36]">
-                        {getCompletionStatusLabel(
+                        {completionStatusLabel(
                           progressByQid[selectedQuestion.questionId]?.completionStatus ?? 'unseen'
                         )}
                       </strong>
                     </span>
                     <span>
-                      Attempts: {progressByQid[selectedQuestion.questionId]?.attemptsCount ?? 0}
+                      {t('bank.attemptsMeta')} {progressByQid[selectedQuestion.questionId]?.attemptsCount ?? 0}
                     </span>
                     <span>
-                      Last seen: {formatDateShort(progressByQid[selectedQuestion.questionId]?.lastAttemptAtIso)}
+                      {t('bank.lastSeenMeta')}{' '}
+                      {progressByQid[selectedQuestion.questionId]?.lastAttemptAtIso
+                        ? formatDate(progressByQid[selectedQuestion.questionId]?.lastAttemptAtIso)
+                        : t('bank.never')}
                     </span>
                   </div>
                 </div>
 
                 {/* Interactive 3-State Pool Switcher + Permanent Delete */}
-                <div className="flex flex-col items-end gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] font-medium text-[#78756E]">
+                <div className="flex flex-col items-start sm:items-end gap-2 max-w-full">
+                  <div className="flex flex-wrap items-center gap-2 max-w-full">
+                    <span className="text-[11px] font-medium text-[#78756E] whitespace-nowrap">
                       {updatingStatusQid === selectedQuestion.questionId
-                        ? 'Saving pool status...'
-                        : 'Pool status (click to change):'}
+                        ? t('bank.savingPoolStatus')
+                        : t('bank.poolStatusHint')}
                     </span>
                     <div
                       role="group"
-                      aria-label="Change question pool status"
-                      className="inline-flex items-center p-0.5 rounded-[11px] bg-[#F3EFE8] border border-[#E5DFD5] gap-0.5"
+                      aria-label={t('bank.poolStatusHint')}
+                      className="inline-flex flex-wrap items-center p-0.5 rounded-[11px] bg-[#F3EFE8] border border-[#E5DFD5] gap-0.5"
                     >
                       {(['live', 'paused', 'archived'] as BankPoolStatus[]).map((st) => {
                         const active = qcStatusToPoolStatus(selectedQuestion.qcStatus) === st;
@@ -1234,16 +1290,16 @@ export function QuestionBankStudio({
                             aria-pressed={active}
                             disabled={busy}
                             onClick={() => void handleSetPoolStatus(selectedQuestion.questionId, st)}
-                            className={`px-2.5 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 ${
+                            className={`px-2.5 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap ${
                               active
                                 ? 'bg-[#113C36] text-white shadow-[0_1px_2px_rgba(17,60,54,0.12)]'
                                 : 'text-[#4A5955] hover:bg-white hover:text-[#113C36]'
                             }`}
                           >
-                            {st === 'live' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                            {st === 'paused' && <PauseCircle className="w-3.5 h-3.5" />}
-                            {st === 'archived' && <Archive className="w-3.5 h-3.5" />}
-                            <span>{getPoolStatusLabel(st)}</span>
+                            {st === 'live' && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                            {st === 'paused' && <PauseCircle className="w-3.5 h-3.5 shrink-0" />}
+                            {st === 'archived' && <Archive className="w-3.5 h-3.5 shrink-0" />}
+                            <span>{poolStatusLabel(st)}</span>
                           </button>
                         );
                       })}
@@ -1252,23 +1308,25 @@ export function QuestionBankStudio({
 
                   {/* Permanent Delete Action */}
                   {confirmDeleteQid === selectedQuestion.questionId ? (
-                    <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-[10px] bg-[#FDECEB] border border-[#B83A28]/30 text-xs">
-                      <span className="text-[#B83A28] font-medium">Permanently delete?</span>
+                    <div className="inline-flex flex-wrap items-center gap-2 px-2.5 py-1 rounded-[10px] bg-[#FDECEB] border border-[#B83A28]/30 text-xs">
+                      <span className="text-[#B83A28] font-medium whitespace-nowrap">
+                        {t('bank.permanentlyDeletePrompt')}
+                      </span>
                       <button
                         type="button"
                         disabled={deletingBusy}
                         onClick={() => void handleDeleteQuestions([selectedQuestion.questionId])}
-                        className="px-2.5 py-1 rounded-[8px] bg-[#B83A28] hover:bg-[#992D1E] text-white font-sans-display font-semibold cursor-pointer disabled:opacity-50"
+                        className="px-2.5 py-1 rounded-[8px] bg-[#B83A28] hover:bg-[#992D1E] text-white font-sans-display font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
                       >
-                        {deletingBusy ? 'Deleting...' : 'Confirm delete'}
+                        {deletingBusy ? t('bank.deleting') : t('bank.confirmDeleteSingle')}
                       </button>
                       <button
                         type="button"
                         disabled={deletingBusy}
                         onClick={() => setConfirmDeleteQid(null)}
-                        className="px-2 py-1 text-[#4A5955] hover:text-[#113C36] font-medium cursor-pointer"
+                        className="px-2 py-1 text-[#4A5955] hover:text-[#113C36] font-medium cursor-pointer whitespace-nowrap"
                       >
-                        Cancel
+                        {t('home.modalCancel')}
                       </button>
                     </div>
                   ) : (
@@ -1276,10 +1334,10 @@ export function QuestionBankStudio({
                       type="button"
                       disabled={deletingBusy || updatingStatusQid === selectedQuestion.questionId}
                       onClick={() => setConfirmDeleteQid(selectedQuestion.questionId)}
-                      className="px-2.5 py-1 rounded-[9px] border border-[#B83A28]/25 bg-white hover:bg-[#FDECEB] text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                      className="px-2.5 py-1 rounded-[9px] border border-[#B83A28]/25 bg-white hover:bg-[#FDECEB] text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete permanently</span>
+                      <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>{t('bank.deletePermanently')}</span>
                     </button>
                   )}
                 </div>
@@ -1301,19 +1359,19 @@ export function QuestionBankStudio({
               {selectedQuestion.parts.length > 0 && (
                 <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] p-4 space-y-3">
                   <div className="text-xs font-sans-display font-semibold text-[#113C36]">
-                    Answer key and worked explanation
+                    {t('bank.answerKeyTitle')}
                   </div>
                   <div className="space-y-2.5">
                     {selectedQuestion.parts.map((part, idx) => (
                       <div key={part.partId} className="text-xs text-[#4A5955] space-y-1">
                         <div className="font-medium text-[#113C36]">
-                          Part {idx + 1}: Correct answer{' '}
+                          {t('bank.partAnswerKey', { num: idx + 1 })}{' '}
                           <span className="px-1.5 py-0.5 rounded bg-[#E5F0EA] text-[#113C36] font-mono-code">
-                            {part.correctAnswerKey || 'Writing rubric'}
+                            {part.correctAnswerKey || t('bank.writingRubricBadge')}
                           </span>
                         </div>
                         {part.workedExplanation && (
-                          <p className="leading-relaxed">{part.workedExplanation}</p>
+                          <p className="leading-relaxed break-words">{part.workedExplanation}</p>
                         )}
                       </div>
                     ))}
@@ -1323,12 +1381,12 @@ export function QuestionBankStudio({
 
               {/* Visual Asset Upload + Version History Footer */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#E5DFD5] text-xs">
-                <label className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer">
-                  <Upload className="w-3.5 h-3.5" />
+                <label className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                  <Upload className="w-3.5 h-3.5 shrink-0" />
                   <span>
                     {uploadingQid === selectedQuestion.questionId
-                      ? 'Uploading...'
-                      : 'Attach or replace diagram'}
+                      ? t('bank.uploading')
+                      : t('bank.attachDiagram')}
                   </span>
                   <input
                     type="file"
@@ -1340,9 +1398,9 @@ export function QuestionBankStudio({
                 </label>
 
                 {versionsForSelected.length > 1 && (
-                  <div className="flex items-center gap-1.5 text-[#78756E]">
-                    <History className="w-3.5 h-3.5" />
-                    <span>{versionsForSelected.length} versions stored in family</span>
+                  <div className="flex items-center gap-1.5 text-[#78756E] whitespace-nowrap">
+                    <History className="w-3.5 h-3.5 shrink-0" />
+                    <span>{t('bank.versionsStored', { count: versionsForSelected.length })}</span>
                   </div>
                 )}
               </div>

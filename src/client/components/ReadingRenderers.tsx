@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Check, Highlighter, RotateCcw, X } from 'lucide-react';
+import { useI18n } from '../i18n';
 import type {
   EvidenceCitationRef,
   MarkingResult,
@@ -146,6 +147,7 @@ export function ReadingStimulusPane({
   readOnly = false,
   activeEvidenceRef = null,
 }: ReadingStimulusPaneProps) {
+  const { t } = useI18n();
   const stim = stimulusProp || question.stimulus;
   const [extractTab, setExtractTab] = useState<string>('ALL');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -300,7 +302,7 @@ export function ReadingStimulusPane({
                   return (
                     <span key={tIdx} className="inline-block mx-1 align-baseline font-sans">
                       <select
-                        aria-label={`Gap ${gapNum}`}
+                        aria-label={t('read.gapLabel', { num: gapNum })}
                         disabled={readOnly}
                         value={picked}
                         onFocus={() => onSelectGapIndex(gapNum - 1)}
@@ -317,7 +319,7 @@ export function ReadingStimulusPane({
                             : 'border-[var(--border-strong)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
                         }`}
                       >
-                        <option value="">[{gapNum}] Choose...</option>
+                        <option value="">{t('read.choosePrompt', { num: gapNum })}</option>
                         {part.options.map((opt) => (
                           <option key={opt.key} value={opt.key}>
                             {opt.key}. {opt.text}
@@ -347,7 +349,7 @@ export function ReadingStimulusPane({
                             : 'border-[var(--border-strong)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)]'
                       }`}
                     >
-                      <span>Gap {gapNum}</span>
+                      <span>{t('read.gapLabel', { num: gapNum })}</span>
                       {placedExtract && (
                         <span className="font-normal text-[var(--text-primary)]">
                           [{placedExtract.label}] {placedExtract.bodyMarkdown.slice(0, 44)}
@@ -390,20 +392,20 @@ export function ReadingStimulusPane({
             <button
               type="button"
               onClick={handleHighlightSelection}
-              title="Select text in the passage, then click to highlight"
+              title={t('read.highlightTitle')}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--bg-hover)] text-xs font-medium text-[var(--text-secondary)] cursor-pointer whitespace-nowrap"
             >
               <Highlighter className="w-3.5 h-3.5" />
-              <span>Highlight</span>
+              <span>{t('read.highlight')}</span>
             </button>
             {highlights.length > 0 && (
               <button
                 type="button"
                 onClick={onClearHighlights}
-                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-[var(--radius-sm)] text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-[var(--radius-sm)] text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer whitespace-nowrap"
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>Clear ({highlights.length})</span>
+                <span>{t('read.clearCount', { count: highlights.length })}</span>
               </button>
             )}
           </div>
@@ -415,19 +417,21 @@ export function ReadingStimulusPane({
           <div className="flex items-center gap-2">
             <BookOpen className="w-3.5 h-3.5 text-sky-700 shrink-0" />
             <span>
-              Viewing Citation <strong>[{activeEvidenceRef.refId}]</strong>
-              {activeEvidenceRef.extractLabel ? ` (Extract ${activeEvidenceRef.extractLabel})` : ' (Main Text)'}
+              {t('read.viewingCitation')} <strong>[{activeEvidenceRef.refId}]</strong>
+              {activeEvidenceRef.extractLabel
+                ? ` ${t('read.extractRef', { label: activeEvidenceRef.extractLabel })}`
+                : ` ${t('read.mainTextRef')}`}
             </span>
           </div>
           {highlights.length > 0 && (
             <div className="flex items-center gap-3 text-[11px]">
               <span className="inline-flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded-xs bg-[#FDE8D7] border border-[#EAB690] inline-block" />
-                Your highlight
+                {t('read.yourHighlight')}
               </span>
               <span className="inline-flex items-center gap-1">
                 <span className="w-2.5 h-2.5 rounded-xs bg-sky-100 border border-sky-600 inline-block" />
-                Evidence citation
+                {t('read.evidenceCitation')}
               </span>
             </div>
           )}
@@ -437,7 +441,7 @@ export function ReadingStimulusPane({
       {showFallbackQuoteBanner && activeEvidenceRef?.quote && (
         <div className="p-3 rounded-[var(--radius-sm)] bg-sky-50 border border-sky-300 text-xs text-sky-950 space-y-1">
           <div className="font-semibold">
-            Evidence Quote [{activeEvidenceRef.refId}] (offset re-anchored quote):
+            {t('read.evidenceQuoteLabel', { id: activeEvidenceRef.refId })}
           </div>
           <blockquote className="italic border-l-2 border-sky-500 pl-2.5">
             &ldquo;{activeEvidenceRef.quote}&rdquo;
@@ -467,7 +471,7 @@ export function ReadingStimulusPane({
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                All Extracts
+                {t('read.allExtracts')}
               </button>
               {stim.extracts.map((ex) => (
                 <button
@@ -480,7 +484,7 @@ export function ReadingStimulusPane({
                       : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  Extract {ex.label}
+                  {t('read.extractNum', { label: ex.label })}
                 </button>
               ))}
             </div>
@@ -501,7 +505,7 @@ export function ReadingStimulusPane({
                   className="p-4 rounded-[var(--radius-md)] border border-[var(--border-hairline)] bg-[var(--bg-canvas)] space-y-2"
                 >
                   <div className="text-xs font-bold tracking-wide text-[var(--accent-primary)]">
-                    Extract {ex.label}
+                    {t('read.extractNum', { label: ex.label })}
                     {ex.title && ex.title.trim().toLowerCase() !== `extract ${ex.label.toLowerCase()}`
                       ? ` — ${ex.title}`
                       : ''}
@@ -564,6 +568,7 @@ export function ReadingRightAnswerPane({
   showAnswerKey = false,
   reviewByPartId = {},
 }: ReadingRightAnswerPaneProps) {
+  const { t, isZh } = useI18n();
   const stim = stimulusProp || question.stimulus;
 
   const getKeyForPart = (partId: string): string | undefined => {
@@ -577,8 +582,12 @@ export function ReadingRightAnswerPane({
       <div className="space-y-4">
         <div className="text-xs font-medium text-[var(--text-secondary)]">
           {readOnly
-            ? 'Vocabulary Cloze responses by numbered gap:'
-            : 'Choose the best word for each numbered gap in the passage (synced with inline dropdowns).'}
+            ? isZh
+              ? '按题空编号查看词汇完形填空作答：'
+              : 'Vocabulary Cloze responses by numbered gap:'
+            : isZh
+              ? '为短文中每个编号空格选择最佳词汇（与左侧下拉框实时同步）。'
+              : 'Choose the best word for each numbered gap in the passage (synced with inline dropdowns).'}
         </div>
         {question.parts.map((part, idx) => {
           const picked = answersByPartId[part.partId] || null;
@@ -602,7 +611,7 @@ export function ReadingRightAnswerPane({
                   }}
                   className="text-xs font-bold text-[var(--text-primary)] tabular-nums cursor-pointer hover:text-[var(--accent-primary)]"
                 >
-                  Gap {idx + 1}
+                  {t('read.gapLabel', { num: idx + 1 })}
                 </button>
                 {!readOnly && picked && (
                   <button
@@ -614,7 +623,7 @@ export function ReadingRightAnswerPane({
                     }}
                     className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
-                    Clear
+                    {t('read.clear')}
                   </button>
                 )}
               </div>
@@ -649,7 +658,9 @@ export function ReadingRightAnswerPane({
                         <span className="truncate">{opt.text}</span>
                       </span>
                       {readOnly && isCorrect && (
-                        <span className="text-[10px] font-bold text-[var(--status-success)] shrink-0">Key</span>
+                        <span className="text-[10px] font-bold text-[var(--status-success)] shrink-0">
+                          {t('read.keyBadge')}
+                        </span>
                       )}
                     </button>
                   );
@@ -697,9 +708,7 @@ export function ReadingRightAnswerPane({
     return (
       <div className="space-y-4">
         <div className="text-xs text-[var(--text-secondary)]">
-          {readOnly
-            ? 'Gapped Text placement overview:'
-            : 'Select a gap slot, then choose an extract from the bank below. Each extract can be used once.'}
+          {readOnly ? t('read.gappedOverview') : t('read.gappedInstructions')}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -720,9 +729,9 @@ export function ReadingRightAnswerPane({
                       : 'border-[var(--border-strong)] bg-[var(--bg-elevated)] text-[var(--text-primary)]'
                 }`}
               >
-                Gap {idx + 1}
+                {t('read.gapLabel', { num: idx + 1 })}
                 {val ? `: ${val}` : ''}
-                {readOnly && cKey ? ` (Key: ${cKey})` : ''}
+                {readOnly && cKey ? ` (${t('read.gappedKey', { key: cKey })})` : ''}
               </button>
             );
           })}
@@ -749,9 +758,9 @@ export function ReadingRightAnswerPane({
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="text-xs font-bold text-[var(--text-primary)]">
-                      Extract {ex.label}
-                      {assignedGapNum ? ` (Selected Gap ${assignedGapNum})` : ''}
-                      {correctGapNum ? ` (Key: Gap ${correctGapNum})` : ''}
+                      {t('read.extractNum', { label: ex.label })}
+                      {assignedGapNum ? ` (${t('read.selectedGap', { num: assignedGapNum })})` : ''}
+                      {correctGapNum ? ` (${t('read.keyGap', { num: correctGapNum })})` : ''}
                     </div>
                     <p className="text-sm text-[var(--text-primary)] leading-relaxed whitespace-pre-line">{ex.bodyMarkdown}</p>
                   </div>
@@ -766,10 +775,10 @@ export function ReadingRightAnswerPane({
                       }`}
                     >
                       {isAssignedToCurrent
-                        ? 'Remove'
+                        ? t('read.remove')
                         : assignedGapNum
-                          ? `Move to Gap ${activeGapIndex + 1}`
-                          : `Place in Gap ${activeGapIndex + 1}`}
+                          ? t('read.moveToGap', { num: activeGapIndex + 1 })
+                          : t('read.placeInGap', { num: activeGapIndex + 1 })}
                     </button>
                   )}
                 </div>
@@ -786,9 +795,7 @@ export function ReadingRightAnswerPane({
     return (
       <div className="space-y-3">
         <div className="text-xs text-[var(--text-secondary)]">
-          {readOnly
-            ? 'Multiple matching answers (green = key, orange/red = student selection):'
-            : 'Match each statement to Extract A, B, C, or D (extracts may be used more than once).'}
+          {readOnly ? t('read.multiMatchOverview') : t('read.multiMatchInstructions')}
         </div>
         {question.parts.map((part, idx) => {
           const picked = answersByPartId[part.partId] || null;
@@ -932,7 +939,7 @@ export function ReadingRightAnswerPane({
                   <button
                     type="button"
                     aria-label={`Eliminate option ${opt.key}`}
-                    title="Cross out option"
+                    title={t('ws.crossOutOption')}
                     onClick={() => onToggleEliminate(part.partId, opt.key)}
                     className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-colors ${
                       isElim
@@ -1003,12 +1010,12 @@ export function ReadingRightAnswerPane({
                   </div>
                   {readOnly && isCorrect && (
                     <span className="text-[11px] font-bold text-[var(--status-success)] shrink-0 mt-0.5">
-                      Correct
+                      {t('ws.correct')}
                     </span>
                   )}
                   {isWrongSelected && (
                     <span className="text-[11px] font-bold text-[var(--status-error)] shrink-0 mt-0.5">
-                      Picked
+                      {t('read.pickedShort')}
                     </span>
                   )}
                 </button>
@@ -1016,7 +1023,7 @@ export function ReadingRightAnswerPane({
                   <button
                     type="button"
                     aria-label={`Eliminate option ${opt.key}`}
-                    title="Cross out option"
+                    title={t('ws.crossOutOption')}
                     onClick={() => onToggleEliminate(part.partId, opt.key)}
                     className={`px-2.5 rounded-[var(--radius-md)] border text-xs cursor-pointer transition-colors ${
                       isElim

@@ -7,6 +7,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api } from '../../api';
+import { useI18n } from '../../i18n';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_LEARNING_CONFIG,
@@ -93,6 +94,7 @@ export function AutoCalibrateConfigPanel({
   onNotice,
   onError,
 }: AutoCalibrateConfigPanelProps) {
+  const { t, sectionShortLabel, skillName, formatDate } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [recalibrating, setRecalibrating] = useState(false);
@@ -207,7 +209,7 @@ export function AutoCalibrateConfigPanel({
   if (loading) {
     return (
       <div className="p-10 text-center text-sm text-[#78756E]">
-        Loading adaptive settings...
+        {t('cfg.loading')}
       </div>
     );
   }
@@ -237,23 +239,23 @@ export function AutoCalibrateConfigPanel({
         }`}
       >
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1.5 max-w-2xl">
+          <div className="space-y-1.5 max-w-2xl min-w-0">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#113C36]" />
+              <Sparkles className="w-4 h-4 text-[#113C36] shrink-0" />
               <h2 className="font-sans-display font-semibold text-[18px] text-[#113C36]">
-                Daily practice plan
+                {t('cfg.title')}
               </h2>
             </div>
             <p className="text-[13px] text-[#4A5955] leading-relaxed">
-              Choose how each day&apos;s mixed practice set is built. Switch between Gemini Decisions 1 auto-calibration and fixed manual daily counts.
+              {t('cfg.desc')}
             </p>
           </div>
 
           {/* Explicit 2-way segmented mode selector */}
           <div
             role="group"
-            aria-label="Daily practice planning mode"
-            className="inline-flex items-center p-1 rounded-[12px] bg-white border border-[#CFC6B9] gap-1"
+            aria-label={t('cfg.title')}
+            className="inline-flex flex-wrap items-center p-1 rounded-[12px] bg-white border border-[#CFC6B9] gap-1 max-w-full"
           >
             <button
               type="button"
@@ -265,7 +267,7 @@ export function AutoCalibrateConfigPanel({
                   : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
-              Auto-Calibrate (Gemini Decisions 1)
+              {t('cfg.modeAuto')}
             </button>
             <button
               type="button"
@@ -277,7 +279,7 @@ export function AutoCalibrateConfigPanel({
                   : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
-              Manual daily counts
+              {t('cfg.modeManual')}
             </button>
           </div>
         </div>
@@ -285,14 +287,14 @@ export function AutoCalibrateConfigPanel({
         {autoCal.enabled ? (
           <div className="space-y-5">
             <p className="text-xs text-[#4A5955] leading-relaxed">
-              Gemini Decisions 1 automatically chooses how many Reading, Maths, Thinking, and Writing questions appear in today&apos;s Daily Practice within the min/max guardrails below.
+              {t('cfg.autoDesc')}
             </p>
 
             {/* Flexible Question Volume Guardrails */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-[12px] bg-white/95 border border-[#C5DDD1] p-3.5 space-y-1.5">
+              <div className="rounded-[12px] bg-white/95 border border-[#C5DDD1] p-3.5 space-y-1.5 min-w-0">
                 <label htmlFor="ac-min-q" className="block text-xs font-sans-display font-semibold text-[#113C36]">
-                  Minimum daily questions
+                  {t('cfg.minDailyQ')}
                 </label>
                 <NumericInput
                   id="ac-min-q"
@@ -303,9 +305,9 @@ export function AutoCalibrateConfigPanel({
                 />
               </div>
 
-              <div className="rounded-[12px] bg-white/95 border border-[#C5DDD1] p-3.5 space-y-1.5">
+              <div className="rounded-[12px] bg-white/95 border border-[#C5DDD1] p-3.5 space-y-1.5 min-w-0">
                 <label htmlFor="ac-max-q" className="block text-xs font-sans-display font-semibold text-[#113C36]">
-                  Maximum daily questions
+                  {t('cfg.maxDailyQ')}
                 </label>
                 <NumericInput
                   id="ac-max-q"
@@ -316,9 +318,9 @@ export function AutoCalibrateConfigPanel({
                 />
               </div>
 
-              <div className="rounded-[12px] bg-white/95 border border-[#C5DDD1] p-3.5 flex flex-col justify-between gap-2">
+              <div className="rounded-[12px] bg-white/95 border border-[#C5DDD1] p-3.5 flex flex-col justify-between gap-2 min-w-0">
                 <span className="text-xs font-sans-display font-semibold text-[#113C36]">
-                  Writing sprint scheduling
+                  {t('cfg.writingScheduling')}
                 </span>
                 <label className="inline-flex items-center gap-2 text-xs text-[#4A5955] cursor-pointer">
                   <input
@@ -327,7 +329,7 @@ export function AutoCalibrateConfigPanel({
                     onChange={(e) => updateAutoCal({ includeWriting: e.target.checked })}
                     className="accent-[#113C36]"
                   />
-                  <span>Schedule a writing prompt when due</span>
+                  <span>{t('cfg.includeWriting')}</span>
                 </label>
               </div>
             </div>
@@ -335,9 +337,12 @@ export function AutoCalibrateConfigPanel({
             {/* Live Today's Decided Plan Box */}
             <div className="rounded-[14px] bg-white border border-[#C5DDD1] p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 min-w-0">
                   <div className="text-xs font-sans-display font-semibold text-[#113C36]">
-                    Today&apos;s decided daily mix ({decidedTotal} questions, {todayPlan?.dailyGoalMinutes ?? config.sessionDefaults.dailyGoalMinutes} min goal)
+                    {t('cfg.decidedMixTitle', {
+                      total: decidedTotal,
+                      minutes: todayPlan?.dailyGoalMinutes ?? config.sessionDefaults.dailyGoalMinutes,
+                    })}
                   </div>
                   {todayPlan?.modelId && (
                     <div className="text-[11px] text-[#78756E] font-mono-code">
@@ -352,15 +357,15 @@ export function AutoCalibrateConfigPanel({
                   className="px-3.5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${recalibrating ? 'animate-spin' : ''}`} />
-                  <span>{recalibrating ? 'Recalibrating...' : 'Recalibrate with Gemini Decisions 1'}</span>
+                  <span>{recalibrating ? t('cfg.recalibratingBtn') : t('cfg.recalibrateBtn')}</span>
                 </button>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => (
-                  <div key={sec} className="rounded-[10px] bg-[#FAF8F5] border border-[#E5DFD5] px-3 py-2">
+                  <div key={sec} className="rounded-[10px] bg-[#FAF8F5] border border-[#E5DFD5] px-3 py-2 min-w-0">
                     <div className="text-[11px] text-[#78756E]">
-                      {sec === 'READ' ? 'Reading' : sec === 'MATH' ? 'Maths' : sec === 'THINK' ? 'Thinking' : 'Writing'}
+                      {sectionShortLabel(sec)}
                     </div>
                     <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
                       {decidedLimits[sec] ?? 0}
@@ -378,7 +383,7 @@ export function AutoCalibrateConfigPanel({
                           key={sid}
                           className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#113C36]"
                         >
-                          {SKILL_NAME_MAP.get(sid) || sid}
+                          {skillName(sid)}
                         </span>
                       ))}
                     </div>
@@ -392,18 +397,18 @@ export function AutoCalibrateConfigPanel({
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-[#4A5955] leading-relaxed">
-                Auto-Calibrate is off. Every daily practice session will draw these exact per-section question counts.
+                {t('cfg.manualDesc')}
               </p>
-              <span className="px-3 py-1 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#113C36] tabular-nums">
-                {manualDailyTotal} questions / day
+              <span className="px-3 py-1 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#113C36] tabular-nums whitespace-nowrap">
+                {t('cfg.questionsPerDay', { count: manualDailyTotal })}
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => (
-                <div key={sec} className="space-y-1">
+                <div key={sec} className="space-y-1 min-w-0">
                   <label htmlFor={`manual-${sec}`} className="block text-xs font-medium text-[#4A5955]">
-                    {sec === 'READ' ? 'Reading / day' : sec === 'MATH' ? 'Maths / day' : sec === 'THINK' ? 'Thinking / day' : 'Writing / day'}
+                    {t('cfg.sectionPerDay', { section: sectionShortLabel(sec) })}
                   </label>
                   <NumericInput
                     id={`manual-${sec}`}
@@ -414,9 +419,9 @@ export function AutoCalibrateConfigPanel({
                   />
                 </div>
               ))}
-              <div className="space-y-1">
+              <div className="space-y-1 min-w-0">
                 <label htmlFor="manual-goal-min" className="block text-xs font-medium text-[#4A5955]">
-                  Daily goal (min)
+                  {t('cfg.dailyGoalMin')}
                 </label>
                 <NumericInput
                   id="manual-goal-min"
@@ -440,17 +445,17 @@ export function AutoCalibrateConfigPanel({
       <section className="rounded-[16px] bg-white border border-[#E5DFD5] p-6 space-y-4">
         <div>
           <h3 className="font-sans-display font-semibold text-[16px] text-[#113C36]">
-            Section drill defaults
+            {t('cfg.drillDefaultsTitle')}
           </h3>
           <p className="text-xs text-[#4A5955] mt-1 leading-relaxed">
-            Default size and timer when you launch a single-section Practice Drill on the Dashboard. This applies whether Daily Auto-Calibrate is on or off (you can still adjust the count before starting a drill).
+            {t('cfg.drillDefaultsDesc')}
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <label htmlFor="drill-count" className="block text-xs font-medium text-[#4A5955]">
-              Default section drill questions
+              {t('cfg.drillCountLabel')}
             </label>
             <NumericInput
               id="drill-count"
@@ -465,9 +470,9 @@ export function AutoCalibrateConfigPanel({
               }
             />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <label htmlFor="drill-minutes" className="block text-xs font-medium text-[#4A5955]">
-              Default section drill minutes
+              {t('cfg.drillMinutesLabel')}
             </label>
             <NumericInput
               id="drill-minutes"
@@ -489,10 +494,10 @@ export function AutoCalibrateConfigPanel({
       <section className="rounded-[16px] bg-white border border-[#E5DFD5] p-6 space-y-4">
         <div>
           <h3 className="font-sans-display font-semibold text-[16px] text-[#113C36]">
-            Completed questions & spaced repetition policy
+            {t('cfg.poolPolicyTitle')}
           </h3>
           <p className="text-xs text-[#4A5955] mt-1 leading-relaxed">
-            Missed questions always return for spaced repair. Choose what happens after a question reaches certified Done status (3 clean spaced passes).
+            {t('cfg.poolPolicyDesc')}
           </p>
         </div>
 
@@ -509,10 +514,10 @@ export function AutoCalibrateConfigPanel({
             }`}
           >
             <div className="font-sans-display font-semibold text-sm text-[#113C36]">
-              Keep mastered items in long-interval spaced review
+              {t('cfg.keepMasteredTitle')}
             </div>
             <p className="text-xs text-[#4A5955] leading-relaxed">
-              Recommended when your pool is moderate. Mastered items stay dormant for long intervals and only resurface for occasional memory checks.
+              {t('cfg.keepMasteredDesc')}
             </p>
           </button>
 
@@ -528,10 +533,10 @@ export function AutoCalibrateConfigPanel({
             }`}
           >
             <div className="font-sans-display font-semibold text-sm text-[#113C36]">
-              Auto-retire mastered items from practice pool
+              {t('cfg.retireMasteredTitle')}
             </div>
             <p className="text-xs text-[#4A5955] leading-relaxed">
-              Best when importing fresh questions regularly. Once certified Done, a question stops appearing in daily sets so every slot prioritizes fresh material.
+              {t('cfg.retireMasteredDesc')}
             </p>
           </button>
         </div>
@@ -545,26 +550,26 @@ export function AutoCalibrateConfigPanel({
           onClick={() => setShowAdvanced((v) => !v)}
           className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-[#FAF8F5] cursor-pointer"
         >
-          <div>
+          <div className="min-w-0">
             <div className="font-sans-display font-semibold text-sm text-[#113C36]">
-              Advanced scheduling weights & version history
+              {t('cfg.advancedTitle')}
             </div>
             <div className="text-xs text-[#78756E]">
-              Active config version v{versionNumber} ({history.length} saved versions)
+              {t('cfg.advancedSub', { version: versionNumber, count: history.length })}
             </div>
           </div>
           {showAdvanced ? (
-            <ChevronUp className="w-4 h-4 text-[#78756E]" />
+            <ChevronUp className="w-4 h-4 text-[#78756E] shrink-0" />
           ) : (
-            <ChevronDown className="w-4 h-4 text-[#78756E]" />
+            <ChevronDown className="w-4 h-4 text-[#78756E] shrink-0" />
           )}
         </button>
 
         {showAdvanced && (
           <div className="px-6 pb-6 pt-3 border-t border-[#E5DFD5] space-y-5">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="space-y-1">
-                <label className="block text-xs text-[#4A5955]">Spaced review weight</label>
+              <div className="space-y-1 min-w-0">
+                <label className="block text-xs text-[#4A5955]">{t('cfg.spacedWeight')}</label>
                 <NumericInput
                   value={config.scheduling.spacedReviewWeight}
                   min={0.1}
@@ -575,8 +580,8 @@ export function AutoCalibrateConfigPanel({
                   }
                 />
               </div>
-              <div className="space-y-1">
-                <label className="block text-xs text-[#4A5955]">Weakest skill weight</label>
+              <div className="space-y-1 min-w-0">
+                <label className="block text-xs text-[#4A5955]">{t('cfg.weakestWeight')}</label>
                 <NumericInput
                   value={config.scheduling.weakestSkillWeight}
                   min={0.1}
@@ -587,8 +592,8 @@ export function AutoCalibrateConfigPanel({
                   }
                 />
               </div>
-              <div className="space-y-1">
-                <label className="block text-xs text-[#4A5955]">Novelty coverage weight</label>
+              <div className="space-y-1 min-w-0">
+                <label className="block text-xs text-[#4A5955]">{t('cfg.noveltyWeight')}</label>
                 <NumericInput
                   value={config.scheduling.noveltyCoverageWeight}
                   min={0.1}
@@ -602,8 +607,8 @@ export function AutoCalibrateConfigPanel({
                   }
                 />
               </div>
-              <div className="space-y-1">
-                <label className="block text-xs text-[#4A5955]">Repeat cooldown (hours)</label>
+              <div className="space-y-1 min-w-0">
+                <label className="block text-xs text-[#4A5955]">{t('cfg.cooldownHours')}</label>
                 <NumericInput
                   value={config.scheduling.minRepeatCooldownHours}
                   min={1}
@@ -621,20 +626,20 @@ export function AutoCalibrateConfigPanel({
             {history.length > 0 && (
               <div className="space-y-2">
                 <div className="text-xs font-sans-display font-semibold text-[#113C36]">
-                  Recent saved versions
+                  {t('cfg.recentVersions')}
                 </div>
                 <div className="divide-y divide-[#E5DFD5] border border-[#E5DFD5] rounded-[12px] bg-[#FAF8F5]">
                   {history.slice(0, 6).map((h) => (
                     <div
                       key={h.configVersionId}
-                      className="px-3.5 py-2 flex items-center justify-between text-xs text-[#4A5955]"
+                      className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-[#4A5955]"
                     >
-                      <span>
+                      <span className="min-w-0 break-words">
                         <strong className="text-[#113C36]">v{h.versionNumber}</strong>{' '}
                         {h.notes ? `— ${h.notes}` : ''}
                       </span>
-                      <span className="text-[#78756E] tabular-nums">
-                        {new Date(h.createdAt).toLocaleString()}
+                      <span className="text-[#78756E] tabular-nums shrink-0">
+                        {formatDate(h.createdAt, true)}
                       </span>
                     </div>
                   ))}
@@ -651,8 +656,8 @@ export function AutoCalibrateConfigPanel({
           type="text"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="Optional change note (e.g. widened daily range to 8-16)"
-          className="flex-1 min-w-[220px] px-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
+          placeholder={t('cfg.changeNotePlaceholder')}
+          className="flex-1 min-w-[200px] px-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs text-[#113C36]"
         />
         <button
           type="button"
@@ -661,7 +666,7 @@ export function AutoCalibrateConfigPanel({
           className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
         >
           <Save className="w-3.5 h-3.5" />
-          <span>{saving ? 'Saving...' : 'Save settings'}</span>
+          <span>{saving ? t('cfg.saving') : t('cfg.saveSettings')}</span>
         </button>
       </div>
     </div>

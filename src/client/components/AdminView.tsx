@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, type AdminStatusResponse } from '../api';
+import { useI18n } from '../i18n';
 import { QuestionBankStudio } from './admin/QuestionBankStudio';
 import { AutoCalibrateConfigPanel } from './admin/AutoCalibrateConfigPanel';
 import { BatchImporterPanel } from './admin/BatchImporterPanel';
@@ -28,14 +29,15 @@ function parseInitialTab(): StudioTab {
   return 'bank';
 }
 
-const STUDIO_TABS: { id: StudioTab; label: string; icon: typeof Library }[] = [
-  { id: 'bank', label: 'Question Bank', icon: Library },
-  { id: 'adaptive', label: 'Daily & Adaptive', icon: Sliders },
-  { id: 'batches', label: 'Import & Batches', icon: FolderKanban },
-  { id: 'data', label: 'Data & Design', icon: Database },
+const STUDIO_TABS: { id: StudioTab; labelKey: 'admin.tabBank' | 'admin.tabAdaptive' | 'admin.tabBatches' | 'admin.tabData'; icon: typeof Library }[] = [
+  { id: 'bank', labelKey: 'admin.tabBank', icon: Library },
+  { id: 'adaptive', labelKey: 'admin.tabAdaptive', icon: Sliders },
+  { id: 'batches', labelKey: 'admin.tabBatches', icon: FolderKanban },
+  { id: 'data', labelKey: 'admin.tabData', icon: Database },
 ];
 
 export function AdminView({ onOpenSession }: AdminViewProps) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<StudioTab>(parseInitialTab);
   const [status, setStatus] = useState<AdminStatusResponse | null>(null);
   const [notice, setNotice] = useState('');
@@ -86,41 +88,43 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
     <main className="px-6 sm:px-9 py-8 space-y-6 max-w-[1220px] mx-auto">
       {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <h1 className="font-sans-display font-semibold text-[26px] sm:text-[30px] tracking-[-0.025em] text-[#113C36] leading-tight">
-            Admin studio
+            {t('admin.title')}
           </h1>
           <p className="text-[14px] text-[#4A5955]">
-            Manage the unified Question Bank, Gemini Decisions 1 daily calibration, batches, and study data.
+            {t('admin.subtitle')}
           </p>
         </div>
 
         {status && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="px-3 py-1 rounded-full bg-[#F3EFE8] text-[#113C36] font-medium tabular-nums">
-              {status.totalQuestions} in Question Bank
+            <span className="px-3 py-1 rounded-full bg-[#F3EFE8] text-[#113C36] font-medium tabular-nums whitespace-nowrap">
+              {t('admin.inBank', { count: status.totalQuestions })}
             </span>
             <span
-              className={`px-3 py-1 rounded-full font-medium inline-flex items-center gap-1 ${
+              className={`px-3 py-1 rounded-full font-medium inline-flex items-center gap-1 whitespace-nowrap ${
                 status.holdoutIsolationOk
                   ? 'bg-[#E5F0EA] text-[#113C36]'
                   : 'bg-[#FDECEB] text-[#B83A28]'
               }`}
             >
-              <ShieldCheck className="w-3.5 h-3.5" />
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
               <span>
                 {status.holdoutIsolationOk
-                  ? `${status.holdoutQuestionCount} holdout isolated`
-                  : `${status.leakedCount} holdout leaked`}
+                  ? t('admin.holdoutIsolated', { count: status.holdoutQuestionCount })
+                  : t('admin.holdoutLeaked', { count: status.leakedCount })}
               </span>
             </span>
             {status.openFlagsCount > 0 && (
               <button
                 type="button"
                 onClick={() => setTab('data')}
-                className="px-3 py-1 rounded-full bg-[#FDF0E2] text-[#A35116] font-medium cursor-pointer"
+                className="px-3 py-1 rounded-full bg-[#FDF0E2] text-[#A35116] font-medium cursor-pointer whitespace-nowrap"
               >
-                {status.openFlagsCount} open flag{status.openFlagsCount === 1 ? '' : 's'}
+                {status.openFlagsCount === 1
+                  ? t('admin.openFlagOne')
+                  : t('admin.openFlagMany', { count: status.openFlagsCount })}
               </button>
             )}
           </div>
@@ -136,7 +140,7 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
           <span>{notice}</span>
           <button
             type="button"
-            aria-label="Dismiss notice"
+            aria-label={t('admin.dismissNotice')}
             onClick={() => setNotice('')}
             className="text-[#4A5955] hover:text-[#113C36] cursor-pointer"
           >
@@ -153,7 +157,7 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
           <span>{error}</span>
           <button
             type="button"
-            aria-label="Dismiss error"
+            aria-label={t('admin.dismissError')}
             onClick={() => setError('')}
             className="text-[#B83A28] cursor-pointer"
           >
@@ -165,24 +169,24 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
       {/* 4 Clean Editorial Tabs */}
       <nav
         aria-label="Admin studio sections"
-        className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-[14px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit"
+        className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-[14px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit max-w-full"
       >
-        {STUDIO_TABS.map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
+        {STUDIO_TABS.map((tabItem) => {
+          const Icon = tabItem.icon;
+          const active = tab === tabItem.id;
           return (
             <button
-              key={t.id}
+              key={tabItem.id}
               type="button"
-              onClick={() => setTab(t.id)}
-              className={`px-3.5 py-2 rounded-[10px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-all cursor-pointer ${
+              onClick={() => setTab(tabItem.id)}
+              className={`px-3.5 py-2 rounded-[10px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                 active
                   ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                   : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
-              <span>{t.label}</span>
+              <span>{t(tabItem.labelKey)}</span>
             </button>
           );
         })}

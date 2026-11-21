@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { LanguageToggle, useI18n } from '../i18n';
 import {
   ArrowLeft,
   ArrowRight,
@@ -18,10 +19,7 @@ import {
   type WritingDeterministicMetrics,
   type WritingEvaluationRecord,
 } from '../../shared/contracts';
-import { SKILLS_TAXONOMY } from '../../shared/skills';
 import { QuestionWorkspace } from './QuestionWorkspace';
-
-const SKILL_NAME_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayName]));
 
 function legacyEstimateToBand(est: WritingEvaluationRecord['overallBandEstimate']): WritingBandLetter {
   if (est === 'top_band') return 'A';
@@ -72,6 +70,7 @@ export function PostSubmissionReview({
   onDoneHome,
   onViewProgress,
 }: PostSubmissionReviewProps) {
+  const { t, isZh, skillName } = useI18n();
   const [writingReview, setWritingReview] = useState(initialWritingReview || []);
   const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
   const [evalError, setEvalError] = useState('');
@@ -182,7 +181,9 @@ export function PostSubmissionReview({
         )
       );
     } catch (err) {
-      setEvalError(err instanceof Error ? err.message : 'Unable to evaluate writing.');
+      setEvalError(
+        err instanceof Error ? err.message : isZh ? '无法完成写作批改。' : 'Unable to evaluate writing.'
+      );
     } finally {
       setEvaluatingId(null);
     }
@@ -219,7 +220,7 @@ export function PostSubmissionReview({
               className={`w-14 h-14 rounded-[12px] border flex flex-col items-center justify-center shrink-0 ${bandBadgeClass(overallBand)}`}
             >
               <span className="text-[10px] font-sans-display font-semibold leading-none opacity-80">
-                Band
+                {t('rev.bandLabel')}
               </span>
               <span className="font-serif-display font-extrabold text-[28px] leading-none mt-0.5">
                 {overallBand}
@@ -229,7 +230,7 @@ export function PostSubmissionReview({
             <div className="space-y-0.5">
               <div className="flex flex-wrap items-baseline gap-2.5">
                 <span className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums leading-none">
-                  {totalMarks} / {maxTotalMarks} marks
+                  {t('rev.marksOfMax', { marks: totalMarks, max: maxTotalMarks })}
                 </span>
                 <span className="font-sans-display font-semibold text-sm text-[#113C36]">
                   {bandDescriptor}
@@ -237,10 +238,10 @@ export function PostSubmissionReview({
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-[#4A5955]">
                 <span>
-                  Topic adherence: {ev.topicAdherencePass ? 'On topic' : 'Needs closer alignment'}
+                  {ev.topicAdherencePass ? t('rev.topicOnTopic') : t('rev.topicOffTopic')}
                 </span>
                 {ev.modelId && (
-                  <span className="text-[#78756E]">Marked by {ev.modelId}</span>
+                  <span className="text-[#78756E]">{t('rev.markedBy', { model: ev.modelId })}</span>
                 )}
               </div>
             </div>
@@ -248,7 +249,7 @@ export function PostSubmissionReview({
 
           {ev.bandCappedByTopicAdherence && (
             <span className="px-2.5 py-1 rounded-full bg-[#FDF0E2] border border-[#A35116]/30 text-xs font-sans-display font-semibold text-[#A35116]">
-              Capped at Band C (off-topic)
+              {t('rev.cappedAtC')}
             </span>
           )}
         </div>
@@ -264,13 +265,13 @@ export function PostSubmissionReview({
               >
                 <div className="flex items-center justify-between gap-2 text-xs font-sans-display font-semibold">
                   <span className="text-[#113C36]">
-                    {SKILL_NAME_MAP.get(c.criterionSkillId) || c.criterionSkillId}
+                    {skillName(c.criterionSkillId)}
                   </span>
                   <span className="inline-flex items-center gap-1.5 shrink-0">
                     <span
                       className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${bandBadgeClass(cBand)}`}
                     >
-                      Band {cBand}
+                      {t('rev.bandWithLetter', { band: cBand })}
                     </span>
                     <span className="tabular-nums text-[#113C36] font-semibold">
                       {c.score}/{cMax}
@@ -290,7 +291,7 @@ export function PostSubmissionReview({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
           <div className="p-3.5 rounded-[12px] bg-[#E5F3EC]/55 border border-[#1D6346]/15">
-            <div className="font-sans-display font-semibold text-[#1D6346] mb-1.5">Top strengths</div>
+            <div className="font-sans-display font-semibold text-[#1D6346] mb-1.5">{t('rev.topStrengths')}</div>
             <ul className="list-disc pl-4 space-y-1 text-[#113C36] leading-relaxed">
               {ev.topStrengths.map((s, i) => (
                 <li key={i}>{s}</li>
@@ -298,7 +299,7 @@ export function PostSubmissionReview({
             </ul>
           </div>
           <div className="p-3.5 rounded-[12px] bg-[#FDF0E2]/70 border border-[#A35116]/15">
-            <div className="font-sans-display font-semibold text-[#A35116] mb-1.5">Priority improvements</div>
+            <div className="font-sans-display font-semibold text-[#A35116] mb-1.5">{t('rev.priorityImprovements')}</div>
             <ul className="list-disc pl-4 space-y-1 text-[#113C36] leading-relaxed">
               {ev.priorityFixes.map((f, i) => (
                 <li key={i}>{f}</li>
@@ -320,7 +321,7 @@ export function PostSubmissionReview({
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-baseline gap-3">
               <div className="font-serif-display font-extrabold text-[22px] tracking-[-0.02em] text-[#113C36] tabular-nums leading-none">
-                {totalSlots > 0 ? `${correctSlots} / ${totalSlots}` : 'Writing submitted'}
+                {totalSlots > 0 ? `${correctSlots} / ${totalSlots}` : t('rev.writingSubmitted')}
               </div>
               {totalSlots > 0 && (
                 <span className="px-2.5 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-xs font-sans-display font-semibold text-[#113C36] tabular-nums">
@@ -333,12 +334,12 @@ export function PostSubmissionReview({
             </div>
 
             {/* Filter Tabs */}
-            <div className="flex items-center gap-1 p-1 bg-white/75 rounded-[10px] border border-[#E5DFD5]">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-white/75 rounded-[10px] border border-[#E5DFD5]">
               {(
                 [
-                  ['all', `All (${counts.all})`],
-                  ['incorrect', `Incorrect (${counts.incorrect})`],
-                  ['unanswered', `Unanswered (${counts.unanswered})`],
+                  ['all', t('rev.filterAll', { count: counts.all })],
+                  ['incorrect', t('rev.filterIncorrect', { count: counts.incorrect })],
+                  ['unanswered', t('rev.filterUnanswered', { count: counts.unanswered })],
                 ] as [ReviewFilter, string][]
               ).map(([id, label]) => (
                 <button
@@ -358,19 +359,20 @@ export function PostSubmissionReview({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <LanguageToggle compact />
             <button
               type="button"
               onClick={onViewProgress}
-              className="px-3.5 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-colors"
+              className="px-3.5 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-colors whitespace-nowrap"
             >
-              View progress
+              {t('rev.viewProgress')}
             </button>
             <button
               type="button"
               onClick={onDoneHome}
-              className="px-4 py-1.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer transition-colors"
+              className="px-4 py-1.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap"
             >
-              Back to studio
+              {t('rev.backToStudio')}
             </button>
           </div>
         </div>
@@ -422,23 +424,25 @@ export function PostSubmissionReview({
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="font-sans-display font-semibold text-base text-[#113C36]">
-                        Writing metrics and rubric feedback
+                        {t('rev.writingMetricsTitle')}
                       </h2>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-[#4A5955] tabular-nums">
                         <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8]">
-                          {m.wordCount} words
+                          {t('rev.wordsCount', { count: m.wordCount })}
                         </span>
                         <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8]">
-                          {m.sentenceCount} sentences
+                          {t('rev.sentencesCount', { count: m.sentenceCount })}
                         </span>
                         <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8]">
-                          {m.paragraphCount} paragraphs
+                          {t('rev.paragraphsCount', { count: m.paragraphCount })}
                         </span>
                         <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8]">
-                          {m.avgWordsPerSentence} words/sentence
+                          {t('rev.avgWordsPerSentence', { count: m.avgWordsPerSentence })}
                         </span>
                         <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8]">
-                          Opening line: {m.matchedMandatoryStarter ? 'Matched' : 'Not matched'}
+                          {m.matchedMandatoryStarter
+                            ? t('rev.openingMatchedLabel')
+                            : t('rev.openingNotMatchedLabel')}
                         </span>
                       </div>
                     </div>
@@ -446,13 +450,13 @@ export function PostSubmissionReview({
                       type="button"
                       disabled={evaluatingId === wr.submissionId}
                       onClick={() => handleEvaluateWriting(wr.submissionId)}
-                      className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-2 disabled:opacity-60 cursor-pointer transition-colors"
+                      className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-2 disabled:opacity-60 cursor-pointer transition-colors whitespace-nowrap"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
                       <span>
                         {evaluatingId === wr.submissionId
-                          ? 'Marking essay...'
-                          : 'Get rubric writing feedback'}
+                          ? t('rev.markingEssay')
+                          : t('rev.getRubricFeedback')}
                       </span>
                     </button>
                   </div>
@@ -478,14 +482,14 @@ export function PostSubmissionReview({
           <div className="max-w-md text-center space-y-3 p-6 rounded-[18px] bg-white border border-[#E5DFD5]">
             <CheckCircle2 className="w-8 h-8 text-[#1D6346] mx-auto" />
             <h2 className="font-sans-display font-semibold text-base text-[#113C36]">
-              No {filter} items in this session
+              {t('rev.noFilteredItems', { filter })}
             </h2>
             <button
               type="button"
               onClick={() => handleFilterChange('all')}
               className="px-4 py-2 rounded-[10px] bg-[#113C36] text-white text-xs font-sans-display font-semibold cursor-pointer"
             >
-              Show all items
+              {t('rev.showAllItems')}
             </button>
           </div>
         </main>
@@ -496,8 +500,10 @@ export function PostSubmissionReview({
             <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2.5">
                 <span className="font-sans-display font-semibold text-[#113C36] tabular-nums">
-                  Question {questions.findIndex((q) => q.questionId === activeQuestion.questionId) + 1} of{' '}
-                  {questions.length}
+                  {t('session.qOfTotal', {
+                    current: questions.findIndex((q) => q.questionId === activeQuestion.questionId) + 1,
+                    total: questions.length,
+                  })}
                 </span>
                 {activeStatus && activeQuestion.formatType !== 'WRIT_TYPED_TASK' && (
                   <span
@@ -512,17 +518,17 @@ export function PostSubmissionReview({
                     {activeStatus.isCorrect ? (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Correct</span>
+                        <span>{t('ws.correct')}</span>
                       </>
                     ) : activeStatus.hasUnanswered ? (
                       <>
                         <XCircle className="w-3.5 h-3.5" />
-                        <span>Unanswered</span>
+                        <span>{t('ws.unanswered')}</span>
                       </>
                     ) : (
                       <>
                         <XCircle className="w-3.5 h-3.5" />
-                        <span>Incorrect</span>
+                        <span>{isZh ? '错题' : 'Incorrect'}</span>
                       </>
                     )}
                   </span>
@@ -531,7 +537,7 @@ export function PostSubmissionReview({
 
               {flaggedIds.has(activeQuestion.questionId) ? (
                 <span className="text-xs font-medium text-[#A35116]">
-                  Flagged for review
+                  {t('rev.flaggedForReview')}
                 </span>
               ) : (
                 <button
@@ -541,10 +547,10 @@ export function PostSubmissionReview({
                       flaggingQid === activeQuestion.questionId ? null : activeQuestion.questionId
                     )
                   }
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-[#4A5955] hover:text-[#113C36] cursor-pointer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-[#4A5955] hover:text-[#113C36] cursor-pointer whitespace-nowrap"
                 >
                   <Flag className="w-3.5 h-3.5" />
-                  <span>Report an issue</span>
+                  <span>{t('rev.reportIssue')}</span>
                 </button>
               )}
             </div>
@@ -552,28 +558,28 @@ export function PostSubmissionReview({
             {flaggingQid === activeQuestion.questionId && (
               <div className="max-w-[1440px] mx-auto mt-2 p-3 rounded-[10px] bg-white border border-[#E5DFD5] flex flex-wrap gap-2">
                 <select
-                  aria-label="Flag reason"
+                  aria-label={t('rev.reportIssue')}
                   value={flagReason}
                   onChange={(e) => setFlagReason(e.target.value)}
                   className="px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-[#FAF8F5] text-xs"
                 >
-                  <option>Unclear wording or diagram</option>
-                  <option>Answer key seems incorrect</option>
-                  <option>Formatting / display issue</option>
+                  <option value="Unclear wording or diagram">{t('rev.flagReason1')}</option>
+                  <option value="Answer key seems incorrect">{t('rev.flagReason2')}</option>
+                  <option value="Formatting / display issue">{t('rev.flagReason3')}</option>
                 </select>
                 <input
                   type="text"
                   value={flagNotes}
                   onChange={(e) => setFlagNotes(e.target.value)}
-                  placeholder="Optional note..."
+                  placeholder={t('rev.flagNotePlaceholder')}
                   className="flex-1 min-w-48 px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-[#FAF8F5] text-xs"
                 />
                 <button
                   type="button"
                   onClick={() => handleSubmitFlag(activeQuestion.questionId)}
-                  className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] text-white text-xs font-sans-display font-semibold cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap"
                 >
-                  Submit report
+                  {t('rev.submitReport')}
                 </button>
               </div>
             )}
@@ -592,18 +598,18 @@ export function PostSubmissionReview({
                   type="button"
                   disabled={activeIndex <= 0}
                   onClick={() => handleSelectQuestion(filteredQuestions[activeIndex - 1].questionId)}
-                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  <span>Previous item</span>
+                  <span>{t('rev.previousItem')}</span>
                 </button>
                 <button
                   type="button"
                   disabled={activeIndex >= filteredQuestions.length - 1}
                   onClick={() => handleSelectQuestion(filteredQuestions[activeIndex + 1].questionId)}
-                  className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                  className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
                 >
-                  <span>Next item</span>
+                  <span>{t('rev.nextItem')}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>

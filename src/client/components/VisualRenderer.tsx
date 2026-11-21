@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '../i18n';
 import { createPortal } from 'react-dom';
 import { ImageOff, Maximize2, X } from 'lucide-react';
 import type { VisualSpec } from '../../shared/contracts';
@@ -21,6 +22,7 @@ export function VisualRenderer({
   compact = false,
   variant = 'default',
 }: VisualRendererProps) {
+  const { t } = useI18n();
   const [zoomOpen, setZoomOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -53,11 +55,11 @@ export function VisualRenderer({
             <button
               type="button"
               onClick={() => setZoomOpen(true)}
-              aria-label={`Zoom diagram: ${visual.altText}`}
+              aria-label={`${t('ws.zoomDiagram')}: ${visual.altText}`}
               className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               <Maximize2 className="w-3.5 h-3.5" />
-              <span>Zoom diagram</span>
+              <span>{t('ws.zoomDiagram')}</span>
             </button>
           )}
         </div>
@@ -99,7 +101,7 @@ export function VisualRenderer({
           ) : (
             <div className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-[var(--radius-sm)] bg-[var(--bg-surface)] text-[var(--text-secondary)] text-xs text-center">
               <ImageOff className="w-5 h-5" />
-              <span>{visual.altText || 'Visual asset unavailable'}</span>
+              <span>{visual.altText || t('ws.visualUnavailable')}</span>
             </div>
           )}
           {!isCompact && !imgError && (
@@ -111,7 +113,7 @@ export function VisualRenderer({
                 className="inline-flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
-                <span>Zoom</span>
+                <span>{t('ws.zoom')}</span>
               </button>
             </div>
           )}
@@ -191,7 +193,7 @@ export function VisualRenderer({
                 <button
                   type="button"
                   onClick={() => setZoomOpen(false)}
-                  aria-label="Close zoom preview"
+                  aria-label={t('ws.closeZoom')}
                   className="p-2 rounded-[var(--radius-sm)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] cursor-pointer"
                 >
                   <X className="w-4 h-4" />

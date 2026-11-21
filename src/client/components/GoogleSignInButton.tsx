@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../i18n';
 import { api, type ApiError, type AuthState } from '../api';
 
 interface GoogleIdentity {
@@ -58,6 +59,7 @@ export function GoogleSignInButton({
   onBusyChange: (busy: boolean) => void;
   onAuthenticated: (auth: AuthState) => void;
 }) {
+  const { t } = useI18n();
   const buttonRef = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<'loading' | 'ready' | 'unavailable' | 'failed'>('loading');
@@ -96,7 +98,7 @@ export function GoogleSignInButton({
           } catch (err) {
             if (!active) return;
             const failure = err as ApiError;
-            setError(failure.message || 'Google sign-in failed.');
+            setError(failure.message || t('auth.googleFailed'));
             if (failure.status === 401) {
               setStatus('loading');
               setAttempt((prev) => prev + 1);
@@ -121,19 +123,19 @@ export function GoogleSignInButton({
       active = false;
       button.replaceChildren();
     };
-  }, [admin, attempt, onAuthenticated, onBusyChange]);
+  }, [admin, attempt, onAuthenticated, onBusyChange, t]);
 
   return (
     <div>
       <div ref={buttonRef} className="flex justify-center" inert={disabled || signingIn} />
       {status === 'loading' || signingIn ? (
         <p role="status" className="mt-2 text-center text-sm text-[#4A5955]">
-          {signingIn ? 'Signing in with Google…' : 'Loading Google sign-in…'}
+          {signingIn ? t('auth.googleSigningIn') : t('auth.googleLoading')}
         </p>
       ) : null}
       {status === 'unavailable' && !localDevPinEnabled ? (
         <p role="alert" className="text-sm text-[var(--status-error)]">
-          Google sign-in is currently unavailable.
+          {t('auth.googleUnavailable')}
         </p>
       ) : null}
       {status === 'failed' ? (
@@ -145,7 +147,7 @@ export function GoogleSignInButton({
             setAttempt((prev) => prev + 1);
           }}
         >
-          Retry loading Google sign-in
+          {t('auth.googleRetry')}
         </button>
       ) : null}
       {error ? (

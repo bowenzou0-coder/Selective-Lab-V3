@@ -7,6 +7,7 @@ import {
   LogOut,
   SlidersHorizontal,
 } from 'lucide-react';
+import { LanguageToggle, useI18n } from '../i18n';
 
 export interface StudioShellProps {
   currentPath: string;
@@ -28,6 +29,7 @@ export function StudioShell({
   banner,
   children,
 }: StudioShellProps) {
+  const { t } = useI18n();
   const [homeAnchor, setHomeAnchor] = useState<'top' | 'drills' | 'mocks'>('top');
 
   const activeKey: NavKey = currentPath.startsWith('/admin')
@@ -68,11 +70,11 @@ export function StudioShell({
   };
 
   const navItems: { key: NavKey; label: string; shortLabel: string; href: string; icon: typeof LayoutGrid }[] = [
-    { key: 'dashboard', label: 'Dashboard', shortLabel: 'Home', href: '/', icon: LayoutGrid },
-    { key: 'drills', label: 'Practice drills', shortLabel: 'Drills', href: '/#practice-drills', icon: BookOpenCheck },
-    { key: 'mocks', label: 'Mock tests', shortLabel: 'Mocks', href: '/#mock-simulator', icon: Clock },
-    { key: 'progress', label: 'Progress', shortLabel: 'Progress', href: '/progress', icon: BarChart3 },
-    { key: 'admin', label: 'Admin', shortLabel: 'Admin', href: '/admin', icon: SlidersHorizontal },
+    { key: 'dashboard', label: t('nav.dashboard'), shortLabel: t('nav.dashboardShort'), href: '/', icon: LayoutGrid },
+    { key: 'drills', label: t('nav.drills'), shortLabel: t('nav.drillsShort'), href: '/#practice-drills', icon: BookOpenCheck },
+    { key: 'mocks', label: t('nav.mocks'), shortLabel: t('nav.mocksShort'), href: '/#mock-simulator', icon: Clock },
+    { key: 'progress', label: t('nav.progress'), shortLabel: t('nav.progressShort'), href: '/progress', icon: BarChart3 },
+    { key: 'admin', label: t('nav.admin'), shortLabel: t('nav.adminShort'), href: '/admin', icon: SlidersHorizontal },
   ];
 
   return (
@@ -80,25 +82,28 @@ export function StudioShell({
       {banner}
 
       {/* Mobile Top Brand Header */}
-      <header className="md:hidden px-4 pt-3.5 pb-2.5 flex items-center justify-between gap-3 bg-[#F3EFE8]">
+      <header className="md:hidden px-4 pt-3.5 pb-2.5 flex items-center justify-between gap-2 bg-[#F3EFE8]">
         <a
           href="/"
           onClick={(e) => {
             e.preventDefault();
             handleNav('dashboard');
           }}
-          className="font-serif-display font-extrabold text-[21px] tracking-[-0.02em] text-[#113C36] leading-none"
+          className="font-serif-display font-extrabold text-[21px] tracking-[-0.02em] text-[#113C36] leading-none truncate"
         >
-          Selective Lab
+          {t('app.name')}
         </a>
-        <button
-          type="button"
-          onClick={onSignOut}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          <span>Sign out</span>
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <LanguageToggle compact />
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            <span>{t('nav.signOut')}</span>
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 flex flex-col md:flex-row w-full max-w-[1440px] mx-auto">
@@ -113,10 +118,10 @@ export function StudioShell({
               }}
               className="block px-2.5 font-serif-display font-extrabold text-[22px] tracking-[-0.02em] text-[#113C36] leading-tight"
             >
-              Selective Lab
+              {t('app.name')}
             </a>
 
-            <nav className="space-y-1" aria-label="Main navigation">
+            <nav className="space-y-1" aria-label={t('nav.mainAria')}>
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeKey === item.key;
@@ -136,28 +141,31 @@ export function StudioShell({
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0 opacity-85" />
-                    <span>{item.label}</span>
+                    <span className="truncate">{item.label}</span>
                   </a>
                 );
               })}
             </nav>
           </div>
 
-          {/* Subtle Learner / Sync Badge + Sign Out */}
+          {/* Subtle Learner / Sync Badge + Language + Sign Out */}
           <div className="pt-4 border-t border-[#E5DFD5] space-y-2.5 px-1">
             <div className="flex items-center gap-2 px-1.5 text-xs text-[#4A5955]">
               <span className="w-2 h-2 rounded-full bg-[#1D6346] shrink-0" aria-hidden="true" />
               <span className="truncate font-medium">
-                {role === 'admin' ? 'Admin workspace' : 'Synced account'}
+                {role === 'admin' ? t('nav.adminWorkspace') : t('nav.syncedAccount')}
               </span>
+            </div>
+            <div className="px-1">
+              <LanguageToggle />
             </div>
             <button
               type="button"
               onClick={onSignOut}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-[10px] text-[13px] font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer"
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-[10px] text-[13px] font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer whitespace-nowrap"
             >
               <LogOut className="w-3.5 h-3.5 shrink-0" />
-              <span>Sign out</span>
+              <span>{t('nav.signOut')}</span>
             </button>
           </div>
         </aside>
@@ -173,7 +181,7 @@ export function StudioShell({
       {/* Collapsible Mobile Bottom Navigation Strip */}
       <nav
         className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#F3EFE8]/95 backdrop-blur-sm border-t border-[#E5DFD5] px-2 py-2 flex items-center justify-around gap-1"
-        aria-label="Mobile navigation"
+        aria-label={t('nav.mobileAria')}
       >
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -187,14 +195,14 @@ export function StudioShell({
                 handleNav(item.key);
               }}
               aria-current={isActive ? 'page' : undefined}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-colors ${
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-colors ${
                 isActive
                   ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5]'
                   : 'text-[#4A5955] font-medium'
               }`}
             >
               <Icon className="w-4 h-4 shrink-0" />
-              <span>{item.shortLabel}</span>
+              <span className="truncate max-w-full">{item.shortLabel}</span>
             </a>
           );
         })}
