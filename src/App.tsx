@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { api, type AuthState } from './client/api';
 import { AdminView } from './client/components/AdminView';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
@@ -118,9 +119,12 @@ export default function App() {
 
   if (loadingAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F3EFE8] text-sm text-[#4A5955] font-sans-text">
-        Loading Selective Lab...
-      </div>
+      <>
+        <div className="min-h-screen flex items-center justify-center bg-[#F3EFE8] text-sm text-[#4A5955] font-sans-text">
+          Loading Selective Lab...
+        </div>
+        <SpeedInsights />
+      </>
     );
   }
 
@@ -165,6 +169,7 @@ export default function App() {
             onAuthenticated={onAuthenticated}
             onBackHome={() => navigate('/')}
           />
+          <SpeedInsights />
         </>
       );
     }
@@ -177,6 +182,7 @@ export default function App() {
           onAuthenticated={onAuthenticated}
           onGoAdmin={() => navigate('/admin')}
         />
+        <SpeedInsights />
       </>
     );
   }
@@ -184,22 +190,25 @@ export default function App() {
   // Gate /admin if currently logged in only as student
   if (isAdminRoute && auth.role !== 'admin') {
     return (
-      <StudioShell
-        currentPath={effectivePath}
-        role={auth.role}
-        studentId={auth.studentId}
-        onNavigate={navigate}
-        onSignOut={handleLogout}
-        banner={banner}
-      >
-        <AdminPasswordGate
-          embedded
-          localDevPinEnabled={localDevPinEnabled}
-          initialError={authError}
-          onAuthenticated={onAuthenticated}
-          onBackHome={() => navigate('/')}
-        />
-      </StudioShell>
+      <>
+        <StudioShell
+          currentPath={effectivePath}
+          role={auth.role}
+          studentId={auth.studentId}
+          onNavigate={navigate}
+          onSignOut={handleLogout}
+          banner={banner}
+        >
+          <AdminPasswordGate
+            embedded
+            localDevPinEnabled={localDevPinEnabled}
+            initialError={authError}
+            onAuthenticated={onAuthenticated}
+            onBackHome={() => navigate('/')}
+          />
+        </StudioShell>
+        <SpeedInsights />
+      </>
     );
   }
 
@@ -216,35 +225,39 @@ export default function App() {
           onNavigate={navigate}
           onActiveSessionCleared={handleActiveSessionCleared}
         />
+        <SpeedInsights />
       </>
     );
   }
 
   return (
-    <StudioShell
-      currentPath={effectivePath}
-      role={auth.role}
-      studentId={auth.studentId}
-      onNavigate={navigate}
-      onSignOut={handleLogout}
-      banner={banner}
-    >
-      {isAdminRoute ? (
-        <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
-      ) : effectivePath.startsWith('/progress') ? (
-        <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
-      ) : (
-        <HomeView
-          key={auth.studentId}
-          onOpenSession={(id, isLocked = true) => {
-            if (isLocked) {
-              setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
-            }
-            navigate(`/session/${id}`);
-          }}
-          onNavigate={navigate}
-        />
-      )}
-    </StudioShell>
+    <>
+      <StudioShell
+        currentPath={effectivePath}
+        role={auth.role}
+        studentId={auth.studentId}
+        onNavigate={navigate}
+        onSignOut={handleLogout}
+        banner={banner}
+      >
+        {isAdminRoute ? (
+          <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
+        ) : effectivePath.startsWith('/progress') ? (
+          <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
+        ) : (
+          <HomeView
+            key={auth.studentId}
+            onOpenSession={(id, isLocked = true) => {
+              if (isLocked) {
+                setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
+              }
+              navigate(`/session/${id}`);
+            }}
+            onNavigate={navigate}
+          />
+        )}
+      </StudioShell>
+      <SpeedInsights />
+    </>
   );
 }
