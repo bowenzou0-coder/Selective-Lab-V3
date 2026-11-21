@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import { api, type AuthState } from './client/api';
 import { AdminView } from './client/components/AdminView';
@@ -119,17 +119,6 @@ export default function App() {
     }
   };
 
-  if (loadingAuth) {
-    return (
-      <>
-        <div className="min-h-screen flex items-center justify-center bg-[#F3EFE8] text-sm text-[#4A5955] font-sans-text">
-          {t('app.loading')}
-        </div>
-        <SpeedInsights />
-      </>
-    );
-  }
-
   const localDevPinEnabled = auth?.localDevPinEnabled === true;
   const isDisposableDemo = auth?.isDisposableDemo === true;
 
@@ -138,6 +127,13 @@ export default function App() {
   const effectivePath = lockedPath ?? path;
   const isAdminRoute = effectivePath.startsWith('/admin');
   const sessionMatch = effectivePath.match(/^\/session\/([^/]+)$/);
+  const speedInsightsRoute = sessionMatch
+    ? '/session/[sessionId]'
+    : isAdminRoute
+      ? '/admin'
+      : effectivePath.startsWith('/progress')
+        ? '/progress'
+        : '/';
 
   const demoBanner = isDisposableDemo ? (
     <div
@@ -159,10 +155,18 @@ export default function App() {
     </>
   );
 
-  // Gate unauthenticated visitors
-  if (!auth?.authenticated) {
+  let content: ReactNode;
+
+  if (loadingAuth) {
+    content = (
+      <div className="min-h-screen flex items-center justify-center bg-[#F3EFE8] text-sm text-[#4A5955] font-sans-text">
+        {t('app.loading')}
+      </div>
+    );
+  } else if (!auth?.authenticated) {
+    // Gate unauthenticated visitors
     if (isAdminRoute) {
-      return (
+      content = (
         <>
           {demoBanner}
           <AdminPasswordGate
@@ -171,52 +175,44 @@ export default function App() {
             onAuthenticated={onAuthenticated}
             onBackHome={() => navigate('/')}
           />
-          <SpeedInsights />
         </>
       );
-    }
-    return (
-      <>
-        {demoBanner}
-        <StudentPinGate
-          localDevPinEnabled={localDevPinEnabled}
-          initialError={authError}
-          onAuthenticated={onAuthenticated}
-          onGoAdmin={() => navigate('/admin')}
-        />
-        <SpeedInsights />
-      </>
-    );
-  }
-
-  // Gate /admin if currently logged in only as student
-  if (isAdminRoute && auth.role !== 'admin') {
-    return (
-      <>
-        <StudioShell
-          currentPath={effectivePath}
-          role={auth.role}
-          studentId={auth.studentId}
-          onNavigate={navigate}
-          onSignOut={handleLogout}
-          banner={banner}
-        >
-          <AdminPasswordGate
-            embedded
+    } else {
+      content = (
+        <>
+          {demoBanner}
+          <StudentPinGate
             localDevPinEnabled={localDevPinEnabled}
             initialError={authError}
             onAuthenticated={onAuthenticated}
-            onBackHome={() => navigate('/')}
+            onGoAdmin={() => navigate('/admin')}
           />
-        </StudioShell>
-        <SpeedInsights />
-      </>
+        </>
+      );
+    }
+  } else if (isAdminRoute && auth.role !== 'admin') {
+    // Gate /admin if currently logged in only as student
+    content = (
+      <StudioShell
+        currentPath={effectivePath}
+        role={auth.role}
+        studentId={auth.studentId}
+        onNavigate={navigate}
+        onSignOut={handleLogout}
+        banner={banner}
+      >
+        <AdminPasswordGate
+          embedded
+          localDevPinEnabled={localDevPinEnabled}
+          initialError={authError}
+          onAuthenticated={onAuthenticated}
+          onBackHome={() => navigate('/')}
+        />
+      </StudioShell>
     );
-  }
-
-  // Quiet Exam Room — drop the Oat Studio sidebar completely during active sessions
-  if (sessionMatch) {
-    return (
+  } else if (sessionMatch) {
+    // Quiet Exam Room — drop the Oat Studio sidebar completely during active sessions
+    content = (
       <>
         {demoBanner}
         <SessionPlayerView
@@ -227,13 +223,10 @@ export default function App() {
           onNavigate={navigate}
           onActiveSessionCleared={handleActiveSessionCleared}
         />
-        <SpeedInsights />
       </>
     );
-  }
-
-  return (
-    <>
+  } else {
+    content = (
       <StudioShell
         currentPath={effectivePath}
         role={auth.role}
@@ -259,7 +252,13 @@ export default function App() {
           />
         )}
       </StudioShell>
-      <SpeedInsights />
+    );
+  }
+
+  return (
+    <>
+      {content}
+      <SpeedInsights route={speedInsightsRoute} />
     </>
   );
 }

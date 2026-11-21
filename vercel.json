@@ -17,7 +17,7 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!api/|assets/|fonts/|docs/).*)",
+      "source": "/((?!api/|assets/|fonts/|docs/|_vercel/).*)",
       "destination": "/index.html"
     }
   ],
