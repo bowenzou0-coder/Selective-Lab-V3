@@ -1,36 +1,46 @@
-# Selective Lab (V3)
+# Selective Lab
 
-Server-authoritative NSW Selective exam trainer built with React, Vite, TypeScript, Express/Node, Cloud Firestore, Firebase Auth, Cloud Storage, and server-side Gemini.
+NSW Selective exam practice with a Vite frontend and an Express API. Vercel Hobby serves the app and Neon Free stores the question bank, learner history, configuration and uploaded media. The API and database run in Sydney. Open [the live app](https://selective-lab-v3.vercel.app).
 
-## Managed Google Setup (Primary Operating Model)
+## Run locally
 
-Selective Lab is designed to run directly on Google AI Studio and Google Cloud managed services:
+Use Node.js 24 and install dependencies with `npm ci`. The configured checkout reads its ignored `.env`. On a fresh checkout, copy `.env.example` to `.env` and configure the following.
 
-- **Single Public Config**: `firebase-applet-config.json` provides `projectId`, `firestoreDatabaseId` (`ai-studio-nswselectiveprac-b9b787e9-30e1-483b-b6a1-760d211f0835`), `storageBucket`, and web Auth settings automatically — no repeated env vars needed.
-- **Managed Cloud Run Deployment**: `server.ts` serves both the built SPA (`dist/` in production) and `/api/**` together from port `3000`.
-- **Database & Auth**: Cloud Firestore (`FirestoreRepository`) is the single authoritative database; Firebase Auth ID tokens are verified server-side; bootstrapped admin email defaults to `bowenzou0@gmail.com`.
-- **Managed Secrets**: Configure `SESSION_SECRET` (strong >= 16-char secret) and `GEMINI_API_KEY` through AI Studio / Cloud Run Secrets. Never expose API keys or private service account JSON to clients.
-- **Runtime Diagnostics**: Signed-in admins can inspect live Firestore, Storage, attached service account identity, and Gemini readiness in **Admin Console → Runtime Diagnostics** (`/api/admin/diagnostics`).
+| Setting | Value |
+| --- | --- |
+| `DATABASE_URL` | Pooled connection URL from Neon, with `sslmode=verify-full`. A local Postgres instance also works. |
+| `GOOGLE_CLIENT_ID` | Web application client ID from Google Auth Platform. Add `http://localhost:3000` and the exact production origin to its authorized JavaScript origins. |
+| `SESSION_SECRET` | Generate a private signing secret with `openssl rand -hex 48`. All production instances share it. |
+| `ADMIN_EMAILS` | Comma-separated verified addresses. Defaults to `bowenzou0@gmail.com,yolandayue0319@gmail.com`. |
+| `GOOGLE_LEGACY_STUDENT_IDS` | Optional mapping produced during Firestore cutover. It links existing progress to a returning Google account. |
+| `GEMINI_API_KEY` | Optional server-side key for AI features. Its quota and billing belong to the Google project. |
 
-## Verification Commands
+Start the app with `npm run dev` and open `http://localhost:3000`. Pointing `DATABASE_URL` at production gives the local app access to live data. Use a separate database for experiments.
 
-```bash
-npm ci
-npm run lint         # tsc --noEmit
-npm run lint:rules   # npx eslint firestore.rules
-npm test             # tsx --test src/shared/*.test.ts src/server/*.test.ts src/server/storage/*.test.ts firestore.rules.test.ts
-npm run build        # vite build
+## Publish questions
+
+```sh
+npm run db:push -- batches/ready-to-import.json
 ```
 
-## Optional Local Development (Not Required for AI Studio)
+The CLI validates the manifest and imports the questions directly into the configured database in a transaction. It reports the import result locally. The website reads the updated bank on its next request. See [the agent playbook](AGENTS.md) for authoring and strict calibration checks.
 
-If you want to run outside AI Studio locally:
+## Deploy the application
 
-- Copy `local-dev.env.example` for optional Firebase Emulators (`npm run emulators`, `npm run seed`, `npm run dev:emulator`) or isolated disposable preview (`npm run dev:demo`).
-- Do **not** set `ALLOW_LOCAL_DEV_PIN`, `ALLOW_DEMO_MEMORY_DB`, or Firebase emulator env vars in production.
+The Vercel project is `selective-lab-v3`. On a new machine, use `npx vercel login` and `npx vercel link` to select that project in the Hobby workspace. Set the server environment variables above in the project's Production environment, then run:
 
-## Backup, Migration & Admin Bootstrap
+```sh
+npm run deploy
+```
 
-- **Admin Bootstrap**: Ensure the admin email (`bowenzou0@gmail.com` or `BOOTSTRAPPED_ADMIN_EMAIL`) exists in Firebase Auth, or run `npm run admin:bootstrap -- --email=bowenzou0@gmail.com`.
-- **Canonical Backup & Restore**: Download or dry-run/restore `v3_canonical_1.0` bundles from **Admin → Backup & Migration**.
-- **Preflight Scan**: `npm run migrate:preflight` inspects legacy missing timestamps/snapshots and `/assets/uploads/*` media migration status without modifying existing records.
+Vercel serves `dist/` as static files and routes `/api/*` to one Node function running Express. Sign-in exchanges a Google ID token for the app's `selective_lab_session` cookie. Uploaded images have a 3 MiB limit to fit the platform's base64 JSON request limit. For large bank manifests use the direct CLI.
+
+## Verify
+
+```sh
+npm run lint
+npm test
+npm run build
+```
+
+The [cutover guide](docs/firestore-postgres-cutover.md) documents exports, identity links and restore checks, and `src/shared/firestoreCodec.test.ts` keeps the cutover decoder covered.

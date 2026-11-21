@@ -135,7 +135,7 @@ export function DataAndDesignPanel({
               Study data controls
             </h2>
             <p className="text-xs text-[#4A5955] max-w-2xl leading-relaxed">
-              Reset all test sessions, question attempts, spaced-repetition memory, daily plans, and writing submissions back to zero. Your entire Question Bank, passages, batches, and adaptive settings stay untouched.
+              Clear this account’s test sessions, question attempts, spaced-repetition memory, daily plans, and writing submissions.
             </p>
           </div>
           {counts && (
@@ -190,7 +190,7 @@ export function DataAndDesignPanel({
               className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Reset all study progress</span>
+              <span>Reset my study progress</span>
             </button>
           </div>
         ) : (
@@ -199,11 +199,10 @@ export function DataAndDesignPanel({
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <div className="font-sans-display font-semibold">
-                  Confirm permanent reset of all student attempts and progress
+                  Confirm permanent reset of your attempts and progress
                 </div>
                 <p className="leading-relaxed">
-                  This clears all test sessions, attempts, skill mastery, spaced-repetition memory, daily plans, and writing submissions to zero. All{' '}
-                  {counts?.bankQuestionsCount ?? 0} Question Bank items and import batches will remain completely intact. Type{' '}
+                  Type{' '}
                   <strong className="font-mono-code">RESET</strong> below to proceed.
                 </p>
               </div>
@@ -348,10 +347,10 @@ export function DataAndDesignPanel({
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="font-sans-display font-semibold text-sm text-[#113C36]">
-              Runtime & Firestore diagnostics
+              Runtime diagnostics
             </h3>
             <p className="text-xs text-[#78756E]">
-              Verify Firestore connectivity, project ID, and Gemini configuration.
+              Check the database connection and sign-in configuration.
             </p>
           </div>
           <button
@@ -372,15 +371,15 @@ export function DataAndDesignPanel({
               <dd className="font-mono-code text-[#113C36] mt-0.5">{diagnostics.runtimeBackend}</dd>
             </div>
             <div>
-              <dt className="text-[#78756E]">Project</dt>
-              <dd className="font-mono-code text-[#113C36] mt-0.5">{diagnostics.projectId}</dd>
+              <dt className="text-[#78756E]">Google Sign-In</dt>
+              <dd className="font-mono-code text-[#113C36] mt-0.5">{diagnostics.googleConfigured ? 'Configured' : 'Not configured'}</dd>
             </div>
             <div>
-              <dt className="text-[#78756E]">Firestore probe</dt>
+              <dt className="text-[#78756E]">Database probe</dt>
               <dd className="font-mono-code text-[#113C36] mt-0.5">
-                {diagnostics.firestoreProbe.ok
-                  ? `OK (${diagnostics.firestoreProbe.latencyMs}ms)`
-                  : diagnostics.firestoreProbe.errorMessage || 'Error'}
+                {diagnostics.databaseProbe.ok
+                  ? `OK (${diagnostics.databaseProbe.latencyMs}ms)`
+                  : diagnostics.databaseProbe.errorMessage || 'Error'}
               </dd>
             </div>
             <div>

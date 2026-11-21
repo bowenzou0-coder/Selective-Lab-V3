@@ -7,3 +7,10 @@ coverage/
 .env*
 !.env.example
 batches/
+.neon
+.vercel/
+.playwright-cli/
+*.preview.html
+selective-lab-backup*.json
+google-legacy-student-ids*.json
+firestore.json

@@ -1,6 +1,0 @@
-{
-  "name": "NSW Selective Practice",
-  "description": "Adaptive learning, Janison-style exam simulation, and rubric feedback for the May 2027 NSW Selective High School Placement Test.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

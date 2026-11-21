@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import type {
   BankImportManifest,
   DailyFocusPlan,
@@ -21,9 +21,9 @@ import type {
 } from '../../shared/contracts.ts';
 import { DEFAULT_LEARNING_CONFIG } from '../../shared/contracts.ts';
 import { computeEvidenceRevision } from '../../shared/mastery.ts';
-import { getBootstrappedAdminEmail } from '../firebaseVerify.ts';
-import { computeCanonicalHash } from '../manifestValidator.ts';
+import { computeCanonicalHash, validateAndDryRunManifest } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
+import { getPostgresPoolConfig } from './postgresConfig.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -35,6 +35,8 @@ import {
   type FinalizeSessionInput,
   type FinalizeSessionResult,
   type MigrationPreflightReport,
+  type ProgressCountsResponse,
+  type ProgressResetResponse,
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
@@ -56,40 +58,81 @@ declare global {
   var _nswSelectivePgPool: Pool | undefined;
 }
 
-function getOrCreatePgPool(): Pool {
+export function createPostgresPool(): Pool {
+  const pool = new Pool(getPostgresPoolConfig());
+  pool.on('error', (err) => {
+    console.error('Unexpected error on idle Postgres pool client:', err.message);
+  });
+  return pool;
+}
+
+export function getOrCreatePgPool(): Pool {
   if (!global._nswSelectivePgPool) {
-    global._nswSelectivePgPool = new Pool({
-      host: process.env.SQL_HOST,
-      user: process.env.SQL_USER,
-      password: process.env.SQL_PASSWORD,
-      database: process.env.SQL_DB_NAME,
-      max: 10,
-      connectionTimeoutMillis: 15000,
-    });
-    global._nswSelectivePgPool.on('error', (err) => {
-      console.error('Unexpected error on idle SQL pool client:', err);
-    });
+    global._nswSelectivePgPool = createPostgresPool();
   }
   return global._nswSelectivePgPool;
 }
 
+type ManifestImportResult = Awaited<ReturnType<AppRepository['importManifest']>> & { replayed: boolean };
+const schemaReadyByPool = new WeakMap<Pool, Promise<void>>();
+
+function manifestBatchId(manifest: object): string {
+  const canonical = JSON.stringify(manifest, (key, value: unknown) => {
+    if (key === 'evidenceRevision') return undefined;
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+  });
+  return `batch_pg_${crypto.createHash('sha256').update(canonical).digest('hex')}`;
+}
+
+function manifestImportResult(batch: ImportBatchRecord, replayed: boolean): ManifestImportResult {
+  return {
+    imported: batch.newQuestionIds.length,
+    versionBumped: batch.versionBumpedQuestionIds.length,
+    skipped: batch.skippedQuestionIds.length,
+    batch,
+    replayed,
+  };
+}
+
 export class PostgresRepository implements AppRepository {
-  readonly backendName = 'cloudsql_postgres' as const;
-  private pool: Pool;
-  private schemaReadyPromise: Promise<void> | null = null;
+  readonly backendName = 'postgres' as const;
 
-  constructor() {
-    this.pool = getOrCreatePgPool();
-  }
+  constructor(private readonly pool: Pool = getOrCreatePgPool()) {}
 
-  private async ensureSchema(): Promise<void> {
-    if (!this.schemaReadyPromise) {
-      this.schemaReadyPromise = this.runSchemaInit().catch((err) => {
-        this.schemaReadyPromise = null;
+  async ensureSchema(): Promise<void> {
+    let schemaReady = schemaReadyByPool.get(this.pool);
+    if (!schemaReady) {
+      schemaReady = this.runSchemaInit().catch((err) => {
+        schemaReadyByPool.delete(this.pool);
         throw err;
       });
+      schemaReadyByPool.set(this.pool, schemaReady);
     }
-    await this.schemaReadyPromise;
+    await schemaReady;
+  }
+
+  private async transaction<T>(
+    work: (client: PoolClient) => Promise<T>,
+    begin = 'BEGIN ISOLATION LEVEL READ COMMITTED'
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    let discardClient = false;
+    try {
+      await client.query(begin);
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        discardClient = true;
+      }
+      throw error;
+    } finally {
+      client.release(discardClient);
+    }
   }
 
   private async runSchemaInit(): Promise<void> {
@@ -214,16 +257,24 @@ export class PostgresRepository implements AppRepository {
         data JSONB NOT NULL,
         PRIMARY KEY (student_id, plan_date)
       );
+      CREATE INDEX IF NOT EXISTS questions_family_version_idx ON questions (question_family_id, version DESC);
+      CREATE INDEX IF NOT EXISTS sessions_student_started_idx ON sessions (student_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS part_attempts_student_created_idx ON part_attempts (student_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS writing_submissions_student_idx ON writing_submissions (student_id);
+      CREATE INDEX IF NOT EXISTS writing_evaluations_submission_idx ON writing_evaluations (submission_id, created_at DESC);
     `;
     try {
-      await this.pool.query(ddl);
-      const { rows } = await this.pool.query('SELECT COUNT(*)::int AS cnt FROM admin_config_versions');
-      if (rows[0]?.cnt === 0) {
-        await this.pool.query(
-          'INSERT INTO admin_config_versions (config_version_id, version_number, notes, config) VALUES ($1, $2, $3, $4)',
+      await this.transaction(async (client) => {
+        // IF NOT EXISTS alone can race with DDL from another cold function instance.
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('selective_lab_schema'), hashtext(current_schema()))");
+        await client.query(ddl);
+        await client.query(
+          `INSERT INTO admin_config_versions (config_version_id, version_number, notes, config)
+           SELECT $1, $2, $3, $4 WHERE NOT EXISTS (SELECT 1 FROM admin_config_versions)
+           ON CONFLICT (config_version_id) DO NOTHING`,
           ['cfg_v1', 1, 'Default Selective Lab Learning Config', JSON.stringify(DEFAULT_LEARNING_CONFIG)]
         );
-      }
+      });
     } catch (error) {
       console.error('Database schema initialization failed:', error);
       throw new Error('Database initialization failed. Please try again later.', { cause: error });
@@ -232,10 +283,16 @@ export class PostgresRepository implements AppRepository {
 
   async initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT COUNT(*)::int AS cnt FROM questions');
-    if (rows[0]?.cnt === 0) {
-      await this.importManifest(seedManifest, 'system_seed');
-    }
+    await this.transaction(async (client) => {
+      await this.lockQuestionBank(client);
+      const existing = await client.query('SELECT 1 FROM questions LIMIT 1');
+      if (existing.rows.length === 0) {
+        const batchId = manifestBatchId(seedManifest);
+        if (!(await this.findManifestImport(client, batchId))) {
+          await this.writeManifest(client, seedManifest, 'system_seed', batchId);
+        }
+      }
+    });
   }
 
   async upsertUserFromAuth(input: {
@@ -245,9 +302,7 @@ export class PostgresRepository implements AppRepository {
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }> {
     await this.ensureSchema();
-    const isAdmin =
-      input.email.trim().toLowerCase() === getBootstrappedAdminEmail().toLowerCase();
-    const role: 'student' | 'admin' = isAdmin ? 'admin' : 'student';
+    const role: 'student' | 'admin' = input.isBootstrappedAdmin ? 'admin' : 'student';
     const displayName = (input.displayName || input.email.split('@')[0] || 'Learner').slice(0, 120);
     await this.pool.query(
       `INSERT INTO users (uid, role, display_name, email, updated_at)
@@ -262,6 +317,49 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     const { rows } = await this.pool.query('SELECT role FROM users WHERE uid = $1', [uid]);
     return rows[0]?.role === 'admin';
+  }
+
+  async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query<ProgressCountsResponse>(`
+      SELECT (SELECT count(*)::int FROM sessions WHERE student_id = $1) AS "sessionsCount",
+             (SELECT count(*)::int FROM part_attempts WHERE student_id = $1) AS "attemptsCount",
+             (SELECT count(*)::int FROM question_evidence WHERE student_id = $1) AS "evidenceCount",
+             (SELECT count(*)::int FROM writing_submissions WHERE student_id = $1) AS "writingCount",
+             (SELECT count(DISTINCT question_family_id)::int FROM questions) AS "bankQuestionsCount"`,
+      [studentId]
+    );
+    return rows[0];
+  }
+
+  async resetStudentProgress(studentId: string): Promise<ProgressResetResponse> {
+    await this.ensureSchema();
+    return this.transaction(async (client) => {
+      await this.lockStudentProgress(client, studentId);
+      const sessions = await client.query('DELETE FROM sessions WHERE student_id = $1', [studentId]);
+      await client.query('DELETE FROM session_snapshots WHERE student_id = $1', [studentId]);
+      const attempts = await client.query('DELETE FROM part_attempts WHERE student_id = $1', [studentId]);
+      const skills = await client.query('DELETE FROM skill_states WHERE student_id = $1', [studentId]);
+      const memory = await client.query('DELETE FROM question_memory WHERE student_id = $1', [studentId]);
+      const evidence = await client.query('DELETE FROM question_evidence WHERE student_id = $1', [studentId]);
+      await client.query(`
+        DELETE FROM writing_evaluations e USING writing_submissions s
+        WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [studentId]);
+      const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [studentId]);
+      const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [studentId]);
+      const bank = await client.query<{ count: number }>('SELECT count(DISTINCT question_family_id)::int AS count FROM questions');
+      return {
+        ok: true,
+        clearedSessions: sessions.rowCount ?? 0,
+        clearedAttempts: attempts.rowCount ?? 0,
+        clearedSkillStates: skills.rowCount ?? 0,
+        clearedMemory: memory.rowCount ?? 0,
+        clearedEvidence: evidence.rowCount ?? 0,
+        clearedWriting: writing.rowCount ?? 0,
+        clearedDailyPlans: plans.rowCount ?? 0,
+        preservedQuestionsCount: bank.rows[0].count,
+      };
+    });
   }
 
   async hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void> {
@@ -410,18 +508,13 @@ export class PostgresRepository implements AppRepository {
 
   async listQuestionVersions(questionFamilyId: string): Promise<QuestionVersionSummary[]> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query(
-      'SELECT data FROM questions WHERE question_family_id = $1 ORDER BY version DESC',
+    const { rows } = await this.pool.query<{ question: QuestionItem; stimulus: StimulusGroup | null }>(
+      `SELECT q.data AS question, s.data AS stimulus FROM questions q
+       LEFT JOIN stimuli s ON s.stimulus_id = q.stimulus_id
+       WHERE q.question_family_id = $1 ORDER BY q.version DESC`,
       [questionFamilyId]
     );
-    const qs = rows.map((r) => r.data as QuestionItem);
-    const stimMap = await this.listStimuliByIds(
-      qs.map((q) => q.stimulusId).filter((id): id is string => Boolean(id))
-    );
-    return qs.map((q) => ({
-      question: q,
-      stimulus: q.stimulusId ? stimMap[q.stimulusId] : undefined,
-    }));
+    return rows.map(({ question, stimulus }) => ({ question, stimulus: stimulus ?? undefined }));
   }
 
   async listStimuliByIds(stimulusIds: string[]): Promise<Record<string, StimulusGroup>> {
@@ -440,35 +533,107 @@ export class PostgresRepository implements AppRepository {
     questionId: string
   ): Promise<{ question: QuestionItem; stimulus?: StimulusGroup } | null> {
     await this.ensureSchema();
-    const qRes = await this.pool.query('SELECT data FROM questions WHERE question_id = $1', [questionId]);
-    if (qRes.rows.length === 0) return null;
-    const question = qRes.rows[0].data as QuestionItem;
-    let stimulus: StimulusGroup | undefined;
-    if (question.stimulusId) {
-      const sRes = await this.pool.query('SELECT data FROM stimuli WHERE stimulus_id = $1', [question.stimulusId]);
-      if (sRes.rows.length > 0) stimulus = sRes.rows[0].data as StimulusGroup;
-    }
-    return { question, stimulus };
+    const { rows: [row] } = await this.pool.query<{ question: QuestionItem; stimulus: StimulusGroup | null }>(
+      `SELECT q.data AS question, s.data AS stimulus FROM questions q
+       LEFT JOIN stimuli s ON s.stimulus_id = q.stimulus_id WHERE q.question_id = $1`,
+      [questionId]
+    );
+    return row ? { question: row.question, stimulus: row.stimulus ?? undefined } : null;
   }
 
   async importManifest(
     manifest: BankImportManifest,
     importedBy = 'admin'
-  ): Promise<{ imported: number; skipped: number; versionBumped: number; batch: ImportBatchRecord }> {
+  ): Promise<ManifestImportResult> {
     await this.ensureSchema();
+    const batchId = manifestBatchId(manifest);
+    return this.transaction(async (client) => {
+      await this.lockQuestionBank(client);
+      return (await this.findManifestImport(client, batchId)) ??
+        this.writeManifest(client, manifest, importedBy, batchId);
+    });
+  }
+
+  async validateAndImportManifest(raw: unknown, importedBy: string, options: { dryRun: boolean }) {
+    if (!options.dryRun) await this.ensureSchema();
+    // Key direct imports to the submitted JSON. Re-validating it against a changed
+    // stimulus could otherwise produce a different normalized question for a retry.
+    const batchId = raw && typeof raw === 'object' && !Array.isArray(raw) ? manifestBatchId(raw) : null;
+    return this.transaction(async (client) => {
+      if (!options.dryRun) await this.lockQuestionBank(client);
+      const hasBatchesTable = !options.dryRun ||
+        (await client.query("SELECT to_regclass('import_batches') AS batches")).rows[0].batches !== null;
+      const previous = batchId && hasBatchesTable ? await this.findManifestImport(client, batchId) : null;
+      if (previous) {
+        const { batch } = previous;
+        return {
+          report: {
+            valid: true,
+            batchLabel: batch.batchLabel,
+            stimuliCount: batch.stimuliCount,
+            questionsCount: batch.questionsCount,
+            newQuestions: 0,
+            unchangedQuestions: batch.questionsCount,
+            versionBumpedQuestions: 0,
+            errors: [],
+            warnings: [],
+          },
+          result: options.dryRun ? null : previous,
+          replayed: true,
+        };
+      }
+      const { questions, stimuliById } = await this.readQuestionBank(client, options.dryRun);
+      const { manifest, report } = validateAndDryRunManifest(raw, questions, Object.fromEntries(stimuliById));
+      const result = batchId && manifest && report.valid && !options.dryRun
+        ? await this.writeManifest(client, manifest, importedBy, batchId, { questions, stimuliById })
+        : null;
+      return { report, result, replayed: false };
+    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined);
+  }
+
+  private async lockQuestionBank(client: PoolClient): Promise<void> {
+    // Serialize version assignment with imports and other bank writers, even when the bank is empty.
+    await client.query('LOCK TABLE stimuli, questions IN SHARE ROW EXCLUSIVE MODE');
+  }
+
+  private async readQuestionBank(client: PoolClient, allowUninitialized = false) {
+    if (allowUninitialized) {
+      const { rows } = await client.query("SELECT to_regclass('questions') AS questions");
+      if (!rows[0].questions) {
+        return { questions: [], stimuliById: new Map<string, StimulusGroup>() };
+      }
+    }
+    const stimuli = await client.query<{ stimulus_id: string; data: StimulusGroup }>(
+      'SELECT stimulus_id, data FROM stimuli'
+    );
+    const questions = await client.query<{ data: QuestionItem }>('SELECT data FROM questions');
+    return {
+      questions: questions.rows.map((row) => row.data),
+      stimuliById: new Map(stimuli.rows.map((row) => [row.stimulus_id, row.data])),
+    };
+  }
+
+  private async findManifestImport(client: PoolClient, batchId: string): Promise<ManifestImportResult | null> {
+    const previous = await client.query<{ data: ImportBatchRecord }>(
+      'SELECT data FROM import_batches WHERE batch_id = $1',
+      [batchId]
+    );
+    return previous.rows[0] ? manifestImportResult(previous.rows[0].data, true) : null;
+  }
+
+  private async writeManifest(
+    client: PoolClient,
+    manifest: BankImportManifest,
+    importedBy: string,
+    batchId: string,
+    bank?: Awaited<ReturnType<PostgresRepository['readQuestionBank']>>
+  ): Promise<ManifestImportResult> {
     const nowIso = new Date().toISOString();
-    const batchId = `batch_${nowIso.slice(0, 10).replace(/-/g, '')}_${crypto.randomUUID().slice(0, 6)}`;
-    let imported = 0;
-    let skipped = 0;
-    let versionBumped = 0;
     const newQuestionIds: string[] = [];
     const versionBumpedQuestionIds: string[] = [];
     const skippedQuestionIds: string[] = [];
-
-    const stimMap = new Map<string, StimulusGroup>();
-    const existingStimRows = await this.pool.query('SELECT stimulus_id, data FROM stimuli');
-    for (const r of existingStimRows.rows) stimMap.set(r.stimulus_id, r.data as StimulusGroup);
-
+    const { questions, stimuliById } = bank ?? await this.readQuestionBank(client);
+    const stimulusWrites: StimulusGroup[] = [];
     for (const s of manifest.stimuli || []) {
       const hash =
         s.contentHash ||
@@ -483,83 +648,71 @@ export class PostgresRepository implements AppRepository {
         ...s,
         contentHash: hash,
         batchId: s.batchId || batchId,
-        createdAtIso: s.createdAtIso || nowIso,
+        createdAtIso: stimuliById.get(s.stimulusId)?.createdAtIso || s.createdAtIso || nowIso,
         updatedAtIso: nowIso,
       };
-      stimMap.set(s.stimulusId, payload);
-      await this.pool.query(
-        `INSERT INTO stimuli (stimulus_id, stimulus_family_id, version, content_hash, section, data)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (stimulus_id) DO UPDATE SET data = EXCLUDED.data, content_hash = EXCLUDED.content_hash`,
-        [s.stimulusId, s.stimulusFamilyId, s.version, hash, s.section, JSON.stringify(payload)]
-      );
+      stimuliById.set(s.stimulusId, payload);
+      stimulusWrites.push(payload);
     }
 
-    const existingRows = await this.pool.query('SELECT data FROM questions');
-    const latestByFamily = new Map<string, QuestionItem>();
-    const existingIds = new Set<string>();
-    for (const r of existingRows.rows) {
-      const eq = r.data as QuestionItem;
-      existingIds.add(eq.questionId);
-      const prev = latestByFamily.get(eq.questionFamilyId);
-      if (!prev || eq.version > prev.version) latestByFamily.set(eq.questionFamilyId, eq);
-    }
-
+    const latestByFamily = new Map(selectLatestByFamily(questions).map((q) => [q.questionFamilyId, q]));
+    const existingIds = new Set(questions.map((q) => q.questionId));
+    const questionWrites: QuestionItem[] = [];
     for (const rawQ of manifest.questions || []) {
       const q = structuredClone(rawQ);
       if (!q.poolType) q.poolType = manifest.defaultPoolType;
       if (!q.qcStatus) q.qcStatus = manifest.defaultQcStatus;
-      const hash =
-        q.contentHash ||
+      q.contentHash ||=
         computeCanonicalHash({ parts: q.parts, stemPrefix: q.stemPrefix, visual: q.visual, writingSpec: q.writingSpec });
-      q.contentHash = hash;
-      const stim = q.stimulusId ? stimMap.get(q.stimulusId) : undefined;
-      q.evidenceRevision = q.evidenceRevision || computeEvidenceRevision(q, stim);
+      const stim = q.stimulusId ? stimuliById.get(q.stimulusId) : undefined;
 
       const existing = latestByFamily.get(q.questionFamilyId);
-      if (!existing) {
-        q.batchId = q.batchId || batchId;
-        q.batchLabel = q.batchLabel || manifest.batchLabel;
-        q.createdAtIso = q.createdAtIso || nowIso;
-        q.updatedAtIso = nowIso;
-        await this.pool.query(
-          `INSERT INTO questions (question_id, question_family_id, version, content_hash, section, format_type, pool_type, qc_status, stimulus_id, data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [q.questionId, q.questionFamilyId, q.version, hash, q.section, q.formatType, q.poolType, q.qcStatus, q.stimulusId || null, JSON.stringify(q)]
-        );
-        latestByFamily.set(q.questionFamilyId, q);
-        existingIds.add(q.questionId);
-        newQuestionIds.push(q.questionId);
-        imported++;
-      } else if (existing.contentHash === hash && existing.version === q.version && existing.questionId === q.questionId) {
+      if (existing && existing.contentHash === q.contentHash && existing.version === q.version && existing.questionId === q.questionId) {
         skippedQuestionIds.push(q.questionId);
-        skipped++;
-      } else {
-        const nextVersion = Math.max(existing.version + 1, q.version);
-        const bumpedId =
-          nextVersion !== q.version || existingIds.has(q.questionId)
-            ? `${q.questionFamilyId}_v${nextVersion}`
-            : q.questionId;
-        const bumpedQ: QuestionItem = {
-          ...q,
-          questionId: bumpedId,
-          version: nextVersion,
-          batchId: q.batchId || batchId,
-          batchLabel: q.batchLabel || manifest.batchLabel,
-          createdAtIso: nowIso,
-          updatedAtIso: nowIso,
-        };
-        bumpedQ.evidenceRevision = computeEvidenceRevision(bumpedQ, stim);
-        await this.pool.query(
-          `INSERT INTO questions (question_id, question_family_id, version, content_hash, section, format_type, pool_type, qc_status, stimulus_id, data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [bumpedQ.questionId, bumpedQ.questionFamilyId, bumpedQ.version, hash, bumpedQ.section, bumpedQ.formatType, bumpedQ.poolType, bumpedQ.qcStatus, bumpedQ.stimulusId || null, JSON.stringify(bumpedQ)]
-        );
-        latestByFamily.set(q.questionFamilyId, bumpedQ);
-        existingIds.add(bumpedQ.questionId);
-        versionBumpedQuestionIds.push(bumpedQ.questionId);
-        versionBumped++;
+        continue;
       }
+      if (existing) {
+        const nextVersion = Math.max(existing.version + 1, q.version);
+        if (nextVersion !== q.version || existingIds.has(q.questionId)) {
+          q.questionId = `${q.questionFamilyId}_v${nextVersion}`;
+        }
+        q.version = nextVersion;
+        q.createdAtIso = nowIso;
+        q.evidenceRevision = computeEvidenceRevision(q, stim);
+        versionBumpedQuestionIds.push(q.questionId);
+      } else {
+        q.createdAtIso ||= nowIso;
+        q.evidenceRevision ||= computeEvidenceRevision(q, stim);
+        newQuestionIds.push(q.questionId);
+      }
+      q.batchId ||= batchId;
+      q.batchLabel ||= manifest.batchLabel;
+      q.updatedAtIso = nowIso;
+      latestByFamily.set(q.questionFamilyId, q);
+      existingIds.add(q.questionId);
+      questionWrites.push(q);
+    }
+
+    if (stimulusWrites.length) {
+      await client.query(
+        `INSERT INTO stimuli (stimulus_id, stimulus_family_id, version, content_hash, section, data)
+         SELECT data->>'stimulusId', data->>'stimulusFamilyId', (data->>'version')::int,
+                data->>'contentHash', data->>'section', data
+         FROM jsonb_array_elements($1::jsonb) AS item(data)
+         ON CONFLICT (stimulus_id) DO UPDATE SET
+           stimulus_family_id = EXCLUDED.stimulus_family_id, version = EXCLUDED.version,
+           content_hash = EXCLUDED.content_hash, section = EXCLUDED.section, data = EXCLUDED.data`,
+        [JSON.stringify(stimulusWrites)]
+      );
+    }
+    if (questionWrites.length) {
+      await client.query(
+        `INSERT INTO questions (question_id, question_family_id, version, content_hash, section, format_type, pool_type, qc_status, stimulus_id, data)
+         SELECT data->>'questionId', data->>'questionFamilyId', (data->>'version')::int, data->>'contentHash',
+                data->>'section', data->>'formatType', data->>'poolType', data->>'qcStatus', NULLIF(data->>'stimulusId', ''), data
+         FROM jsonb_array_elements($1::jsonb) AS item(data)`,
+        [JSON.stringify(questionWrites)]
+      );
     }
 
     const batch: ImportBatchRecord = {
@@ -573,12 +726,12 @@ export class PostgresRepository implements AppRepository {
       versionBumpedQuestionIds,
       skippedQuestionIds,
     };
-    await this.pool.query(
+    await client.query(
       'INSERT INTO import_batches (batch_id, batch_label, data, created_at) VALUES ($1, $2, $3, $4)',
       [batch.batchId, batch.batchLabel || null, JSON.stringify(batch), nowIso]
     );
 
-    return { imported, skipped, versionBumped, batch };
+    return manifestImportResult(batch, false);
   }
 
   async listImportBatches(): Promise<ImportBatchRecord[]> {
@@ -595,32 +748,32 @@ export class PostgresRepository implements AppRepository {
 
   async updateQuestionStatus(questionId: string, qcStatus: QuestionItem['qcStatus']): Promise<void> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT data FROM questions WHERE question_id = $1', [questionId]);
-    if (rows.length === 0) throw new NotFoundError(`Question ${questionId} not found.`);
-    const q = rows[0].data as QuestionItem;
-    q.qcStatus = qcStatus;
-    q.updatedAtIso = new Date().toISOString();
-    await this.pool.query('UPDATE questions SET qc_status = $2, data = $3 WHERE question_id = $1', [
-      questionId,
-      qcStatus,
-      JSON.stringify(q),
-    ]);
+    const { rowCount } = await this.pool.query(
+      `UPDATE questions SET qc_status = $2, data = data || $3::jsonb WHERE question_id = $1`,
+      [questionId, qcStatus, JSON.stringify({ qcStatus, updatedAtIso: new Date().toISOString() })]
+    );
+    if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
+  }
+
+  async deleteQuestions(questionIds: string[]): Promise<number> {
+    await this.ensureSchema();
+    const { rowCount } = await this.pool.query('DELETE FROM questions WHERE question_id = ANY($1::text[])', [questionIds]);
+    return rowCount ?? 0;
   }
 
   async updateQuestionVisual(questionId: string, visual: VisualSpec): Promise<void> {
-    await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT data FROM questions WHERE question_id = $1', [questionId]);
-    if (rows.length === 0) throw new NotFoundError(`Question ${questionId} not found.`);
-    const q = rows[0].data as QuestionItem;
-    q.visual = visual;
-    q.updatedAtIso = new Date().toISOString();
-    if (q.stimulusId) {
-      const sRes = await this.pool.query('SELECT data FROM stimuli WHERE stimulus_id = $1', [q.stimulusId]);
-      q.evidenceRevision = computeEvidenceRevision(q, sRes.rows[0]?.data as StimulusGroup | undefined);
-    } else {
-      q.evidenceRevision = computeEvidenceRevision(q, undefined);
-    }
-    await this.pool.query('UPDATE questions SET data = $2 WHERE question_id = $1', [questionId, JSON.stringify(q)]);
+    const bankItem = await this.getQuestionWithStimulus(questionId);
+    if (!bankItem) throw new NotFoundError(`Question ${questionId} not found.`);
+    const { question, stimulus } = bankItem;
+    const { rowCount } = await this.pool.query(
+      'UPDATE questions SET data = data || $2::jsonb WHERE question_id = $1',
+      [questionId, JSON.stringify({
+        visual,
+        updatedAtIso: new Date().toISOString(),
+        evidenceRevision: computeEvidenceRevision({ ...question, visual }, stimulus),
+      })]
+    );
+    if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
   }
 
   async getActiveConfig(): Promise<{ configVersionId: string; versionNumber: number; config: LearningConfig }> {
@@ -669,31 +822,51 @@ export class PostgresRepository implements AppRepository {
     notes?: string
   ): Promise<{ configVersionId: string; versionNumber: number }> {
     await this.ensureSchema();
-    const active = await this.getActiveConfig();
-    const nextNum = active.versionNumber + 1;
-    const configVersionId = `cfg_v${nextNum}_${crypto.randomUUID().slice(0, 6)}`;
-    await this.pool.query(
-      'INSERT INTO admin_config_versions (config_version_id, version_number, notes, config) VALUES ($1, $2, $3, $4)',
-      [configVersionId, nextNum, notes || null, JSON.stringify(config)]
-    );
-    return { configVersionId, versionNumber: nextNum };
+    return this.transaction(async (client) => {
+      await client.query('LOCK TABLE admin_config_versions IN SHARE ROW EXCLUSIVE MODE');
+      const { rows } = await client.query('SELECT COALESCE(MAX(version_number), 1) + 1 AS next FROM admin_config_versions');
+      const versionNumber = rows[0].next as number;
+      const configVersionId = `cfg_v${versionNumber}_${crypto.randomUUID().slice(0, 6)}`;
+      await client.query(
+        'INSERT INTO admin_config_versions (config_version_id, version_number, notes, config) VALUES ($1, $2, $3, $4)',
+        [configVersionId, versionNumber, notes || null, JSON.stringify(config)]
+      );
+      return { configVersionId, versionNumber };
+    });
   }
 
   async createSession(session: SessionRecord, snapshots: SessionQuestionSnapshot[] = []): Promise<void> {
     await this.ensureSchema();
     const studentId = session.studentId || DEFAULT_STUDENT_ID;
+    await this.transaction(async (client) => {
+      await this.lockStudentProgress(client, studentId);
+      await this.insertSession(client, session, snapshots, studentId);
+    });
+  }
+
+  private async lockStudentProgress(client: PoolClient, studentId: string): Promise<void> {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('selective_lab_progress'), hashtext($1))", [studentId]);
+  }
+
+  private async insertSession(
+    client: PoolClient,
+    session: SessionRecord,
+    snapshots: SessionQuestionSnapshot[],
+    studentId: string
+  ): Promise<void> {
     const stored: SessionRecord = {
       ...session,
       studentId,
       checkpointRevision: session.checkpointRevision ?? 1,
     };
-    await this.pool.query(
-      `INSERT INTO sessions (session_id, student_id, mode, status, is_sandbox, data, started_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [stored.sessionId, studentId, stored.mode, stored.status, Boolean(stored.isSandbox), JSON.stringify(stored), stored.startedAt]
+    await client.query(
+      `INSERT INTO sessions (session_id, student_id, mode, status, is_sandbox, data, started_at, completed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [stored.sessionId, studentId, stored.mode, stored.status, Boolean(stored.isSandbox), JSON.stringify(stored),
+        stored.startedAt, stored.completedAt ?? null]
     );
     if (snapshots.length > 0) {
-      await this.pool.query(
+      await client.query(
         'INSERT INTO session_snapshots (session_id, student_id, snapshots) VALUES ($1, $2, $3) ON CONFLICT (session_id) DO NOTHING',
         [stored.sessionId, studentId, JSON.stringify(snapshots)]
       );
@@ -705,51 +878,24 @@ export class PostgresRepository implements AppRepository {
     snapshots: SessionQuestionSnapshot[] = []
   ): Promise<ReserveSessionResult> {
     await this.ensureSchema();
-    if (session.isSandbox) {
-      await this.createSession(session, snapshots);
-      return { created: true };
-    }
     const studentId = session.studentId || DEFAULT_STUDENT_ID;
-    const stored: SessionRecord = {
-      ...session,
-      studentId,
-      checkpointRevision: session.checkpointRevision ?? 1,
-    };
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        `SELECT data FROM sessions WHERE student_id = $1 AND status = 'in_progress' AND is_sandbox = FALSE LIMIT 1 FOR UPDATE`,
-        [studentId]
-      );
-      if (rows.length > 0) {
-        const conflict = rows[0].data as SessionRecord;
-        await client.query('COMMIT');
-        return {
-          created: false,
-          conflictSessionId: conflict.sessionId,
-          conflictSession: conflict,
-        };
-      }
-      await client.query(
-        `INSERT INTO sessions (session_id, student_id, mode, status, is_sandbox, data, started_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [stored.sessionId, studentId, stored.mode, stored.status, false, JSON.stringify(stored), stored.startedAt]
-      );
-      if (snapshots.length > 0) {
-        await client.query(
-          'INSERT INTO session_snapshots (session_id, student_id, snapshots) VALUES ($1, $2, $3) ON CONFLICT (session_id) DO NOTHING',
-          [stored.sessionId, studentId, JSON.stringify(snapshots)]
+    return this.transaction(async (client) => {
+      // A row lock cannot reserve an account that has no session yet.
+      await this.lockStudentProgress(client, studentId);
+      if (!session.isSandbox) {
+        const { rows } = await client.query(
+          `SELECT data FROM sessions WHERE student_id = $1 AND status = 'in_progress' AND is_sandbox = FALSE
+           ORDER BY started_at DESC LIMIT 1`,
+          [studentId]
         );
+        if (rows.length > 0) {
+          const conflict = rows[0].data as SessionRecord;
+          return { created: false, conflictSessionId: conflict.sessionId, conflictSession: conflict };
+        }
       }
-      await client.query('COMMIT');
+      await this.insertSession(client, session, snapshots, studentId);
       return { created: true };
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async getSession(sessionId: string, studentId?: string): Promise<SessionRecord | null> {
@@ -761,10 +907,13 @@ export class PostgresRepository implements AppRepository {
     return session;
   }
 
-  async getSessionSnapshots(_studentId: string, sessionId: string): Promise<SessionQuestionSnapshot[]> {
+  async getSessionSnapshots(studentId: string, sessionId: string): Promise<SessionQuestionSnapshot[]> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT snapshots FROM session_snapshots WHERE session_id = $1', [sessionId]);
-    return rows.length ? (rows[0].snapshots as SessionQuestionSnapshot[]) : [];
+    const { rows } = await this.pool.query<{ snapshots: SessionQuestionSnapshot[] }>(
+      'SELECT snapshots FROM session_snapshots WHERE session_id = $1 AND student_id = $2',
+      [sessionId, studentId || DEFAULT_STUDENT_ID]
+    );
+    return rows[0]?.snapshots.sort((a, b) => a.snapshotIndex - b.snapshotIndex) ?? [];
   }
 
   async saveSessionCheckpoint(
@@ -810,21 +959,15 @@ export class PostgresRepository implements AppRepository {
 
   async completeSession(
     sessionId: string,
-    summary: { correctSlots: number; totalSlots: number; completedAt: string }
+    summary: { correctSlots: number; totalSlots: number; completedAt: string },
+    studentId?: string
   ): Promise<void> {
     await this.ensureSchema();
-    const session = await this.getSession(sessionId);
-    if (!session) return;
-    session.status = 'submitted';
-    session.correctSlots = summary.correctSlots;
-    session.totalSlots = summary.totalSlots;
-    session.completedAt = summary.completedAt;
-    await this.pool.query('UPDATE sessions SET status = $2, data = $3, completed_at = $4 WHERE session_id = $1', [
-      sessionId,
-      'submitted',
-      JSON.stringify(session),
-      summary.completedAt,
-    ]);
+    await this.pool.query(
+      `UPDATE sessions SET status = 'submitted', data = data || $2::jsonb, completed_at = $3
+       WHERE session_id = $1 AND ($4::text IS NULL OR student_id = $4)`,
+      [sessionId, JSON.stringify({ ...summary, status: 'submitted' }), summary.completedAt, studentId]
+    );
   }
 
   async finalizeSessionAtomically(input: FinalizeSessionInput): Promise<FinalizeSessionResult> {
@@ -832,6 +975,7 @@ export class PostgresRepository implements AppRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await this.lockStudentProgress(client, input.studentId);
       const { rows } = await client.query('SELECT data FROM sessions WHERE session_id = $1 FOR UPDATE', [
         input.sessionId,
       ]);
@@ -942,12 +1086,11 @@ export class PostgresRepository implements AppRepository {
   async listSessions(limit = 50, studentId = DEFAULT_STUDENT_ID, includeSandbox = true): Promise<SessionRecord[]> {
     await this.ensureSchema();
     const { rows } = await this.pool.query(
-      'SELECT data FROM sessions WHERE student_id = $1 ORDER BY started_at DESC LIMIT $2',
-      [studentId, limit]
+      `SELECT data FROM sessions WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
+       ORDER BY started_at DESC LIMIT $3`,
+      [studentId, includeSandbox, limit]
     );
-    return rows
-      .map((r) => r.data as SessionRecord)
-      .filter((s) => (includeSandbox ? true : !s.isSandbox));
+    return rows.map((r) => r.data as SessionRecord);
   }
 
   async appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void> {
@@ -997,12 +1140,15 @@ export class PostgresRepository implements AppRepository {
   async saveWritingSubmission(sub: WritingSubmissionRecord): Promise<void> {
     await this.ensureSchema();
     const studentId = sub.studentId || DEFAULT_STUDENT_ID;
-    await this.pool.query(
-      `INSERT INTO writing_submissions (submission_id, student_id, session_id, question_id, data, submitted_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (submission_id) DO NOTHING`,
-      [sub.submissionId, studentId, sub.sessionId, sub.questionId, JSON.stringify({ ...sub, studentId }), sub.submittedAt]
-    );
+    await this.transaction(async (client) => {
+      await this.lockStudentProgress(client, studentId);
+      await client.query(
+        `INSERT INTO writing_submissions (submission_id, student_id, session_id, question_id, data, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (submission_id) DO NOTHING`,
+        [sub.submissionId, studentId, sub.sessionId, sub.questionId, JSON.stringify({ ...sub, studentId }), sub.submittedAt]
+      );
+    });
   }
 
   async getWritingSubmission(
@@ -1027,7 +1173,12 @@ export class PostgresRepository implements AppRepository {
       'SELECT data FROM writing_submissions WHERE student_id = $1 ORDER BY submitted_at DESC',
       [studentId]
     );
-    const evalRes = await this.pool.query('SELECT submission_id, data FROM writing_evaluations ORDER BY created_at DESC');
+    const evalRes = await this.pool.query(
+      `SELECT e.submission_id, e.data FROM writing_evaluations e
+       JOIN writing_submissions s ON s.submission_id = e.submission_id
+       WHERE s.student_id = $1 ORDER BY e.created_at DESC`,
+      [studentId]
+    );
     const evalMap = new Map<string, WritingEvaluationRecord[]>();
     for (const row of evalRes.rows) {
       const list = evalMap.get(row.submission_id) || [];
@@ -1040,12 +1191,24 @@ export class PostgresRepository implements AppRepository {
     });
   }
 
-  async saveWritingEvaluation(ev: WritingEvaluationRecord): Promise<void> {
+  async saveWritingEvaluation(ev: WritingEvaluationRecord, studentId?: string): Promise<void> {
     await this.ensureSchema();
-    await this.pool.query(
-      'INSERT INTO writing_evaluations (evaluation_id, submission_id, data, created_at) VALUES ($1, $2, $3, $4)',
-      [ev.evaluationId, ev.submissionId, JSON.stringify(ev), ev.createdAt]
-    );
+    await this.transaction(async (client) => {
+      const owner = studentId ?? (await client.query<{ student_id: string }>(
+        'SELECT student_id FROM writing_submissions WHERE submission_id = $1',
+        [ev.submissionId]
+      )).rows[0]?.student_id;
+      if (!owner) throw new NotFoundError('Writing submission not found.');
+      await this.lockStudentProgress(client, owner);
+      const { rowCount } = await client.query(
+        `INSERT INTO writing_evaluations (evaluation_id, submission_id, data, created_at)
+         SELECT $1, submission_id, $3, $4 FROM writing_submissions WHERE submission_id = $2 AND student_id = $5
+         ON CONFLICT (evaluation_id) DO UPDATE SET data = EXCLUDED.data
+         WHERE writing_evaluations.submission_id = EXCLUDED.submission_id`,
+        [ev.evaluationId, ev.submissionId, JSON.stringify(ev), ev.createdAt, owner]
+      );
+      if (!rowCount) throw new NotFoundError('Writing submission not found.');
+    });
   }
 
   async getSkillStates(studentId = DEFAULT_STUDENT_ID): Promise<Record<string, SkillState>> {
@@ -1139,102 +1302,186 @@ export class PostgresRepository implements AppRepository {
 
   async exportFullBackup(): Promise<CanonicalBackupBundle> {
     await this.ensureSchema();
-    const [
-      stimuliRes,
-      questionsRes,
-      batches,
-      configs,
-      mediaAssets,
-      flags,
-      usersRes,
-      sessionsRes,
-      snapsRes,
-      attemptsRes,
-      subsRes,
-      evalsRes,
-      skillsRes,
-      memRes,
-      evRes,
-    ] = await Promise.all([
-      this.pool.query('SELECT data FROM stimuli'),
-      this.pool.query('SELECT data FROM questions'),
-      this.listImportBatches(),
-      this.listConfigVersions(),
-      this.listMediaAssets(),
-      this.listQuestionFlags(),
-      this.pool.query('SELECT uid, role, display_name, email FROM users'),
-      this.pool.query('SELECT student_id, data FROM sessions'),
-      this.pool.query('SELECT session_id, snapshots FROM session_snapshots'),
-      this.pool.query('SELECT student_id, data FROM part_attempts'),
-      this.pool.query('SELECT student_id, data FROM writing_submissions'),
-      this.pool.query('SELECT submission_id, data FROM writing_evaluations'),
-      this.pool.query('SELECT student_id, data FROM skill_states'),
-      this.pool.query('SELECT student_id, data FROM question_memory'),
-      this.pool.query('SELECT student_id, data FROM question_evidence'),
-    ]);
+    return this.transaction(async (client) => {
+      const stimuliRes = await client.query<{ data: StimulusGroup }>(
+        'SELECT data FROM stimuli ORDER BY stimulus_id ASC'
+      );
+      const questionsRes = await client.query<{ data: QuestionItem }>(
+        'SELECT data FROM questions ORDER BY question_id ASC'
+      );
+      const batchesRes = await client.query<{ data: ImportBatchRecord }>(
+        'SELECT data FROM import_batches ORDER BY created_at DESC, batch_id ASC'
+      );
+      const configsRes = await client.query<{
+        config_version_id: string;
+        version_number: number;
+        notes: string | null;
+        created_at: Date | string;
+        config: LearningConfig;
+      }>(
+        'SELECT config_version_id, version_number, notes, created_at, config FROM admin_config_versions ORDER BY version_number DESC'
+      );
+      const mediaRes = await client.query<{ data: MediaAssetRecord }>(
+        'SELECT data FROM media_assets ORDER BY created_at DESC, asset_id ASC'
+      );
+      const flagsRes = await client.query<{ data: QuestionFlagRecord }>(
+        'SELECT data FROM question_flags ORDER BY created_at DESC, flag_id ASC'
+      );
+      const usersRes = await client.query<{
+        uid: string;
+        role: string;
+        display_name: string;
+        email: string | null;
+      }>('SELECT uid, role, display_name, email FROM users ORDER BY uid ASC');
+      const sessionsRes = await client.query<{ student_id: string; data: SessionRecord }>(
+        'SELECT student_id, data FROM sessions ORDER BY started_at DESC, session_id ASC'
+      );
+      const snapsRes = await client.query<{
+        session_id: string;
+        student_id: string;
+        snapshots: SessionQuestionSnapshot[];
+      }>('SELECT session_id, student_id, snapshots FROM session_snapshots ORDER BY session_id ASC');
+      const attemptsRes = await client.query<{ student_id: string; data: PartAttemptRecord }>(
+        'SELECT student_id, data FROM part_attempts ORDER BY created_at DESC, attempt_id ASC'
+      );
+      const subsRes = await client.query<{ student_id: string; data: WritingSubmissionRecord }>(
+        'SELECT student_id, data FROM writing_submissions ORDER BY submitted_at DESC, submission_id ASC'
+      );
+      const evalsRes = await client.query<{ submission_id: string; data: WritingEvaluationRecord }>(
+        'SELECT submission_id, data FROM writing_evaluations ORDER BY created_at DESC, evaluation_id ASC'
+      );
+      const skillsRes = await client.query<{ student_id: string; data: SkillState }>(
+        'SELECT student_id, data FROM skill_states ORDER BY student_id ASC, skill_id ASC'
+      );
+      const memRes = await client.query<{ student_id: string; data: QuestionMemoryState }>(
+        'SELECT student_id, data FROM question_memory ORDER BY student_id ASC, question_family_id ASC'
+      );
+      const evRes = await client.query<{ student_id: string; data: QuestionMasteryEvidence }>(
+        'SELECT student_id, data FROM question_evidence ORDER BY student_id ASC, evidence_key ASC'
+      );
+      const plansRes = await client.query<{ student_id: string; plan_date: string; data: DailyFocusPlan }>(
+        'SELECT student_id, plan_date, data FROM daily_focus_plans ORDER BY student_id ASC, plan_date ASC'
+      );
 
-    const uids = new Set<string>(usersRes.rows.map((r) => r.uid as string));
-    for (const r of sessionsRes.rows) uids.add(r.student_id as string);
-    for (const r of attemptsRes.rows) uids.add(r.student_id as string);
+      const uids = new Set<string>();
+      for (const r of usersRes.rows) uids.add(r.uid);
+      for (const r of sessionsRes.rows) uids.add(r.student_id);
+      for (const r of snapsRes.rows) uids.add(r.student_id);
+      for (const r of attemptsRes.rows) uids.add(r.student_id);
+      for (const r of subsRes.rows) uids.add(r.student_id);
+      for (const r of skillsRes.rows) uids.add(r.student_id);
+      for (const r of memRes.rows) uids.add(r.student_id);
+      for (const r of evRes.rows) uids.add(r.student_id);
+      for (const r of plansRes.rows) uids.add(r.student_id);
 
-    const snapsBySessionId = new Map<string, SessionQuestionSnapshot[]>();
-    for (const r of snapsRes.rows) {
-      snapsBySessionId.set(r.session_id as string, r.snapshots as SessionQuestionSnapshot[]);
-    }
-    const evalsBySub = new Map<string, WritingEvaluationRecord[]>();
-    for (const r of evalsRes.rows) {
-      const list = evalsBySub.get(r.submission_id as string) || [];
-      list.push(r.data as WritingEvaluationRecord);
-      evalsBySub.set(r.submission_id as string, list);
-    }
+      const sessionsByUid = new Map<string, SessionRecord[]>();
+      for (const r of sessionsRes.rows) {
+        const list = sessionsByUid.get(r.student_id) || [];
+        list.push(r.data);
+        sessionsByUid.set(r.student_id, list);
+      }
+      const snapsBySessionId = new Map<string, SessionQuestionSnapshot[]>();
+      const snapIdsByUid = new Map<string, string[]>();
+      for (const r of snapsRes.rows) {
+        snapsBySessionId.set(r.session_id, r.snapshots);
+        const list = snapIdsByUid.get(r.student_id) || [];
+        list.push(r.session_id);
+        snapIdsByUid.set(r.student_id, list);
+      }
+      const attemptsByUid = new Map<string, PartAttemptRecord[]>();
+      for (const r of attemptsRes.rows) {
+        const list = attemptsByUid.get(r.student_id) || [];
+        list.push(r.data);
+        attemptsByUid.set(r.student_id, list);
+      }
+      const evalsBySub = new Map<string, WritingEvaluationRecord[]>();
+      for (const r of evalsRes.rows) {
+        const list = evalsBySub.get(r.submission_id) || [];
+        list.push(r.data);
+        evalsBySub.set(r.submission_id, list);
+      }
+      const subsByUid = new Map<string, (WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] })[]>();
+      for (const r of subsRes.rows) {
+        const list = subsByUid.get(r.student_id) || [];
+        list.push({ ...r.data, evaluations: evalsBySub.get(r.data.submissionId) || [] });
+        subsByUid.set(r.student_id, list);
+      }
+      const skillsByUid = new Map<string, SkillState[]>();
+      for (const r of skillsRes.rows) {
+        const list = skillsByUid.get(r.student_id) || [];
+        list.push(r.data);
+        skillsByUid.set(r.student_id, list);
+      }
+      const memByUid = new Map<string, QuestionMemoryState[]>();
+      for (const r of memRes.rows) {
+        const list = memByUid.get(r.student_id) || [];
+        list.push(r.data);
+        memByUid.set(r.student_id, list);
+      }
+      const evByUid = new Map<string, QuestionMasteryEvidence[]>();
+      for (const r of evRes.rows) {
+        const list = evByUid.get(r.student_id) || [];
+        list.push(r.data);
+        evByUid.set(r.student_id, list);
+      }
+      const plansByUid = new Map<string, DailyFocusPlan[]>();
+      for (const r of plansRes.rows) {
+        const list = plansByUid.get(r.student_id) || [];
+        list.push(r.data);
+        plansByUid.set(r.student_id, list);
+      }
 
-    const usersMeta = new Map(usersRes.rows.map((r) => [r.uid as string, r]));
-    const users = Array.from(uids)
-      .sort()
-      .map((uid) => {
-        const meta = usersMeta.get(uid);
-        const sessions = sessionsRes.rows
-          .filter((r) => r.student_id === uid)
-          .map((r) => r.data as SessionRecord);
-        const snapsObj: Record<string, SessionQuestionSnapshot[]> = {};
-        for (const s of sessions) {
-          snapsObj[s.sessionId] = snapsBySessionId.get(s.sessionId) || [];
-        }
-        return {
-          uid,
-          role: ((meta?.role as string) === 'admin' ? 'admin' : 'student') as 'student' | 'admin',
-          displayName: String(meta?.display_name || uid),
-          email: meta?.email ? String(meta.email) : undefined,
-          sessions,
-          sessionSnapshotsBySessionId: snapsObj,
-          partAttempts: attemptsRes.rows.filter((r) => r.student_id === uid).map((r) => r.data as PartAttemptRecord),
-          skillStates: skillsRes.rows.filter((r) => r.student_id === uid).map((r) => r.data as SkillState),
-          questionMemory: memRes.rows.filter((r) => r.student_id === uid).map((r) => r.data as QuestionMemoryState),
-          questionEvidence: evRes.rows.filter((r) => r.student_id === uid).map((r) => r.data as QuestionMasteryEvidence),
-          writingSubmissions: subsRes.rows
-            .filter((r) => r.student_id === uid)
-            .map((r) => {
-              const sub = r.data as WritingSubmissionRecord;
-              return { ...sub, evaluations: evalsBySub.get(sub.submissionId) || [] };
-            }),
-        };
+      const usersMeta = new Map(usersRes.rows.map((r) => [r.uid, r]));
+      const users = Array.from(uids)
+        .sort()
+        .map((uid) => {
+          const meta = usersMeta.get(uid);
+          const sessions = sessionsByUid.get(uid) || [];
+          const snapsObj: Record<string, SessionQuestionSnapshot[]> = {};
+          for (const s of sessions) {
+            snapsObj[s.sessionId] = snapsBySessionId.get(s.sessionId) || [];
+          }
+          for (const sid of snapIdsByUid.get(uid) || []) {
+            if (!(sid in snapsObj)) {
+              snapsObj[sid] = snapsBySessionId.get(sid) || [];
+            }
+          }
+          return {
+            uid,
+            role: (meta?.role === 'admin' ? 'admin' : 'student') as 'student' | 'admin',
+            displayName: String(meta?.display_name || uid),
+            email: meta?.email ? String(meta.email) : undefined,
+            sessions,
+            sessionSnapshotsBySessionId: snapsObj,
+            partAttempts: attemptsByUid.get(uid) || [],
+            skillStates: skillsByUid.get(uid) || [],
+            questionMemory: memByUid.get(uid) || [],
+            questionEvidence: evByUid.get(uid) || [],
+            writingSubmissions: subsByUid.get(uid) || [],
+            dailyFocusPlans: plansByUid.get(uid) || [],
+          };
+        });
+
+      const configs = configsRes.rows.map((r) => ({
+        configVersionId: r.config_version_id,
+        versionNumber: r.version_number,
+        notes: r.notes || undefined,
+        createdAt: new Date(r.created_at).toISOString(),
+        config: r.config,
+      }));
+
+      return finalizeBackupBundle({
+        exportedAtIso: new Date().toISOString(),
+        backendName: this.backendName,
+        stimuli: stimuliRes.rows.map((r) => r.data),
+        questions: questionsRes.rows.map((r) => r.data),
+        importBatches: batchesRes.rows.map((r) => r.data),
+        configVersions: configs,
+        mediaAssets: mediaRes.rows.map((r) => r.data),
+        questionFlags: flagsRes.rows.map((r) => r.data),
+        users,
       });
-
-    return finalizeBackupBundle({
-      exportedAtIso: new Date().toISOString(),
-      backendName: this.backendName,
-      stimuli: (stimuliRes.rows.map((r) => r.data as StimulusGroup)).sort((a, b) =>
-        a.stimulusId.localeCompare(b.stimulusId)
-      ),
-      questions: (questionsRes.rows.map((r) => r.data as QuestionItem)).sort((a, b) =>
-        a.questionId.localeCompare(b.questionId)
-      ),
-      importBatches: batches,
-      configVersions: configs,
-      mediaAssets,
-      questionFlags: flags,
-      users,
-    });
+    }, 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   }
 
   async restoreFullBackup(rawBundle: unknown, options: { dryRun: boolean }): Promise<BackupRestoreReport> {
@@ -1244,129 +1491,333 @@ export class PostgresRepository implements AppRepository {
       return emptyRestoreReport(false, options.dryRun, validated.checksumVerified, validated.errors, validated.warnings);
     }
     const bundle = validated.bundle;
-    const [existingStims, existingQs, existingCfgs, existingSessions] = await Promise.all([
-      this.pool.query('SELECT stimulus_id FROM stimuli'),
-      this.pool.query('SELECT question_id FROM questions'),
-      this.pool.query('SELECT config_version_id FROM admin_config_versions'),
-      this.pool.query('SELECT session_id FROM sessions'),
-    ]);
-    const stimSet = new Set(existingStims.rows.map((r) => r.stimulus_id as string));
-    const qSet = new Set(existingQs.rows.map((r) => r.question_id as string));
-    const cfgSet = new Set(existingCfgs.rows.map((r) => r.config_version_id as string));
-    const sessSet = new Set(existingSessions.rows.map((r) => r.session_id as string));
 
-    const wouldCreate = {
-      stimuli: bundle.stimuli.filter((s) => !stimSet.has(s.stimulusId)).length,
-      questions: bundle.questions.filter((q) => !qSet.has(q.questionId)).length,
-      configVersions: bundle.configVersions.filter((c) => !cfgSet.has(c.configVersionId)).length,
-      sessions: bundle.users.reduce((n, u) => n + u.sessions.filter((s) => !sessSet.has(s.sessionId)).length, 0),
-    };
-    const wouldSkipExisting = {
-      stimuli: bundle.stimuli.length - wouldCreate.stimuli,
-      questions: bundle.questions.length - wouldCreate.questions,
-      configVersions: bundle.configVersions.length - wouldCreate.configVersions,
-    };
+    return this.transaction(async (client) => {
+      if (!options.dryRun) {
+        await client.query(
+          `LOCK TABLE stimuli, questions, import_batches, admin_config_versions, media_assets, question_flags,
+                      users, sessions, session_snapshots, part_attempts, skill_states, question_memory,
+                      question_evidence, writing_submissions, writing_evaluations, daily_focus_plans
+           IN SHARE ROW EXCLUSIVE MODE`
+        );
+      }
 
-    if (options.dryRun) {
+      const stimSet = new Set(
+        (await client.query<{ stimulus_id: string }>('SELECT stimulus_id FROM stimuli')).rows.map((r) => r.stimulus_id)
+      );
+      const qSet = new Set(
+        (await client.query<{ question_id: string }>('SELECT question_id FROM questions')).rows.map((r) => r.question_id)
+      );
+      const batchSet = new Set(
+        (await client.query<{ batch_id: string }>('SELECT batch_id FROM import_batches')).rows.map((r) => r.batch_id)
+      );
+      const cfgSet = new Set(
+        (await client.query<{ config_version_id: string }>('SELECT config_version_id FROM admin_config_versions')).rows.map(
+          (r) => r.config_version_id
+        )
+      );
+      const mediaSet = new Set(
+        (await client.query<{ asset_id: string }>('SELECT asset_id FROM media_assets')).rows.map((r) => r.asset_id)
+      );
+      const flagSet = new Set(
+        (await client.query<{ flag_id: string }>('SELECT flag_id FROM question_flags')).rows.map((r) => r.flag_id)
+      );
+      const userSet = new Set(
+        (await client.query<{ uid: string }>('SELECT uid FROM users')).rows.map((r) => r.uid)
+      );
+      const sessSet = new Set(
+        (await client.query<{ session_id: string }>('SELECT session_id FROM sessions')).rows.map((r) => r.session_id)
+      );
+      const attemptSet = new Set(
+        (await client.query<{ attempt_id: string }>('SELECT attempt_id FROM part_attempts')).rows.map((r) => r.attempt_id)
+      );
+      const subSet = new Set(
+        (await client.query<{ submission_id: string }>('SELECT submission_id FROM writing_submissions')).rows.map(
+          (r) => r.submission_id
+        )
+      );
+      const planSet = new Set(
+        (await client.query<{ student_id: string; plan_date: string }>('SELECT student_id, plan_date FROM daily_focus_plans')).rows.map(
+          (r) => `${r.student_id}::${r.plan_date}`
+        )
+      );
+
+      const totalSessions = bundle.users.reduce((n, u) => n + u.sessions.length, 0);
+      const totalAttempts = bundle.users.reduce((n, u) => n + u.partAttempts.length, 0);
+      const totalSubs = bundle.users.reduce((n, u) => n + u.writingSubmissions.length, 0);
+      const totalPlans = bundle.users.reduce((n, u) => n + (u.dailyFocusPlans?.length ?? 0), 0);
+
+      const wouldCreate = {
+        stimuli: bundle.stimuli.filter((s) => !stimSet.has(s.stimulusId)).length,
+        questions: bundle.questions.filter((q) => !qSet.has(q.questionId)).length,
+        importBatches: (bundle.importBatches || []).filter((b) => !batchSet.has(b.batchId)).length,
+        configVersions: bundle.configVersions.filter((c) => !cfgSet.has(c.configVersionId)).length,
+        mediaAssets: (bundle.mediaAssets || []).filter((m) => !mediaSet.has(m.assetId)).length,
+        questionFlags: (bundle.questionFlags || []).filter((f) => !flagSet.has(f.flagId)).length,
+        users: bundle.users.filter((u) => !userSet.has(u.uid)).length,
+        sessions: bundle.users.reduce((n, u) => n + u.sessions.filter((s) => !sessSet.has(s.sessionId)).length, 0),
+        attempts: bundle.users.reduce((n, u) => n + u.partAttempts.filter((a) => !attemptSet.has(a.attemptId)).length, 0),
+        writingSubmissions: bundle.users.reduce(
+          (n, u) => n + u.writingSubmissions.filter((ws) => !subSet.has(ws.submissionId)).length,
+          0
+        ),
+        dailyFocusPlans: bundle.users.reduce(
+          (n, u) => n + (u.dailyFocusPlans || []).filter((p) => !planSet.has(`${u.uid}::${p.planDate}`)).length,
+          0
+        ),
+      };
+      const wouldSkipExisting = {
+        stimuli: bundle.stimuli.length - wouldCreate.stimuli,
+        questions: bundle.questions.length - wouldCreate.questions,
+        importBatches: (bundle.importBatches || []).length - wouldCreate.importBatches,
+        configVersions: bundle.configVersions.length - wouldCreate.configVersions,
+        mediaAssets: (bundle.mediaAssets || []).length - wouldCreate.mediaAssets,
+        questionFlags: (bundle.questionFlags || []).length - wouldCreate.questionFlags,
+        users: bundle.users.length - wouldCreate.users,
+        sessions: totalSessions - wouldCreate.sessions,
+        attempts: totalAttempts - wouldCreate.attempts,
+        writingSubmissions: totalSubs - wouldCreate.writingSubmissions,
+        dailyFocusPlans: totalPlans - wouldCreate.dailyFocusPlans,
+      };
+
+      if (options.dryRun) {
+        return {
+          valid: true,
+          dryRun: true,
+          checksumVerified: true,
+          errors: [],
+          warnings: validated.warnings,
+          wouldCreate,
+          wouldSkipExisting,
+          applied: {},
+        };
+      }
+
+      const applied = {
+        stimuli: 0,
+        questions: 0,
+        importBatches: 0,
+        configVersions: 0,
+        mediaAssets: 0,
+        questionFlags: 0,
+        users: 0,
+        sessions: 0,
+        attempts: 0,
+        skillStates: 0,
+        questionMemory: 0,
+        evidence: 0,
+        writingSubmissions: 0,
+        writingEvaluations: 0,
+        dailyFocusPlans: 0,
+      };
+
+      for (const s of bundle.stimuli) {
+        const res = await client.query(
+          `INSERT INTO stimuli (stimulus_id, stimulus_family_id, version, content_hash, section, data, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()))
+           ON CONFLICT (stimulus_id) DO NOTHING`,
+          [s.stimulusId, s.stimulusFamilyId, s.version, s.contentHash || null, s.section, JSON.stringify(s), s.createdAtIso || null]
+        );
+        applied.stimuli += res.rowCount ?? 0;
+      }
+      for (const q of bundle.questions) {
+        const res = await client.query(
+          `INSERT INTO questions (question_id, question_family_id, version, content_hash, section, format_type, pool_type, qc_status, stimulus_id, data, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11::timestamptz, NOW()))
+           ON CONFLICT (question_id) DO NOTHING`,
+          [
+            q.questionId,
+            q.questionFamilyId,
+            q.version,
+            q.contentHash || null,
+            q.section,
+            q.formatType,
+            q.poolType,
+            q.qcStatus,
+            q.stimulusId || null,
+            JSON.stringify(q),
+            q.createdAtIso || null,
+          ]
+        );
+        applied.questions += res.rowCount ?? 0;
+      }
+      for (const c of bundle.configVersions) {
+        const res = await client.query(
+          `INSERT INTO admin_config_versions (config_version_id, version_number, notes, config, created_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (config_version_id) DO NOTHING`,
+          [c.configVersionId, c.versionNumber, c.notes || null, JSON.stringify(c.config), c.createdAt]
+        );
+        applied.configVersions += res.rowCount ?? 0;
+      }
+      for (const b of bundle.importBatches || []) {
+        const res = await client.query(
+          `INSERT INTO import_batches (batch_id, batch_label, data, created_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (batch_id) DO NOTHING`,
+          [b.batchId, b.batchLabel || null, JSON.stringify(b), b.createdAtIso]
+        );
+        applied.importBatches += res.rowCount ?? 0;
+      }
+      for (const m of bundle.mediaAssets || []) {
+        const res = await client.query(
+          `INSERT INTO media_assets (asset_id, data, created_at)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (asset_id) DO NOTHING`,
+          [m.assetId, JSON.stringify(m), m.createdAtIso]
+        );
+        applied.mediaAssets += res.rowCount ?? 0;
+      }
+      for (const f of bundle.questionFlags || []) {
+        const res = await client.query(
+          `INSERT INTO question_flags (flag_id, question_id, status, data, created_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (flag_id) DO NOTHING`,
+          [f.flagId, f.questionId, f.status, JSON.stringify(f), f.createdAt]
+        );
+        applied.questionFlags += res.rowCount ?? 0;
+      }
+      for (const u of bundle.users) {
+        // The backup cannot grant privileges. A verified login will set the current role.
+        const userRes = await client.query(
+          `INSERT INTO users (uid, display_name, email) VALUES ($1, $2, $3) ON CONFLICT (uid) DO NOTHING`,
+          [u.uid, u.displayName, u.email ?? null]
+        );
+        applied.users += userRes.rowCount ?? 0;
+
+        const restoredSnapshotIds = new Set<string>();
+        for (const s of u.sessions) {
+          const stored: SessionRecord = {
+            ...s,
+            studentId: u.uid,
+            checkpointRevision: s.checkpointRevision ?? 1,
+          };
+          const sRes = await client.query(
+            `INSERT INTO sessions (session_id, student_id, mode, status, is_sandbox, data, started_at, completed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (session_id) DO NOTHING`,
+            [
+              stored.sessionId,
+              u.uid,
+              stored.mode,
+              stored.status,
+              Boolean(stored.isSandbox),
+              JSON.stringify(stored),
+              stored.startedAt,
+              stored.completedAt ?? null,
+            ]
+          );
+          applied.sessions += sRes.rowCount ?? 0;
+
+          const snapshots = u.sessionSnapshotsBySessionId?.[s.sessionId] || [];
+          if (snapshots.length > 0) {
+            await client.query(
+              `INSERT INTO session_snapshots (session_id, student_id, snapshots)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (session_id) DO NOTHING`,
+              [stored.sessionId, u.uid, JSON.stringify(snapshots)]
+            );
+            restoredSnapshotIds.add(s.sessionId);
+          }
+        }
+        for (const [sid, snapshots] of Object.entries(u.sessionSnapshotsBySessionId || {})) {
+          if (!restoredSnapshotIds.has(sid) && Array.isArray(snapshots) && snapshots.length > 0) {
+            await client.query(
+              `INSERT INTO session_snapshots (session_id, student_id, snapshots)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (session_id) DO NOTHING`,
+              [sid, u.uid, JSON.stringify(snapshots)]
+            );
+          }
+        }
+        for (const a of u.partAttempts) {
+          const res = await client.query(
+            `INSERT INTO part_attempts (attempt_id, student_id, session_id, question_id, part_id, skill_id, is_correct, is_sandbox, data, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (attempt_id) DO NOTHING`,
+            [
+              a.attemptId,
+              u.uid,
+              a.sessionId,
+              a.questionId,
+              a.partId,
+              a.skillId,
+              a.isCorrect,
+              Boolean(a.isSandbox),
+              JSON.stringify({ ...a, studentId: u.uid }),
+              a.createdAt,
+            ]
+          );
+          applied.attempts += res.rowCount ?? 0;
+        }
+        for (const sk of u.skillStates) {
+          const res = await client.query(
+            `INSERT INTO skill_states (student_id, skill_id, data)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (student_id, skill_id) DO NOTHING`,
+            [u.uid, sk.skillId, JSON.stringify(sk)]
+          );
+          applied.skillStates += res.rowCount ?? 0;
+        }
+        for (const mem of u.questionMemory) {
+          const res = await client.query(
+            `INSERT INTO question_memory (student_id, question_family_id, data)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (student_id, question_family_id) DO NOTHING`,
+            [u.uid, mem.questionFamilyId, JSON.stringify(mem)]
+          );
+          applied.questionMemory += res.rowCount ?? 0;
+        }
+        for (const ev of u.questionEvidence) {
+          const res = await client.query(
+            `INSERT INTO question_evidence (student_id, evidence_key, data)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (student_id, evidence_key) DO NOTHING`,
+            [u.uid, ev.evidenceKey, JSON.stringify(ev)]
+          );
+          applied.evidence += res.rowCount ?? 0;
+        }
+        for (const ws of u.writingSubmissions) {
+          const { evaluations: evs, ...rest } = ws;
+          const wsRes = await client.query(
+            `INSERT INTO writing_submissions (submission_id, student_id, session_id, question_id, data, submitted_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (submission_id) DO NOTHING`,
+            [rest.submissionId, u.uid, rest.sessionId, rest.questionId, JSON.stringify({ ...rest, studentId: u.uid }), rest.submittedAt]
+          );
+          applied.writingSubmissions += wsRes.rowCount ?? 0;
+          for (const ev of evs || []) {
+            const evRes = await client.query(
+              `INSERT INTO writing_evaluations (evaluation_id, submission_id, data, created_at)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (evaluation_id) DO NOTHING`,
+              [ev.evaluationId, ev.submissionId, JSON.stringify(ev), ev.createdAt]
+            );
+            applied.writingEvaluations += evRes.rowCount ?? 0;
+          }
+        }
+        for (const plan of u.dailyFocusPlans || []) {
+          const pRes = await client.query(
+            `INSERT INTO daily_focus_plans (student_id, plan_date, data)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (student_id, plan_date) DO NOTHING`,
+            [u.uid, plan.planDate, JSON.stringify({ ...plan, studentId: u.uid })]
+          );
+          applied.dailyFocusPlans += pRes.rowCount ?? 0;
+        }
+      }
+
       return {
         valid: true,
-        dryRun: true,
+        dryRun: false,
         checksumVerified: true,
         errors: [],
         warnings: validated.warnings,
         wouldCreate,
         wouldSkipExisting,
-        applied: {},
+        applied,
       };
-    }
-
-    const applied = { stimuli: 0, questions: 0, configVersions: 0, sessions: 0, attempts: 0, evidence: 0 };
-    for (const s of bundle.stimuli) {
-      if (!stimSet.has(s.stimulusId)) {
-        await this.pool.query(
-          `INSERT INTO stimuli (stimulus_id, stimulus_family_id, version, content_hash, section, data)
-           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
-          [s.stimulusId, s.stimulusFamilyId, s.version, s.contentHash || null, s.section, JSON.stringify(s)]
-        );
-        applied.stimuli++;
-      }
-    }
-    for (const q of bundle.questions) {
-      if (!qSet.has(q.questionId)) {
-        await this.pool.query(
-          `INSERT INTO questions (question_id, question_family_id, version, content_hash, section, format_type, pool_type, qc_status, stimulus_id, data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING`,
-          [q.questionId, q.questionFamilyId, q.version, q.contentHash || null, q.section, q.formatType, q.poolType, q.qcStatus, q.stimulusId || null, JSON.stringify(q)]
-        );
-        applied.questions++;
-      }
-    }
-    for (const c of bundle.configVersions) {
-      if (!cfgSet.has(c.configVersionId)) {
-        await this.pool.query(
-          `INSERT INTO admin_config_versions (config_version_id, version_number, notes, config, created_at)
-           VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-          [c.configVersionId, c.versionNumber, c.notes || null, JSON.stringify(c.config), c.createdAt]
-        );
-        applied.configVersions++;
-      }
-    }
-    for (const b of bundle.importBatches || []) {
-      await this.pool.query(
-        'INSERT INTO import_batches (batch_id, batch_label, data, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-        [b.batchId, b.batchLabel || null, JSON.stringify(b), b.createdAtIso]
-      );
-    }
-    for (const m of bundle.mediaAssets || []) {
-      await this.saveMediaAsset(m);
-    }
-    for (const f of bundle.questionFlags || []) {
-      await this.pool.query(
-        'INSERT INTO question_flags (flag_id, question_id, status, data, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING',
-        [f.flagId, f.questionId, f.status, JSON.stringify(f), f.createdAt]
-      );
-    }
-    for (const u of bundle.users) {
-      await this.upsertUserFromAuth({
-        uid: u.uid,
-        email: u.email || `${u.uid}@local.invalid`,
-        displayName: u.displayName,
-        isBootstrappedAdmin: u.role === 'admin',
-      });
-      for (const s of u.sessions) {
-        if (!sessSet.has(s.sessionId)) {
-          await this.createSession(s, u.sessionSnapshotsBySessionId?.[s.sessionId] || []);
-          applied.sessions++;
-        }
-      }
-      await this.appendPartAttempts(u.partAttempts);
-      applied.attempts += u.partAttempts.length;
-      await this.upsertSkillStates(u.skillStates, u.uid);
-      await this.upsertQuestionMemory(u.questionMemory, u.uid);
-      await this.upsertQuestionEvidence(u.questionEvidence, u.uid);
-      applied.evidence += u.questionEvidence.length;
-      for (const ws of u.writingSubmissions) {
-        const { evaluations: evs, ...rest } = ws;
-        await this.saveWritingSubmission(rest);
-        for (const ev of evs || []) {
-          await this.pool.query(
-            'INSERT INTO writing_evaluations (evaluation_id, submission_id, data, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-            [ev.evaluationId, ev.submissionId, JSON.stringify(ev), ev.createdAt]
-          );
-        }
-      }
-    }
-
-    return {
-      valid: true,
-      dryRun: false,
-      checksumVerified: true,
-      errors: [],
-      warnings: validated.warnings,
-      wouldCreate,
-      wouldSkipExisting,
-      applied,
-    };
+    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined);
   }
 
   async runMigrationPreflight(uploadsDir = 'public/assets/uploads'): Promise<MigrationPreflightReport> {

@@ -167,7 +167,7 @@ export function validateAndDryRunManifest(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  if (!raw || typeof raw !== 'object') {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {
       manifest: null,
       report: {
@@ -207,14 +207,33 @@ export function validateAndDryRunManifest(
     errors.push('Manifest must contain a "questions" array.');
   }
 
-  const stimuli: StimulusGroup[] = rawStimuli.map((s) => ({
-    ...s,
-    stimulusFamilyId: s.stimulusFamilyId || s.stimulusId.replace(/_v\d+$/, ''),
-    version: typeof s.version === 'number' && s.version >= 1 ? s.version : 1,
-    genreOrTextType: s.genreOrTextType || 'passage',
-    visual: normalizeVisual(s.visual),
-    sourceType: s.sourceType || 'ai_generated',
-  }));
+  if (m.stimuli !== undefined && !Array.isArray(m.stimuli)) {
+    errors.push('Manifest "stimuli" must be an array.');
+  }
+  const stimuli: StimulusGroup[] = [];
+  const seenStimulusIds = new Set<string>();
+  for (const [index, s] of rawStimuli.entries()) {
+    if (typeof s?.stimulusId !== 'string' || !s.stimulusId.trim()) {
+      errors.push(`Stimulus #${index + 1} missing stimulusId.`);
+      continue;
+    }
+    if (seenStimulusIds.has(s.stimulusId)) {
+      errors.push(`Duplicate stimulusId "${s.stimulusId}" in manifest.`);
+      continue;
+    }
+    seenStimulusIds.add(s.stimulusId);
+    if (!VALID_SECTIONS.has(s.section)) {
+      errors.push(`Stimulus ${s.stimulusId} has invalid section "${String(s.section)}".`);
+    }
+    stimuli.push({
+      ...s,
+      stimulusFamilyId: s.stimulusFamilyId || s.stimulusId.replace(/_v\d+$/, ''),
+      version: typeof s.version === 'number' && s.version >= 1 ? s.version : 1,
+      genreOrTextType: s.genreOrTextType || 'passage',
+      visual: normalizeVisual(s.visual),
+      sourceType: s.sourceType || 'ai_generated',
+    });
+  }
 
   const stimuliById = new Map<string, StimulusGroup>(Object.entries(existingStimuliById));
   for (const s of stimuli) {
@@ -238,11 +257,11 @@ export function validateAndDryRunManifest(
 
   for (let i = 0; i < rawQuestions.length; i++) {
     const rq = rawQuestions[i] as Partial<QuestionItem>;
-    const qLabel = rq.questionId || `#${i + 1}`;
-    if (!rq.questionId) {
+    if (typeof rq?.questionId !== 'string' || !rq.questionId.trim()) {
       errors.push(`Question #${i + 1} missing questionId.`);
       continue;
     }
+    const qLabel = rq.questionId;
     if (seenQuestionIds.has(rq.questionId)) {
       errors.push(`Duplicate questionId "${rq.questionId}" in manifest.`);
       continue;
@@ -291,6 +310,10 @@ export function validateAndDryRunManifest(
     const normalizedParts: QuestionPart[] = [];
     for (let pIdx = 0; pIdx < rawParts.length; pIdx++) {
       const rp = rawParts[pIdx] as Partial<QuestionPart>;
+      if (!rp || typeof rp !== 'object' || Array.isArray(rp)) {
+        errors.push(`Question ${rq.questionId} part #${pIdx + 1} must be an object.`);
+        continue;
+      }
       const partId = rp.partId || `${rq.questionId}_p${pIdx + 1}`;
       if (seenPartIds.has(partId)) {
         errors.push(`Duplicate partId "${partId}" in manifest.`);

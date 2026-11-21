@@ -2,9 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { MediaAssetRecord, QuestionItem, StimulusGroup, VisualSpec } from '../shared/contracts.ts';
-import { getAdminStorage, isStorageBucketConfigured } from './firebaseAdmin.ts';
 
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 const EXT_TO_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -43,7 +42,7 @@ export function validateAndDecodeUpload(input: {
     throw new Error('Decoded image payload is empty.');
   }
   if (buffer.length > MAX_UPLOAD_BYTES) {
-    throw new Error('Image upload exceeds maximum size of 5 MB.');
+    throw new Error('Image upload exceeds maximum size of 3 MiB.');
   }
 
   if (ext === '.svg') {
@@ -58,79 +57,33 @@ export function validateAndDecodeUpload(input: {
   return { ext, mimeType, buffer, sha256, objectKey, assetId };
 }
 
-export async function storeMediaUpload(input: {
+export function prepareMediaUpload(input: {
   questionId?: string;
   filename: string;
   imageBase64: string;
-  uploadsDir: string;
-}): Promise<MediaAssetRecord> {
+}): MediaAssetRecord {
   const decoded = validateAndDecodeUpload(input);
-  const nowIso = new Date().toISOString();
-
-  if (isStorageBucketConfigured()) {
-    const bucket = getAdminStorage().bucket();
-    const file = bucket.file(decoded.objectKey);
-    await file.save(decoded.buffer, {
-      resumable: false,
-      metadata: {
-        contentType: decoded.mimeType,
-        cacheControl: 'public, max-age=31536000, immutable',
-        metadata: {
-          assetId: decoded.assetId,
-          questionId: input.questionId || '',
-          sha256: decoded.sha256,
-        },
-      },
-    });
-    return {
-      assetId: decoded.assetId,
-      questionId: input.questionId,
-      objectKey: decoded.objectKey,
-      url: `/api/media/${decoded.assetId}`,
-      mimeType: decoded.mimeType,
-      sizeBytes: decoded.buffer.length,
-      sha256: decoded.sha256,
-      storageProvider: 'gcs',
-      createdAtIso: nowIso,
-    };
-  }
-
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'Cloud Storage bucket configuration is required for media uploads in production.'
-    );
-  }
-
-  await fs.mkdir(input.uploadsDir, { recursive: true });
-  const localFilename = `${decoded.assetId}${decoded.ext}`;
-  await fs.writeFile(path.join(input.uploadsDir, localFilename), decoded.buffer);
-
   return {
     assetId: decoded.assetId,
     questionId: input.questionId,
     objectKey: decoded.objectKey,
-    url: `/assets/uploads/${localFilename}`,
+    url: `/api/media/${decoded.assetId}`,
     mimeType: decoded.mimeType,
     sizeBytes: decoded.buffer.length,
     sha256: decoded.sha256,
-    storageProvider: 'local_temp',
-    createdAtIso: nowIso,
+    storageProvider: 'postgres',
+    bytesBase64: decoded.buffer.toString('base64'),
+    createdAtIso: new Date().toISOString(),
   };
 }
 
 export async function readMediaBytesFromStorage(asset: MediaAssetRecord, uploadsDir: string): Promise<Buffer | null> {
-  if (asset.storageProvider === 'gcs' && isStorageBucketConfigured()) {
-    const bucket = getAdminStorage().bucket();
-    const file = bucket.file(asset.objectKey);
-    const [exists] = await file.exists();
-    if (!exists) return null;
-    const [contents] = await file.download();
-    return contents;
+  if (asset.storageProvider === 'postgres') {
+    return asset.bytesBase64 ? Buffer.from(asset.bytesBase64, 'base64') : null;
   }
-
-  const fileName = path.basename(asset.url);
+  if (asset.storageProvider !== 'local_temp') return null;
   try {
-    return await fs.readFile(path.join(uploadsDir, fileName));
+    return await fs.readFile(path.join(uploadsDir, path.basename(asset.url)));
   } catch {
     return null;
   }
@@ -143,7 +96,7 @@ export interface MediaMigrationItem {
   sizeBytes?: number;
   sha256?: string;
   suggestedObjectKey: string;
-  status: 'needs_upload' | 'missing_file' | 'already_gcs';
+  status: 'needs_upload' | 'missing_file' | 'already_stored';
 }
 
 export interface MediaMigrationManifest {
@@ -153,7 +106,7 @@ export interface MediaMigrationManifest {
   totalReferencedUploadUrls: number;
   missingFilesCount: number;
   needsUploadCount: number;
-  alreadyGcsCount: number;
+  alreadyStoredCount: number;
   items: MediaMigrationItem[];
 }
 
@@ -204,7 +157,7 @@ export async function buildMediaMigrationManifest(input: {
   for (const urlPath of Array.from(allUrls).sort()) {
     const owners = Array.from(refs.get(urlPath) || []);
     const existingAsset = assetsByUrl.get(urlPath);
-    if (existingAsset?.storageProvider === 'gcs') {
+    if (existingAsset?.storageProvider === 'postgres' && existingAsset.bytesBase64) {
       items.push({
         sourcePath: urlPath,
         referencedByIds: owners,
@@ -212,7 +165,7 @@ export async function buildMediaMigrationManifest(input: {
         sizeBytes: existingAsset.sizeBytes,
         sha256: existingAsset.sha256,
         suggestedObjectKey: existingAsset.objectKey,
-        status: 'already_gcs',
+        status: 'already_stored',
       });
       continue;
     }
@@ -251,7 +204,7 @@ export async function buildMediaMigrationManifest(input: {
     totalReferencedUploadUrls: refs.size,
     missingFilesCount: items.filter((i) => i.status === 'missing_file').length,
     needsUploadCount: items.filter((i) => i.status === 'needs_upload').length,
-    alreadyGcsCount: items.filter((i) => i.status === 'already_gcs').length,
+    alreadyStoredCount: items.filter((i) => i.status === 'already_stored').length,
     items,
   };
 }

@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { BankImportManifest } from '../../shared/contracts';
 import { validateAndDryRunManifest } from '../manifestValidator';
 import { MemoryRepository } from './memoryRepository';
+import { sha256Json } from './repositoryUtils';
 
 test('MemoryRepository seeds golden-smoke-pack and preserves attempts across version-bumped imports', async () => {
   const raw = await fs.readFile(path.join(process.cwd(), 'seed', 'golden-smoke-pack.json'), 'utf8');
@@ -171,4 +172,58 @@ test('MemoryRepository.hydrateSyncData restores cross-device sessions, attempts,
   const allQs = await repo.listQuestions();
   assert.ok(allQs.some((q) => q.questionId === 'q_custom_sync_v1'));
   assert.equal(allQs.find((q) => q.questionId === smoke.questions[0].questionId)?.qcStatus, 'quarantined');
+});
+
+test('MemoryRepository backup/restore includes plan-only learners and stays compatible with legacy bundles without dailyFocusPlans', async () => {
+  const repo = new MemoryRepository();
+  const plan = {
+    planDate: '2026-11-21',
+    studentId: 'plan_only_mem_student',
+    generatedAtIso: '2026-11-21T07:00:00.000Z',
+    source: 'deterministic' as const,
+    focusSkillIds: ['MATH.NUM.FRACTIONS_RATIOS'],
+    skillWeights: { 'MATH.NUM.FRACTIONS_RATIOS': 1.2 },
+    dailyQuestionLimitBySection: { READ: 2, MATH: 4, THINK: 3, WRIT: 0 },
+    dailyGoalMinutes: 20,
+    autoCalibrated: true,
+    rationale: 'Memory repo plan-only learner.',
+  };
+  await repo.saveDailyFocusPlan('plan_only_mem_student', plan);
+
+  const backup = await repo.exportFullBackup();
+  assert.equal(backup.counts.dailyFocusPlans, 1);
+  assert.equal(backup.users.length, 1);
+  assert.equal(backup.users[0].uid, 'plan_only_mem_student');
+  assert.deepEqual(backup.users[0].dailyFocusPlans, [plan]);
+
+  const target = new MemoryRepository();
+  const dry = await target.restoreFullBackup(backup, { dryRun: true });
+  assert.equal(dry.valid, true);
+  assert.equal(dry.wouldCreate.dailyFocusPlans, 1);
+  assert.equal(await target.getDailyFocusPlan('plan_only_mem_student', '2026-11-21'), null);
+
+  const applied = await target.restoreFullBackup(backup, { dryRun: false });
+  assert.equal(applied.valid, true);
+  assert.equal(applied.applied.dailyFocusPlans, 1);
+  assert.deepEqual(await target.getDailyFocusPlan('plan_only_mem_student', '2026-11-21'), plan);
+
+  const replay = await target.restoreFullBackup(backup, { dryRun: false });
+  assert.equal(replay.applied.dailyFocusPlans, 0);
+
+  // Older bundle without dailyFocusPlans
+  const legacyUsers = backup.users.map(({ dailyFocusPlans: _omitted, ...rest }) => rest);
+  const { dailyFocusPlans: _omittedCount, ...legacyCounts } = backup.counts;
+  const legacyChecksums = { ...backup.checksums, users: sha256Json(legacyUsers) };
+  const legacyBundle = {
+    ...backup,
+    counts: legacyCounts,
+    checksums: legacyChecksums,
+    bundleSha256: sha256Json({ schemaVersion: backup.schemaVersion, counts: legacyCounts, checksums: legacyChecksums }),
+    users: legacyUsers,
+  };
+  const legacyTarget = new MemoryRepository();
+  const legacyApplied = await legacyTarget.restoreFullBackup(legacyBundle, { dryRun: false });
+  assert.equal(legacyApplied.valid, true);
+  assert.equal(legacyApplied.checksumVerified, true);
+  assert.equal(legacyApplied.applied.dailyFocusPlans, 0);
 });

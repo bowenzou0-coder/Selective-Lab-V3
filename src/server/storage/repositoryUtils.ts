@@ -6,6 +6,13 @@ import type {
   QuestionItem,
   StimulusGroup,
 } from '../../shared/contracts.ts';
+import {
+  computePoolHealth,
+  deriveQuestionProgressMeta,
+  qcStatusToPoolStatus,
+  type BatchDirectorySummary,
+  type QuestionProgressMeta,
+} from '../../shared/bankStatus.ts';
 import { getQuestionBatchTag } from '../../shared/engine.ts';
 import type {
   AppRepository,
@@ -30,6 +37,50 @@ export function selectLatestByFamily(allQuestions: QuestionItem[]): QuestionItem
   return Array.from(latestByFamily.values());
 }
 
+function summarizeBatches(
+  questions: QuestionItem[],
+  batches: ImportBatchRecord[],
+  progress: Map<string, QuestionProgressMeta>,
+): BatchDirectorySummary[] {
+  const labels = {
+    PT1: 'Official Practice Test 1',
+    PT2: 'Official Practice Test 2',
+    PT3: 'Official Practice Test 3 (Holdout)',
+    SMOKE: 'Built-in Starter Pack',
+    CUSTOM: 'Built-in Starter Pack',
+  };
+  const imported = new Map(batches.map((batch) => [batch.batchId, batch]));
+  const summaries = new Map<string, BatchDirectorySummary>();
+  for (const question of questions) {
+    const tag = getQuestionBatchTag(question);
+    const batchId = question.batchId || `tag_${tag}`;
+    const importedBatch = imported.get(batchId);
+    const batch = summaries.get(batchId) ?? {
+      batchId,
+      batchLabel: importedBatch?.batchLabel || question.batchLabel || (question.batchId ? batchId : labels[tag]),
+      createdAtIso: importedBatch?.createdAtIso || question.createdAtIso || '',
+      importedBy: importedBatch?.importedBy ||
+        (question.provenance.sourceType === 'official_doe' ? 'official_seed' : 'bank'),
+      total: 0,
+      live: 0,
+      unseen: 0,
+      done: 0,
+      paused: 0,
+      archived: 0,
+      questionIds: [],
+    };
+    batch.total++;
+    batch.questionIds.push(question.questionId);
+    batch[qcStatusToPoolStatus(question.qcStatus)]++;
+    const status = progress.get(question.questionId)?.completionStatus;
+    if (status === 'unseen' || status === 'done') batch[status]++;
+    summaries.set(batchId, batch);
+  }
+  return Array.from(summaries.values()).sort(
+    (a, b) => (Date.parse(b.createdAtIso) || 0) - (Date.parse(a.createdAtIso) || 0),
+  );
+}
+
 export function filterAndPaginateQuestions(input: {
   allQuestions: QuestionItem[];
   stimuliById: Record<string, StimulusGroup>;
@@ -45,15 +96,30 @@ export function filterAndPaginateQuestions(input: {
     }
   }
 
-  const base = params.includeHistorical ? allQuestions : selectLatestByFamily(allQuestions);
+  const latest = selectLatestByFamily(allQuestions);
+  const base = params.includeHistorical ? allQuestions : latest;
+  const { progress } = params;
+  const progressByQid = new Map<string, QuestionProgressMeta>();
+  if (progress) {
+    for (const question of base) {
+      progressByQid.set(question.questionId, deriveQuestionProgressMeta(question, progress.evidence, progress.memory));
+    }
+  }
   const needle = (params.search || '').trim().toLowerCase();
 
   const filtered = base.filter((q) => {
     if (params.section && q.section !== params.section) return false;
     if (params.poolType && q.poolType !== params.poolType) return false;
     if (params.qcStatus && q.qcStatus !== params.qcStatus) return false;
+    if (params.poolStatus && qcStatusToPoolStatus(q.qcStatus) !== params.poolStatus) return false;
+    if (params.completionStatus && progressByQid.get(q.questionId)?.completionStatus !== params.completionStatus) {
+      return false;
+    }
     if (params.formatType && q.formatType !== params.formatType) return false;
-    if (params.batchId && q.batchId !== params.batchId) return false;
+    if (params.batchId) {
+      const batchId = params.batchId.startsWith('tag_') ? `tag_${getQuestionBatchTag(q)}` : q.batchId;
+      if (params.batchId !== batchId) return false;
+    }
     if (params.batchTag && getQuestionBatchTag(q) !== params.batchTag) return false;
     if (params.skillId) {
       const targetSkillId = params.skillId;
@@ -131,6 +197,20 @@ export function filterAndPaginateQuestions(input: {
     pageSize,
     openFlagsByQuestionId,
     batches,
+    ...(progress && {
+      progressByQuestionId: Object.fromEntries(pagedQuestions.map((q) => [q.questionId, progressByQid.get(q.questionId)!])),
+      poolHealth: computePoolHealth({
+        questions: latest,
+        evidenceMap: progress.evidence,
+        questionMemory: progress.memory,
+        dailyQuestionTarget: progress.dailyQuestionTarget,
+      }),
+      masteredLiveQuestionIds: latest
+        .filter((q) => q.qcStatus === 'active' && q.poolType !== 'benchmark_holdout' &&
+          progressByQid.get(q.questionId)?.completionStatus === 'done')
+        .map((q) => q.questionId),
+      batchSummaries: summarizeBatches(latest, batches, progressByQid),
+    }),
   };
 }
 
@@ -151,6 +231,7 @@ export function finalizeBackupBundle(
     partAttempts: partial.users.reduce((sum, u) => sum + u.partAttempts.length, 0),
     questionEvidence: partial.users.reduce((sum, u) => sum + u.questionEvidence.length, 0),
     writingSubmissions: partial.users.reduce((sum, u) => sum + u.writingSubmissions.length, 0),
+    dailyFocusPlans: partial.users.reduce((sum, u) => sum + (u.dailyFocusPlans?.length ?? 0), 0),
   };
 
   const checksums: Record<string, string> = {
@@ -213,7 +294,15 @@ export function validateIncomingBackupBundle(raw: unknown): {
   if (!Array.isArray(obj.stimuli)) errors.push('Missing "stimuli" array in backup.');
   if (!Array.isArray(obj.questions)) errors.push('Missing "questions" array in backup.');
   if (!Array.isArray(obj.configVersions)) errors.push('Missing "configVersions" array in backup.');
-  if (!Array.isArray(obj.users)) errors.push('Missing "users" array in backup.');
+  if (!Array.isArray(obj.users)) {
+    errors.push('Missing "users" array in backup.');
+  } else {
+    for (const user of obj.users) {
+      if (user?.dailyFocusPlans !== undefined && !Array.isArray(user.dailyFocusPlans)) {
+        errors.push(`Invalid "dailyFocusPlans" field for user "${String(user?.uid || '')}".`);
+      }
+    }
+  }
 
   if (errors.length > 0) {
     return { valid: false, checksumVerified: false, bundle: null, errors, warnings };

@@ -1,4 +1,11 @@
 import type {
+  BankPoolStatus,
+  BatchDirectorySummary,
+  PoolHealthSummary,
+  QuestionCompletionStatus,
+  QuestionProgressMeta,
+} from '../../shared/bankStatus.ts';
+import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
@@ -85,6 +92,13 @@ export interface QuestionQueryParams {
   section?: string;
   poolType?: string;
   qcStatus?: string;
+  poolStatus?: BankPoolStatus;
+  completionStatus?: QuestionCompletionStatus;
+  progress?: {
+    evidence: Record<string, QuestionMasteryEvidence>;
+    memory: Record<string, QuestionMemoryState>;
+    dailyQuestionTarget: number;
+  };
   formatType?: string;
   batchId?: string;
   batchTag?: string;
@@ -106,6 +120,10 @@ export interface QuestionQueryResult {
   pageSize: number;
   openFlagsByQuestionId: Record<string, number>;
   batches: ImportBatchRecord[];
+  progressByQuestionId?: Record<string, QuestionProgressMeta>;
+  poolHealth?: PoolHealthSummary;
+  masteredLiveQuestionIds?: string[];
+  batchSummaries?: BatchDirectorySummary[];
 }
 
 export interface QuestionVersionSummary {
@@ -156,12 +174,13 @@ export interface BackupSectionCounts {
   partAttempts: number;
   questionEvidence: number;
   writingSubmissions: number;
+  dailyFocusPlans?: number;
 }
 
 export interface CanonicalBackupBundle {
   schemaVersion: 'v3_canonical_1.0';
   exportedAtIso: string;
-  backendName: AppRepository['backendName'];
+  backendName: AppRepository['backendName'] | 'cloudsql_postgres';
   counts: BackupSectionCounts;
   checksums: Record<string, string>;
   bundleSha256: string;
@@ -189,6 +208,7 @@ export interface CanonicalBackupBundle {
     questionMemory: QuestionMemoryState[];
     questionEvidence: QuestionMasteryEvidence[];
     writingSubmissions: (WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] })[];
+    dailyFocusPlans?: DailyFocusPlan[];
   }[];
 }
 
@@ -217,8 +237,28 @@ export interface MigrationPreflightReport {
   mediaMissingFilesCount: number;
 }
 
+export interface ProgressCountsResponse {
+  sessionsCount: number;
+  attemptsCount: number;
+  evidenceCount: number;
+  writingCount: number;
+  bankQuestionsCount: number;
+}
+
+export interface ProgressResetResponse {
+  ok: boolean;
+  clearedSessions: number;
+  clearedAttempts: number;
+  clearedSkillStates: number;
+  clearedMemory: number;
+  clearedEvidence: number;
+  clearedWriting: number;
+  clearedDailyPlans: number;
+  preservedQuestionsCount: number;
+}
+
 export interface AppRepository {
-  readonly backendName: 'cloudsql_postgres' | 'firestore_server' | 'cloudflare_d1' | 'memory_preview';
+  readonly backendName: 'postgres' | 'firestore_server' | 'cloudflare_d1' | 'memory_preview';
   initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void>;
   hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void>;
 
@@ -229,6 +269,8 @@ export interface AppRepository {
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }>;
   isUserAdmin(uid: string): Promise<boolean>;
+  getProgressCounts?(studentId: string): Promise<ProgressCountsResponse>;
+  resetStudentProgress?(studentId: string): Promise<ProgressResetResponse>;
 
   listQuestions(filter?: {
     section?: string;

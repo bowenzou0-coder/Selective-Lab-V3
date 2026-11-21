@@ -760,12 +760,15 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
   const nowIso = input.nowIso ?? new Date().toISOString();
   const planDate = nowIso.slice(0, 10);
 
+  const wantsAutoCalibrate = Boolean(input.config?.autoCalibrate?.enabled);
+
   if (!input.forceRefresh) {
     const cached = await input.repo.getDailyFocusPlan(input.studentId, planDate).catch(() => null);
     if (
       cached &&
       cached.focusSkillIds.length > 0 &&
-      (cached.source === 'deterministic' || cached.modelId === GEMINI_DECISION_MODEL)
+      (cached.source === 'deterministic' || cached.modelId === GEMINI_DECISION_MODEL) &&
+      (!wantsAutoCalibrate || Boolean(cached.dailyQuestionLimitBySection && cached.dailyGoalMinutes))
     ) {
       return { plan: cached };
     }

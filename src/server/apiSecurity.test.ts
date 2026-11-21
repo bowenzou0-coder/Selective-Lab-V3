@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
+import { LoginTicket, OAuth2Client, type TokenPayload } from 'google-auth-library';
 import { createApp } from '../../server.ts';
-import type { BankImportManifest } from '../shared/contracts.ts';
-import { signSessionToken } from './auth.ts';
+import type { BankImportManifest, LearningConfig, SectionCode } from '../shared/contracts.ts';
+import { V3_STARTER_MANIFEST_EXAMPLE } from '../shared/v3Schema.ts';
+import { AUTH_COOKIE_NAME, GOOGLE_NONCE_COOKIE_NAME, signSessionToken } from './auth.ts';
+import { getQuestionBatchTag } from '../shared/engine.ts';
 import { createRepository } from './storage/index.ts';
 import { MemoryRepository } from './storage/memoryRepository.ts';
+
+function signedCookie(sub: string, role: 'student' | 'admin'): string {
+  const token = signSessionToken({
+    role,
+    studentId: `google_${sub}`,
+    email: role === 'admin' ? 'bowenzou0@gmail.com' : `${sub}@gmail.com`,
+    authMethod: 'google',
+    googleSub: sub,
+  });
+  return `${AUTH_COOKIE_NAME}=${token}`;
+}
 
 async function startTestServer() {
   const repo = new MemoryRepository();
@@ -32,6 +46,7 @@ test('createRepository fails cleanly in production when no durable DB is configu
   const prevEnv = { ...process.env };
   try {
     process.env.NODE_ENV = 'production';
+    delete process.env.DATABASE_URL;
     delete process.env.SQL_HOST;
     delete process.env.SQL_USER;
     delete process.env.SQL_PASSWORD;
@@ -63,9 +78,9 @@ test('createRepository fails cleanly in production when no durable DB is configu
 test('API security: auth boundaries, cross-user isolation, zero answer key leakage, and retired /api/sync/hydrate', async () => {
   const srv = await startTestServer();
   try {
-    const studentAToken = signSessionToken({ role: 'student', studentId: 'uid_student_A', authMethod: 'firebase' });
-    const studentBToken = signSessionToken({ role: 'student', studentId: 'uid_student_B', authMethod: 'firebase' });
-    const adminToken = signSessionToken({ role: 'admin', studentId: 'uid_admin', authMethod: 'firebase' });
+    const studentAToken = signedCookie('student_A', 'student');
+    const studentBToken = signedCookie('student_B', 'student');
+    const adminToken = signedCookie('admin', 'admin');
 
     // 1. Unauthenticated requests rejected cleanly with 401
     const unauthStudent = await fetch(`${srv.baseUrl}/api/student/dashboard`);
@@ -76,7 +91,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
 
     // 2. Student cannot access Admin endpoints (403)
     const studentAdmin = await fetch(`${srv.baseUrl}/api/admin/status`, {
-      headers: { Authorization: `Bearer ${studentAToken}` },
+      headers: { Cookie: studentAToken },
     });
     assert.equal(studentAdmin.status, 403);
 
@@ -85,7 +100,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentAToken}`,
+        Cookie: studentAToken,
       },
       body: JSON.stringify({}),
     });
@@ -96,7 +111,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentAToken}`,
+        Cookie: studentAToken,
       },
       body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'READ' }),
     });
@@ -108,14 +123,14 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentAToken}`,
+        Cookie: studentAToken,
       },
       body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
     });
     assert.equal(secondCreate.status, 409);
 
     const getA = await fetch(`${srv.baseUrl}/api/student/sessions/${sessionId}`, {
-      headers: { Authorization: `Bearer ${studentAToken}` },
+      headers: { Cookie: studentAToken },
     });
     assert.equal(getA.status, 200);
     const sessionData = (await getA.json()) as {
@@ -139,7 +154,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
 
     // 5. Cross-user isolation: Student B cannot GET, PATCH, or POST submit Student A's session
     const crossGet = await fetch(`${srv.baseUrl}/api/student/sessions/${sessionId}`, {
-      headers: { Authorization: `Bearer ${studentBToken}` },
+      headers: { Cookie: studentBToken },
     });
     assert.equal(crossGet.status, 403);
 
@@ -147,7 +162,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentBToken}`,
+        Cookie: studentBToken,
       },
       body: JSON.stringify({ checkpoint: { currentIndex: 0, elapsedSec: 1, answersByPartId: {}, flaggedQuestionIds: [] } }),
     });
@@ -157,7 +172,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentBToken}`,
+        Cookie: studentBToken,
       },
       body: JSON.stringify({}),
     });
@@ -165,7 +180,7 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
 
     // Admin token also works cleanly
     const adminOk = await fetch(`${srv.baseUrl}/api/admin/status`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
+      headers: { Cookie: adminToken },
     });
     assert.equal(adminOk.status, 200);
   } finally {
@@ -176,8 +191,8 @@ test('API security: auth boundaries, cross-user isolation, zero answer key leaka
 test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on bank edits, and calibration sandbox isolation', async () => {
   const srv = await startTestServer();
   try {
-    const studentToken = signSessionToken({ role: 'student', studentId: 'uid_snapshot_user', authMethod: 'firebase' });
-    const adminToken = signSessionToken({ role: 'admin', studentId: 'uid_admin_user', authMethod: 'firebase' });
+    const studentToken = signedCookie('snapshot_user', 'student');
+    const adminToken = signedCookie('admin_user', 'admin');
 
     // Create a clean single-question manifest with known answer 'A'
     const customManifest: BankImportManifest = {
@@ -225,7 +240,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${adminToken}`,
+        Cookie: adminToken,
       },
       body: JSON.stringify({ manifest: customManifest }),
     });
@@ -236,7 +251,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${adminToken}`,
+        Cookie: adminToken,
       },
       body: JSON.stringify({ questionIds: ['does_not_exist_999'], isSandbox: true }),
     });
@@ -247,7 +262,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${adminToken}`,
+        Cookie: adminToken,
       },
       body: JSON.stringify({
         questionIds: ['q_snap_test_v1', 'q_off_pt1_read_q01_v1'],
@@ -266,7 +281,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${adminToken}`,
+        Cookie: adminToken,
       },
       body: JSON.stringify({
         checkpoint: {
@@ -278,7 +293,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       }),
     });
     assert.equal(calSubmit.status, 200);
-    const adminEvidenceAfterSandbox = await srv.repo.getQuestionEvidence('uid_admin_user');
+    const adminEvidenceAfterSandbox = await srv.repo.getQuestionEvidence('google_admin_user');
     assert.equal(Object.keys(adminEvidenceAfterSandbox).length, 0);
 
     // 3. Create normal student session (snapshot captures v1 answer 'A')
@@ -286,7 +301,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
     });
@@ -301,7 +316,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
     await srv.repo.createSession(
       {
         sessionId: 'sess_immutable_check',
-        studentId: 'uid_snapshot_user',
+        studentId: 'google_snapshot_user',
         configVersionId: 'cfg_v1',
         mode: 'section_drill',
         status: 'in_progress',
@@ -332,7 +347,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         expectedRevision: session.checkpointRevision,
@@ -345,7 +360,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         expectedRevision: 1,
@@ -360,7 +375,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${studentToken}`,
+          Cookie: studentToken,
         },
         body: JSON.stringify({
           checkpoint: {
@@ -375,7 +390,7 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${studentToken}`,
+          Cookie: studentToken,
         },
         body: JSON.stringify({
           checkpoint: {
@@ -395,11 +410,11 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
     assert.equal(bodyA.correctSlots, 1);
     assert.equal(bodyB.correctSlots, 1);
     // At most 1 attempt & 1 evidence record created despite concurrent submit!
-    const studentAttempts = await srv.repo.listPartAttempts(100, 'uid_snapshot_user');
+    const studentAttempts = await srv.repo.listPartAttempts(100, 'google_snapshot_user');
     assert.equal(studentAttempts.length, 1);
     assert.equal(studentAttempts[0].isCorrect, true);
 
-    const evidenceMap = await srv.repo.getQuestionEvidence('uid_snapshot_user');
+    const evidenceMap = await srv.repo.getQuestionEvidence('google_snapshot_user');
     assert.equal(Object.keys(evidenceMap).length, 1);
     const ev = Object.values(evidenceMap)[0];
     assert.equal(ev.attemptsCount, 1);
@@ -415,16 +430,8 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
   delete process.env.GEMINI_API_KEY;
   const srv = await startTestServer();
   try {
-    const studentToken = signSessionToken({
-      role: 'student',
-      studentId: 'uid_lock_tester',
-      authMethod: 'firebase',
-    });
-    const adminToken = signSessionToken({
-      role: 'admin',
-      studentId: 'uid_admin_diag',
-      authMethod: 'firebase',
-    });
+    const studentToken = signedCookie('lock_tester', 'student');
+    const adminToken = signedCookie('admin_diag', 'admin');
 
     // 1. Concurrent session creation for same user: strictly 1 succeeds (201), 1 conflicts (409)
     const [r1, r2] = await Promise.all([
@@ -432,7 +439,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${studentToken}`,
+          Cookie: studentToken,
         },
         body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
       }),
@@ -440,7 +447,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${studentToken}`,
+          Cookie: studentToken,
         },
         body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'READ' }),
       }),
@@ -466,7 +473,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         checkpoint: { currentIndex: 0, elapsedSec: 10, answersByPartId: {}, flaggedQuestionIds: [] },
@@ -479,7 +486,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     await srv.repo.reserveAndCreateSession(
       {
         sessionId: 'sess_expired_test',
-        studentId: 'uid_lock_tester',
+        studentId: 'google_lock_tester',
         configVersionId: 'cfg_v1',
         mode: 'section_drill',
         sectionFilter: 'MATH',
@@ -516,7 +523,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         expectedRevision: 1,
@@ -528,7 +535,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     assert.equal(lateCpJson.expiredAutoSubmitted, true);
 
     const getExpired = await fetch(`${srv.baseUrl}/api/student/sessions/sess_expired_test`, {
-      headers: { Authorization: `Bearer ${studentToken}` },
+      headers: { Cookie: studentToken },
     });
     assert.equal(getExpired.status, 200);
     const expPayload = (await getExpired.json()) as {
@@ -544,7 +551,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     await srv.repo.reserveAndCreateSession(
       {
         sessionId: 'sess_late_submit_check',
-        studentId: 'uid_lock_tester',
+        studentId: 'google_lock_tester',
         configVersionId: 'cfg_v1',
         mode: 'section_drill',
         sectionFilter: 'MATH',
@@ -581,7 +588,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         checkpoint: {
@@ -604,7 +611,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
     });
@@ -614,7 +621,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
@@ -627,7 +634,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${studentToken}`,
+        Cookie: studentToken,
       },
       body: JSON.stringify({
         checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
@@ -636,14 +643,14 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
 
     // 4. Dashboard returns cached dailyFocusPlan (calling twice hits saved plan without changing timestamp)
     const dash1 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
-      headers: { Authorization: `Bearer ${studentToken}` },
+      headers: { Cookie: studentToken },
     });
     assert.equal(dash1.status, 200);
     const d1 = (await dash1.json()) as { dailyFocusPlan?: { planDate: string; generatedAtIso: string; focusSkillIds: string[] } };
     assert.ok(d1.dailyFocusPlan && d1.dailyFocusPlan.focusSkillIds.length > 0);
 
     const dash2 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
-      headers: { Authorization: `Bearer ${studentToken}` },
+      headers: { Cookie: studentToken },
     });
     const d2 = (await dash2.json()) as { dailyFocusPlan?: { planDate: string; generatedAtIso: string } };
     assert.equal(d2.dailyFocusPlan?.generatedAtIso, d1.dailyFocusPlan?.generatedAtIso);
@@ -651,7 +658,7 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     // 5. Admin diagnostics strictly redacts actual secrets
     process.env.GEMINI_API_KEY = 'gemini-secret-value-must-never-leak';
     const diagRes = await fetch(`${srv.baseUrl}/api/admin/diagnostics`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
+      headers: { Cookie: adminToken },
     });
     assert.equal(diagRes.status, 200);
     const diagText = await diagRes.text();
@@ -666,9 +673,416 @@ test('Atomic 1-active-session lock, deadline expiry auto-finalization, diagnosti
     assert.equal(diagJson.sessionSecretConfigured, true);
     assert.equal(diagJson.geminiConfigured, true);
     assert.equal(diagJson.geminiModel, 'gemini-decision-1');
-    assert.equal(diagJson.configSource, 'firebase-applet-config.json');
+    assert.equal(diagJson.configSource, 'environment');
   } finally {
     process.env = prevEnv;
+    await srv.close();
+  }
+});
+
+test('Google login links a legacy student, accepts both admins, and sets only an HTTP-only session', async (t) => {
+  const clientId = 'http-test.apps.googleusercontent.com';
+  t.mock.property(process, 'env', {
+    ...process.env,
+    NODE_ENV: 'development',
+    GOOGLE_CLIENT_ID: clientId,
+    ADMIN_EMAILS: 'bowenzou0@gmail.com,yolandayue0319@gmail.com',
+    GOOGLE_LEGACY_STUDENT_IDS: '{"legacy-google-sub":"uid_linked_student"}',
+  });
+  let claims: Partial<TokenPayload> = {};
+  t.mock.method(OAuth2Client.prototype, 'verifyIdToken', async () => {
+    return new LoginTicket('', {
+      iss: 'https://accounts.google.com',
+      aud: clientId,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      sub: 'legacy-google-sub',
+      email: 'learner@gmail.com',
+      email_verified: true,
+      ...claims,
+    });
+  });
+
+  const srv = await startTestServer();
+  try {
+    const getConfig = async () => {
+      const response = await fetch(`${srv.baseUrl}/api/auth/google-config`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('Cache-Control'), 'no-store');
+      const config = (await response.json()) as { clientId: string; nonce: string };
+      assert.equal(config.clientId, clientId);
+      assert.match(config.nonce, /^[A-Za-z0-9_-]{43}$/);
+      const challengeCookie = response.headers.getSetCookie()[0];
+      assert.match(challengeCookie, new RegExp(`^${GOOGLE_NONCE_COOKIE_NAME}=`));
+      assert.match(challengeCookie, /HttpOnly/);
+      return { nonce: config.nonce, cookie: challengeCookie.split(';')[0] };
+    };
+    const login = (cookie: string, admin = false, headers: Record<string, string> = {}) =>
+      fetch(`${srv.baseUrl}/api/auth/google-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie, ...headers },
+        body: JSON.stringify({ credential: 'test-token', admin, studentId: 'someone-else', role: 'admin' }),
+      });
+    const challenge = await getConfig();
+    assert.equal((await login('')).status, 401);
+    assert.equal((await login(challenge.cookie)).status, 401);
+    claims.nonce = challenge.nonce;
+    assert.equal((await login(`${GOOGLE_NONCE_COOKIE_NAME}=${challenge.nonce}`)).status, 401);
+    assert.equal((await login(challenge.cookie, false, { Origin: 'https://other.example' })).status, 403);
+    assert.equal((await login(challenge.cookie, true)).status, 403);
+    assert.equal((await login(challenge.cookie, false, { 'Content-Type': 'text/plain' })).status, 415);
+
+    const studentLogin = await login(challenge.cookie);
+    assert.equal(studentLogin.status, 200);
+    const student = (await studentLogin.json()) as Record<string, unknown>;
+    assert.equal(student.studentId, 'uid_linked_student');
+    assert.equal(student.role, 'student');
+    assert.equal('token' in student, false);
+    const [setSession, clearChallenge] = studentLogin.headers.getSetCookie();
+    assert.match(setSession, new RegExp(`^${AUTH_COOKIE_NAME}=`));
+    assert.match(setSession, /HttpOnly/);
+    assert.match(setSession, /SameSite=Lax/);
+    assert.match(clearChallenge, new RegExp(`^${GOOGLE_NONCE_COOKIE_NAME}=;`));
+    const studentCookie = setSession.split(';')[0];
+
+    const created = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
+    });
+    assert.equal(created.status, 201);
+    const { sessionId } = await created.json() as { sessionId: string };
+    const returning = await getConfig();
+    claims = { nonce: returning.nonce, email: 'learner-new@gmail.com' };
+    const nextLogin = await login(returning.cookie);
+    assert.equal(nextLogin.status, 200);
+    const nextStudent = (await nextLogin.json()) as Record<string, unknown>;
+    assert.equal(nextStudent.studentId, student.studentId);
+    assert.equal(nextStudent.activeSessionId, sessionId);
+    const nextCookie = nextLogin.headers.getSetCookie()[0].split(';')[0];
+    const nextAuth = await fetch(`${srv.baseUrl}/api/auth/me`, { headers: { Cookie: nextCookie } });
+    assert.deepEqual(await nextAuth.json(), nextStudent);
+
+    for (const [sub, email] of [['admin-one', 'bowenzou0@gmail.com'], ['admin-two', 'yolandayue0319@gmail.com']]) {
+      const adminChallenge = await getConfig();
+      claims = { nonce: adminChallenge.nonce, sub, email };
+      const adminLogin = await login(adminChallenge.cookie, true);
+      assert.equal(adminLogin.status, 200);
+      const admin = (await adminLogin.json()) as Record<string, unknown>;
+      assert.equal(admin.studentId, `google_${sub}`);
+      assert.equal(admin.role, 'admin');
+      const adminCookie = adminLogin.headers.getSetCookie()[0].split(';')[0];
+      const status = await fetch(`${srv.baseUrl}/api/admin/status`, { headers: { Cookie: adminCookie } });
+      assert.equal(status.status, 200);
+      const bank = await fetch(`${srv.baseUrl}/api/admin/questions?poolStatus=live&completionStatus=unseen`, {
+        headers: { Cookie: adminCookie },
+      });
+      assert.equal(bank.status, 200);
+      const view = await bank.json() as {
+        questions: { questionId: string; qcStatus: string }[];
+        progressByQuestionId: Record<string, { completionStatus: string }>;
+        batchSummaries: { total: number }[];
+        poolHealth: { liveCount: number };
+      };
+      assert.ok(view.questions.length > 0);
+      assert.ok(view.questions.every((question) => question.qcStatus === 'active' &&
+        view.progressByQuestionId[question.questionId].completionStatus === 'unseen'));
+      assert.ok(view.batchSummaries.some((batch) => batch.total > 0));
+      assert.ok(view.poolHealth.liveCount > 0);
+
+      const counts = await fetch(`${srv.baseUrl}/api/admin/study-progress`, { headers: { Cookie: adminCookie } });
+      assert.equal(counts.status, 200);
+      const reset = await fetch(`${srv.baseUrl}/api/admin/study-progress/reset`, { method: 'POST', headers: { Cookie: adminCookie } });
+      assert.equal(reset.status, 200);
+      const resetBody = await reset.json() as { clearedSessions: number; preservedQuestionsCount: number };
+      assert.equal(resetBody.clearedSessions, 0);
+      assert.ok(resetBody.preservedQuestionsCount > 0);
+    }
+
+    const isolated = await fetch(`${srv.baseUrl}/api/auth/me`, { headers: { Cookie: nextCookie } });
+    assert.deepEqual(await isolated.json(), nextStudent);
+    const studentReset = await fetch(`${srv.baseUrl}/api/admin/study-progress/reset`, {
+      method: 'POST',
+      headers: { Cookie: nextCookie },
+    });
+    assert.equal(studentReset.status, 403);
+
+    const crossSiteLogout = await fetch(`${srv.baseUrl}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Cookie: nextCookie, 'Sec-Fetch-Site': 'same-site' },
+    });
+    assert.equal(crossSiteLogout.status, 403);
+    const logout = await fetch(`${srv.baseUrl}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Cookie: nextCookie, Origin: srv.baseUrl },
+    });
+    assert.equal(logout.status, 200);
+    assert.match(logout.headers.getSetCookie()[0], new RegExp(`^${AUTH_COOKIE_NAME}=; Max-Age=0;`));
+  } finally {
+    await srv.close();
+  }
+});
+
+test('Dashboard returns pool counts excluding holdouts, custom batches that launch cleanly, and auto-calibrated limits matching session creation', async () => {
+  const srv = await startTestServer();
+  const studentCookie = signedCookie('dash_student', 'student');
+  const adminCookie = signedCookie('dash_admin', 'admin');
+  const studentId = 'google_dash_student';
+
+  try {
+    // 1. Seeded dashboard exposes live/unseen poolCounts, excludes PT3 holdout, and hides system seeds from customBatches
+    const dashRes1 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashRes1.status, 200);
+    const d1 = (await dashRes1.json()) as {
+      dailyGoalMinutes: number;
+      dailyLimits: Record<SectionCode, number>;
+      autoCalibrateEnabled: boolean;
+      poolCounts: Record<SectionCode, { live: number; unseen: number }>;
+      batchCounts: Record<'PT1' | 'PT2' | 'PT3', Record<SectionCode, number>>;
+      customBatches: { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }[];
+      dailyFocusPlan: {
+        planDate: string;
+        autoCalibrated?: boolean;
+        dailyQuestionLimitBySection?: Record<SectionCode, number>;
+        dailyGoalMinutes?: number;
+      };
+    };
+
+    const activeQuestions = await srv.repo.listQuestions({ qcStatus: 'active' });
+    const nonHoldoutMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType !== 'benchmark_holdout');
+    const holdoutMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType === 'benchmark_holdout');
+    const pt3Math = activeQuestions.filter((q) => q.section === 'MATH' && getQuestionBatchTag(q) === 'PT3');
+    assert.ok(holdoutMath.length > 0 && pt3Math.length > 0, 'Expected holdout and PT3 maths items in seeded bank');
+    assert.equal(d1.poolCounts.MATH.live, nonHoldoutMath.length);
+    assert.equal(d1.poolCounts.MATH.unseen, nonHoldoutMath.length);
+    assert.equal(d1.batchCounts.PT3.MATH, pt3Math.length);
+    assert.ok(d1.poolCounts.READ.live > 0 && d1.poolCounts.THINK.live > 0 && d1.poolCounts.WRIT.live > 0);
+    assert.deepEqual(d1.customBatches, []);
+
+    // Verify autoRetireMastered reduces poolCounts when a question is certified retained
+    const sampleMath = nonHoldoutMath[0];
+    await srv.repo.upsertQuestionEvidence(
+      [
+        {
+          evidenceKey: `${sampleMath.questionFamilyId}__${sampleMath.evidenceRevision || 'rev'}`,
+          questionFamilyId: sampleMath.questionFamilyId,
+          questionId: sampleMath.questionId,
+          evidenceRevision: sampleMath.evidenceRevision || 'rev',
+          section: 'MATH',
+          status: 'retained',
+          cleanPassesCount: 3,
+          passTimestampsIso: ['2026-11-01T00:00:00Z', '2026-11-03T00:00:00Z', '2026-11-12T00:00:00Z'],
+          everCleanPassed: true,
+          firstSubmissionCleanPass: true,
+          attemptsCount: 3,
+          resetCount: 0,
+          lastAttemptAtIso: '2026-11-12T00:00:00Z',
+          lastAllCorrect: true,
+          policyVersion: 'v3_3stage_24h_7d',
+          updatedAtIso: '2026-11-12T00:00:00Z',
+        },
+      ],
+      studentId
+    );
+    const dashAfterRetain = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashAfterRetain.status, 200);
+    const dRetain = (await dashAfterRetain.json()) as typeof d1;
+    // Default poolPolicy.autoRetireMastered is false: item stays live, but no longer unseen
+    assert.equal(dRetain.poolCounts.MATH.live, nonHoldoutMath.length);
+    assert.equal(dRetain.poolCounts.MATH.unseen, nonHoldoutMath.length - 1);
+
+    // Enable autoRetireMastered and confirm mastered item is excluded from live poolCounts
+    const cfg0Res = await fetch(`${srv.baseUrl}/api/admin/config`, { headers: { Cookie: adminCookie } });
+    const cfg0 = (await cfg0Res.json()) as { active: { config: LearningConfig } };
+    const autoRetireCfg = structuredClone(cfg0.active.config);
+    autoRetireCfg.poolPolicy = { ...(autoRetireCfg.poolPolicy || { autoRetireMastered: false, allowRepeatWhenExhausted: true }), autoRetireMastered: true };
+    await fetch(`${srv.baseUrl}/api/admin/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ config: autoRetireCfg, notes: 'enable auto-retire' }),
+    });
+    const dashAutoRetire = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashAutoRetire.status, 200);
+    const dAutoRetire = (await dashAutoRetire.json()) as typeof d1;
+    assert.equal(dAutoRetire.poolCounts.MATH.live, nonHoldoutMath.length - 1);
+    assert.equal(dAutoRetire.poolCounts.MATH.unseen, nonHoldoutMath.length - 1);
+
+    // 2. Auto-calibrated daily limits & goal minutes come from dailyFocusPlan (not raw sessionDefaults) and match daily_adaptive session creation
+    assert.equal(d1.autoCalibrateEnabled, true);
+    assert.equal(d1.dailyFocusPlan.autoCalibrated, true);
+    assert.ok(d1.dailyFocusPlan.dailyQuestionLimitBySection);
+    assert.ok(d1.dailyFocusPlan.dailyGoalMinutes);
+    assert.deepEqual(d1.dailyLimits, d1.dailyFocusPlan.dailyQuestionLimitBySection);
+    assert.equal(d1.dailyGoalMinutes, d1.dailyFocusPlan.dailyGoalMinutes);
+
+    // Customize sessionDefaults vs autoCalibrate range so they are guaranteed distinct, then verify dashboard + session creation agree
+    const cfgRes = await fetch(`${srv.baseUrl}/api/admin/config`, { headers: { Cookie: adminCookie } });
+    assert.equal(cfgRes.status, 200);
+    const { active } = (await cfgRes.json()) as { active: { config: LearningConfig } };
+    const tunedConfig: LearningConfig = structuredClone(active.config);
+    tunedConfig.sessionDefaults.dailyGoalMinutes = 55;
+    tunedConfig.sessionDefaults.dailyQuestionLimitBySection = { READ: 1, MATH: 1, THINK: 1, WRIT: 0 };
+    tunedConfig.autoCalibrate = {
+      enabled: true,
+      minDailyQuestions: 8,
+      maxDailyQuestions: 10,
+      includeWriting: false,
+    };
+    const saveCfgRes = await fetch(`${srv.baseUrl}/api/admin/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ config: tunedConfig, notes: 'distinct auto-cal range' }),
+    });
+    assert.equal(saveCfgRes.status, 201);
+
+    // Simulate a stale cached plan missing auto-calibrated fields (from before fix); dashboard must upgrade it
+    await srv.repo.saveDailyFocusPlan(studentId, {
+      planDate: new Date().toISOString().slice(0, 10),
+      studentId,
+      generatedAtIso: '2026-01-01T00:00:00.000Z',
+      source: 'deterministic',
+      focusSkillIds: ['MATH.NUM.FRACTIONS_RATIOS'],
+      skillWeights: { 'MATH.NUM.FRACTIONS_RATIOS': 1.2 },
+      rationale: 'Legacy uncalibrated plan.',
+    });
+
+    const dashRes2 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashRes2.status, 200);
+    const d2 = (await dashRes2.json()) as typeof d1;
+    assert.equal(d2.autoCalibrateEnabled, true);
+    assert.deepEqual(d2.dailyLimits, d2.dailyFocusPlan.dailyQuestionLimitBySection);
+    assert.equal(d2.dailyGoalMinutes, d2.dailyFocusPlan.dailyGoalMinutes);
+    const plannedTotal = d2.dailyLimits.READ + d2.dailyLimits.MATH + d2.dailyLimits.THINK + d2.dailyLimits.WRIT;
+    assert.ok(plannedTotal >= 8 && plannedTotal <= 10, `Expected auto-calibrated total in [8..10], got ${plannedTotal}`);
+    assert.notEqual(d2.dailyGoalMinutes, 55);
+
+    const dailySessRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'daily_adaptive' }),
+    });
+    assert.equal(dailySessRes.status, 201);
+    const dailySess = (await dailySessRes.json()) as {
+      sessionId: string;
+      session: { timeLimitSec?: number; plannedQuestionIds: string[] };
+    };
+    assert.equal(dailySess.session.timeLimitSec, d2.dailyGoalMinutes * 60);
+    assert.equal(dailySess.session.plannedQuestionIds.length, plannedTotal);
+    const dailyDetailRes = await fetch(`${srv.baseUrl}/api/student/sessions/${dailySess.sessionId}`, {
+      headers: { Cookie: studentCookie },
+    });
+    const dailyDetail = (await dailyDetailRes.json()) as { questions: { section: SectionCode }[] };
+    const createdBySection: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
+    for (const q of dailyDetail.questions) createdBySection[q.section] += 1;
+    assert.deepEqual(createdBySection, d2.dailyLimits);
+
+    // Submit the daily session so the student can start a custom batch mock
+    const submitDaily = await fetch(`${srv.baseUrl}/api/student/sessions/${dailySess.sessionId}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        checkpoint: { currentIndex: 0, elapsedSec: 12, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+    assert.equal(submitDaily.status, 200);
+
+    // 3. Import a custom batch, verify it appears in dashboard.customBatches, and launch a batch mock from it
+    const customManifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
+    customManifest.batchLabel = 'Custom Weekend Pack 01';
+    customManifest.stimuli[0].stimulusId = 'stim_custom_batch_01_v1';
+    customManifest.stimuli[0].stimulusFamilyId = 'stim_custom_batch_01';
+    customManifest.questions = customManifest.questions.slice(0, 2).map((q, idx) => ({
+      ...q,
+      questionId: `q_custom_wk01_${idx + 1}_v1`,
+      questionFamilyId: `q_custom_wk01_${idx + 1}`,
+      stimulusId: idx === 0 ? 'stim_custom_batch_01_v1' : undefined,
+      parts: q.parts.map((p, pIdx) => ({ ...p, partId: `q_custom_wk01_${idx + 1}_p${pIdx + 1}` })),
+    }));
+
+    const importRes = await fetch(`${srv.baseUrl}/api/admin/import/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ manifest: customManifest }),
+    });
+    assert.equal(importRes.status, 200);
+    const imported = (await importRes.json()) as { batch?: { batchId: string } };
+    const customBatchId = imported.batch?.batchId;
+    assert.ok(customBatchId);
+
+    const dashRes3 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashRes3.status, 200);
+    const d3 = (await dashRes3.json()) as typeof d1;
+    const foundBatch = d3.customBatches.find((b) => b.batchId === customBatchId);
+    assert.ok(foundBatch, 'Custom imported batch must appear in dashboard.customBatches');
+    assert.equal(foundBatch.batchLabel, 'Custom Weekend Pack 01');
+    assert.equal(foundBatch.total, 2);
+    assert.equal(foundBatch.counts.READ, 1);
+    assert.equal(foundBatch.counts.MATH, 1);
+
+    const batchMockRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        mode: 'section_drill',
+        mockSource: 'batch',
+        batchId: customBatchId,
+        timeMultiplier: 0,
+      }),
+    });
+    assert.equal(batchMockRes.status, 201);
+    const batchMock = (await batchMockRes.json()) as { session: { plannedQuestionIds: string[] } };
+    assert.deepEqual(
+      batchMock.session.plannedQuestionIds.sort(),
+      ['q_custom_wk01_1_v1', 'q_custom_wk01_2_v1']
+    );
+
+    // Submit batch mock and verify disabling auto-calibrate falls back to sessionDefaults
+    await fetch(`${srv.baseUrl}/api/student/sessions/${(batchMock as unknown as { sessionId: string }).sessionId}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+
+    tunedConfig.autoCalibrate = { ...tunedConfig.autoCalibrate, enabled: false };
+    await fetch(`${srv.baseUrl}/api/admin/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ config: tunedConfig, notes: 'disable auto-calibrate' }),
+    });
+
+    const dashRes4 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashRes4.status, 200);
+    const d4 = (await dashRes4.json()) as typeof d1;
+    assert.equal(d4.autoCalibrateEnabled, false);
+    assert.equal(d4.dailyGoalMinutes, 55);
+    assert.deepEqual(d4.dailyLimits, { READ: 1, MATH: 1, THINK: 1, WRIT: 0 });
+
+    const manualSessRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'daily_adaptive' }),
+    });
+    assert.equal(manualSessRes.status, 201);
+    const manualSess = (await manualSessRes.json()) as {
+      session: { timeLimitSec?: number; plannedQuestionIds: string[] };
+    };
+    assert.equal(manualSess.session.timeLimitSec, 55 * 60);
+    assert.equal(manualSess.session.plannedQuestionIds.length, 3);
+  } finally {
     await srv.close();
   }
 });

@@ -6,46 +6,42 @@
   "scripts": {
     "dev": "PORT=3000 tsx server.ts",
     "dev:demo": "ALLOW_DEMO_MEMORY_DB=true ALLOW_LOCAL_DEV_PIN=true tsx server.ts",
-    "dev:emulator": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 ALLOW_LOCAL_DEV_PIN=true tsx server.ts",
     "start": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "lint:rules": "npx eslint firestore.rules",
-    "test": "tsx --test src/shared/*.test.ts src/client/*.test.ts src/server/*.test.ts src/server/storage/*.test.ts firestore.rules.test.ts",
-    "emulators": "firebase emulators:start --project inductive-setting-553bd",
-    "seed": "tsx scripts/seed-firestore.ts",
-    "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
-    "migrate:preflight": "tsx scripts/migrate-preflight.ts"
+    "test": "tsx --test src/shared/*.test.ts src/client/*.test.ts src/server/*.test.ts src/server/storage/*.test.ts",
+    "migrate:preflight": "tsx scripts/migrate-preflight.ts",
+    "deploy": "vercel --prod",
+    "db:push": "tsx scripts/push-manifest.ts"
   },
   "dependencies": {
-    "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@google/genai": "^3.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/pg": "^8.23.1",
     "@vitejs/plugin-react": "^6.1.1",
     "dotenv": "^17.2.3",
-    "eslint": "^10.15.0",
     "express": "^4.21.2",
-    "firebase": "^13.3.0",
-    "firebase-admin": "^14.5.1",
+    "google-auth-library": "^11.3.4",
     "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
     "pg": "^8.23.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^8.3.0"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
+    "firebase-admin": "^14.5.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "vercel": "^66.6.0"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }

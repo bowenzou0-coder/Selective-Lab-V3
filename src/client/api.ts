@@ -22,28 +22,37 @@ import type {
 } from '../shared/contracts';
 import type {
   BankPoolStatus,
+  BatchDirectorySummary,
   PoolHealthSummary,
   QuestionCompletionStatus,
   QuestionProgressMeta,
 } from '../shared/bankStatus';
-import { createFirestoreClientApi } from './firestoreClientApi';
 
-export interface AuthState {
-  authenticated: boolean;
-  role: 'student' | 'admin' | null;
-  studentId: string | null;
-  email?: string;
-  activeSessionId?: string | null;
+export type AuthState = {
   backendName?: string;
   isDisposableDemo?: boolean;
   localDevPinEnabled?: boolean;
-}
+} & (
+  | {
+      authenticated: true;
+      role: 'student' | 'admin';
+      studentId: string;
+      email?: string;
+      activeSessionId?: string | null;
+    }
+  | {
+      authenticated: false;
+      role: null;
+      studentId: null;
+      email?: undefined;
+      activeSessionId?: null;
+    }
+);
 
 export interface HealthResponse {
   ok: boolean;
   backendName: string;
   isDisposableDemo: boolean;
-  emulatorActive: boolean;
   localDevPinEnabled: boolean;
 }
 
@@ -132,50 +141,10 @@ export interface AdminStatusResponse {
   batchesCount?: number;
 }
 
-export interface RuntimeDiagnosticsResponse {
-  checkedAtIso: string;
-  configSource: 'firebase-applet-config.json';
-  projectId: string;
-  firestoreDatabaseId: string;
-  storageBucket: string;
-  runtimeBackend: string;
-  nodeEnv: string;
-  isCloudRuntime: boolean;
-  kService: string | null;
-  runtimeServiceAccount: string | null;
-  credentialMode: 'client_sdk' | 'explicit_credentials' | 'emulator' | 'attached_adc' | 'none';
-  emulatorActive: boolean;
-  localDevPinEnabled: boolean;
-  sessionSecretConfigured: boolean;
-  geminiConfigured: boolean;
-  geminiModel?: string;
-  firestoreProbe: {
-    ok: boolean;
-    latencyMs: number;
-    errorCode?: string;
-    errorMessage?: string;
-  };
-  storageProbe: {
-    ok: boolean;
-    exists?: boolean;
-    error?: string;
-  };
-  remediationHint: string | null;
-}
+export type { RuntimeDiagnostics as RuntimeDiagnosticsResponse } from '../server/diagnostics';
+import type { RuntimeDiagnostics as RuntimeDiagnosticsResponse } from '../server/diagnostics';
 
-export interface BatchDirectorySummary {
-  batchId: string;
-  batchLabel: string;
-  createdAtIso: string;
-  importedBy: string;
-  total: number;
-  live: number;
-  unseen: number;
-  done: number;
-  paused: number;
-  archived: number;
-  questionIds: string[];
-}
+export type { BatchDirectorySummary } from '../shared/bankStatus';
 
 export interface PaginatedQuestionsResponse {
   questions: QuestionItem[];
@@ -229,7 +198,7 @@ export interface MediaMigrationManifest {
   totalReferencedUploadUrls: number;
   missingFilesCount: number;
   needsUploadCount: number;
-  alreadyGcsCount: number;
+  alreadyStoredCount: number;
   items: {
     sourcePath: string;
     referencedByIds: string[];
@@ -237,7 +206,7 @@ export interface MediaMigrationManifest {
     sizeBytes?: number;
     sha256?: string;
     suggestedObjectKey: string;
-    status: 'needs_upload' | 'missing_file' | 'already_gcs';
+    status: 'needs_upload' | 'missing_file' | 'already_stored';
   }[];
 }
 
@@ -255,37 +224,6 @@ export interface MigrationPreflightReport {
   mediaMissingFilesCount: number;
 }
 
-const TOKEN_STORAGE_KEY = 'selective_lab_auth_token';
-let memoryToken: string | null = null;
-let clientFirestoreMode = false;
-
-function getStoredToken(): string | null {
-  if (memoryToken) return memoryToken;
-  try {
-    const val = window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
-    if (val) {
-      memoryToken = val;
-      return val;
-    }
-  } catch {
-    // ignore storage errors
-  }
-  return null;
-}
-
-function setStoredToken(token: string | null): void {
-  memoryToken = token;
-  try {
-    if (token) {
-      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-    } else {
-      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-    }
-  } catch {
-    // ignore storage errors
-  }
-}
-
 export type ApiError = Error & {
   status?: number;
   activeSessionId?: string;
@@ -296,13 +234,11 @@ export type ApiError = Error & {
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = getStoredToken();
   const res = await fetch(url, {
     credentials: 'same-origin',
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers || {}),
     },
   });
@@ -317,7 +253,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     if (res.status === 401 && !url.startsWith('/api/auth/')) {
-      setStoredToken(null);
       window.dispatchEvent(new CustomEvent('nsw-auth-expired'));
     }
     const payload = data as {
@@ -344,16 +279,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-const fsClient = createFirestoreClientApi(request);
-
 async function downloadFile(url: string, fallbackFilename: string): Promise<void> {
-  if (clientFirestoreMode) {
-    return fsClient.downloadClientExport(url, fallbackFilename);
-  }
-  const token = getStoredToken();
   const res = await fetch(url, {
     credentials: 'same-origin',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
   if (!res.ok) {
     throw new Error(`Export failed (${res.status})`);
@@ -370,59 +298,29 @@ async function downloadFile(url: string, fallbackFilename: string): Promise<void
 }
 
 export const api = {
-  getHealth: async () => {
-    const res = await request<HealthResponse>('/api/health');
-    if (res.backendName === 'firestore_client') {
-      clientFirestoreMode = true;
-    }
-    return res;
-  },
-  getMe: async () => {
-    const res = await request<AuthState>('/api/auth/me');
-    if (res.backendName === 'firestore_client') {
-      clientFirestoreMode = true;
-    }
-    return res;
-  },
-  studentLogin: async (pin: string) => {
-    const res = await request<AuthState & { token?: string }>('/api/auth/student-login', {
+  getHealth: () => request<HealthResponse>('/api/health'),
+  getMe: () => request<AuthState>('/api/auth/me'),
+  getGoogleConfig: () => request<{ clientId: string; nonce: string | null }>('/api/auth/google-config'),
+  studentLogin: (pin: string) =>
+    request<AuthState>('/api/auth/student-login', {
       method: 'POST',
       body: JSON.stringify({ pin }),
-    });
-    if (res.token) setStoredToken(res.token);
-    return res;
-  },
-  adminLogin: async (password: string) => {
-    const res = await request<AuthState & { token?: string }>('/api/auth/admin-login', {
+    }),
+  adminLogin: (password: string) =>
+    request<AuthState>('/api/auth/admin-login', {
       method: 'POST',
       body: JSON.stringify({ password }),
-    });
-    if (res.token) setStoredToken(res.token);
-    return res;
-  },
-  firebaseLogin: async (idToken: string) => {
-    const res = await request<AuthState & { token?: string }>('/api/auth/firebase-login', {
+    }),
+  googleLogin: (credential: string, admin: boolean) =>
+    request<AuthState>('/api/auth/google-login', {
       method: 'POST',
-      body: JSON.stringify({ idToken }),
-    });
-    if (res.token) setStoredToken(res.token);
-    if (res.backendName === 'firestore_client') {
-      clientFirestoreMode = true;
-      const synced = await fsClient.syncUserAfterLogin();
-      return { ...res, activeSessionId: synced.activeSessionId };
-    }
-    return res;
-  },
-  logout: async () => {
-    setStoredToken(null);
-    return request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
-  },
+      body: JSON.stringify({ credential, admin }),
+    }),
+  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   downloadFile,
 
   getDashboard: () =>
-    clientFirestoreMode
-      ? fsClient.getDashboard()
-      : request<DashboardResponse>('/api/student/dashboard'),
+    request<DashboardResponse>('/api/student/dashboard'),
   createSession: (payload: {
     mode: SessionMode;
     sectionFilter?: SectionCode;
@@ -433,78 +331,60 @@ export const api = {
     timeMultiplier?: number;
     customTimeLimitSec?: number;
   }) =>
-    clientFirestoreMode
-      ? fsClient.createSession(payload)
-      : request<{ sessionId: string; session: SessionRecord; serverNowIso?: string }>(
-          '/api/student/sessions',
-          {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          }
-        ),
+    request<{ sessionId: string; session: SessionRecord; serverNowIso?: string }>(
+      '/api/student/sessions',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
   getSession: (id: string) =>
-    clientFirestoreMode
-      ? fsClient.getSession(id)
-      : request<SessionDetailResponse>(`/api/student/sessions/${encodeURIComponent(id)}`),
+    request<SessionDetailResponse>(`/api/student/sessions/${encodeURIComponent(id)}`),
   saveCheckpoint: (
     id: string,
     checkpoint: NonNullable<SessionRecord['checkpoint']>,
     expectedRevision?: number
   ) =>
-    clientFirestoreMode
-      ? fsClient.saveCheckpoint(id, checkpoint, expectedRevision)
-      : request<{
-          ok: boolean;
-          checkpointRevision: number;
-          revision?: number;
-          savedAtIso?: string;
-          serverNowIso?: string;
-        }>(`/api/student/sessions/${encodeURIComponent(id)}/checkpoint`, {
-          method: 'PATCH',
-          body: JSON.stringify({ checkpoint, expectedRevision }),
-        }),
+    request<{
+      ok: boolean;
+      checkpointRevision: number;
+      revision?: number;
+      savedAtIso?: string;
+      serverNowIso?: string;
+    }>(`/api/student/sessions/${encodeURIComponent(id)}/checkpoint`, {
+      method: 'PATCH',
+      body: JSON.stringify({ checkpoint, expectedRevision }),
+    }),
   submitSession: (
     id: string,
     checkpoint?: SessionRecord['checkpoint'],
     assisted?: boolean
   ) =>
-    clientFirestoreMode
-      ? fsClient.submitSession(id, checkpoint, assisted)
-      : request<SessionSubmissionPayload & { alreadySubmitted?: boolean }>(
-          `/api/student/sessions/${encodeURIComponent(id)}/submit`,
-          {
-            method: 'POST',
-            body: JSON.stringify({ checkpoint, assisted }),
-          }
-        ),
+    request<SessionSubmissionPayload & { alreadySubmitted?: boolean }>(
+      `/api/student/sessions/${encodeURIComponent(id)}/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ checkpoint, assisted }),
+      }
+    ),
   evaluateWriting: (submissionId: string) =>
-    clientFirestoreMode
-      ? fsClient.evaluateWriting(submissionId)
-      : request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
-          `/api/student/writing/${encodeURIComponent(submissionId)}/evaluate`,
-          { method: 'POST' }
-        ),
+    request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
+      `/api/student/writing/${encodeURIComponent(submissionId)}/evaluate`,
+      { method: 'POST' }
+    ),
   flagQuestion: (payload: { questionId: string; sessionId: string; reason: string; notes?: string }) =>
-    clientFirestoreMode
-      ? fsClient.flagQuestion(payload)
-      : request<{ flag: QuestionFlagRecord }>('/api/student/flags', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }),
+    request<{ flag: QuestionFlagRecord }>('/api/student/flags', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getProgress: () =>
-    clientFirestoreMode
-      ? fsClient.getProgress()
-      : request<ProgressResponse>('/api/student/progress'),
+    request<ProgressResponse>('/api/student/progress'),
 
   // Admin APIs
   getAdminStatus: () =>
-    clientFirestoreMode
-      ? fsClient.getAdminStatus()
-      : request<AdminStatusResponse>('/api/admin/status'),
+    request<AdminStatusResponse>('/api/admin/status'),
   getAdminDiagnostics: () =>
-    clientFirestoreMode
-      ? fsClient.getAdminDiagnostics()
-      : request<RuntimeDiagnosticsResponse>('/api/admin/diagnostics'),
+    request<RuntimeDiagnosticsResponse>('/api/admin/diagnostics'),
   getAdminQuestions: (params?: {
     search?: string;
     section?: string;
@@ -524,14 +404,13 @@ export const api = {
     page?: number;
     pageSize?: number;
   }) => {
-    if (clientFirestoreMode) {
-      return fsClient.getAdminQuestions(params);
-    }
     const qs = new URLSearchParams();
     if (params?.search) qs.set('search', params.search);
     if (params?.section) qs.set('section', params.section);
     if (params?.poolType) qs.set('poolType', params.poolType);
     if (params?.qcStatus) qs.set('qcStatus', params.qcStatus);
+    if (params?.poolStatus) qs.set('poolStatus', params.poolStatus);
+    if (params?.completionStatus) qs.set('completionStatus', params.completionStatus);
     if (params?.formatType) qs.set('formatType', params.formatType);
     if (params?.batchId) qs.set('batchId', params.batchId);
     if (params?.batchTag) qs.set('batchTag', params.batchTag);
@@ -547,84 +426,57 @@ export const api = {
     return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`);
   },
   getQuestionVersions: (questionId: string) =>
-    clientFirestoreMode
-      ? fsClient.getQuestionVersions(questionId)
-      : request<{
-          questionFamilyId: string;
-          versions: { question: QuestionItem; stimulus?: StimulusGroup }[];
-        }>(`/api/admin/questions/${encodeURIComponent(questionId)}/versions`),
+    request<{
+      questionFamilyId: string;
+      versions: { question: QuestionItem; stimulus?: StimulusGroup }[];
+    }>(`/api/admin/questions/${encodeURIComponent(questionId)}/versions`),
   getImportBatches: () =>
-    clientFirestoreMode
-      ? fsClient.getImportBatches()
-      : request<{ batches: ImportBatchRecord[] }>('/api/admin/batches'),
+    request<{ batches: ImportBatchRecord[] }>('/api/admin/batches'),
   updateQuestionStatus: (questionId: string, qcStatus: QuestionItem['qcStatus']) =>
-    clientFirestoreMode
-      ? fsClient.updateQuestionStatus(questionId, qcStatus)
-      : request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
+    request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ qcStatus }),
+    }),
+  bulkUpdateQuestionStatus: (questionIds: string[], qcStatus: QuestionItem['qcStatus']) =>
+    Promise.all(
+      questionIds.map((qid) =>
+        request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(qid)}/status`, {
           method: 'PATCH',
           body: JSON.stringify({ qcStatus }),
-        }),
-  bulkUpdateQuestionStatus: (questionIds: string[], qcStatus: QuestionItem['qcStatus']) =>
-    clientFirestoreMode
-      ? fsClient.bulkUpdateQuestionStatus(questionIds, qcStatus)
-      : Promise.all(
-          questionIds.map((qid) =>
-            request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(qid)}/status`, {
-              method: 'PATCH',
-              body: JSON.stringify({ qcStatus }),
-            })
-          )
-        ).then(() => ({ ok: true, updatedCount: questionIds.length })),
+        })
+      )
+    ).then(() => ({ ok: true, updatedCount: questionIds.length })),
   deleteQuestions: (questionIds: string[]) =>
-    clientFirestoreMode
-      ? fsClient.deleteQuestions(questionIds)
-      : request<{ ok: boolean; deletedCount: number }>('/api/admin/questions/delete', {
-          method: 'POST',
-          body: JSON.stringify({ questionIds }),
-        }),
+    request<{ ok: boolean; deletedCount: number }>('/api/admin/questions/delete', {
+      method: 'POST',
+      body: JSON.stringify({ questionIds }),
+    }),
   recalibrateDailyPlan: (configOverride?: LearningConfig) =>
-    clientFirestoreMode
-      ? fsClient.recalibrateDailyPlan(configOverride)
-      : request<{ plan: DailyFocusPlan; error?: string }>('/api/ai/daily-focus', {
-          method: 'POST',
-          body: JSON.stringify({ config: configOverride }),
-        }),
-  getProgressCounts: () =>
-    clientFirestoreMode
-      ? fsClient.getProgressCounts()
-      : Promise.resolve({
-          sessionsCount: 0,
-          attemptsCount: 0,
-          evidenceCount: 0,
-          writingCount: 0,
-          bankQuestionsCount: 0,
-        }),
+    request<{ plan: DailyFocusPlan; error?: string }>('/api/admin/recalibrate-daily-plan', {
+      method: 'POST',
+      body: JSON.stringify({ config: configOverride }),
+    }),
+  getProgressCounts: () => request<ProgressCountsResponse>('/api/admin/study-progress'),
   resetStudentProgress: () =>
-    clientFirestoreMode
-      ? fsClient.resetStudentProgress()
-      : Promise.reject(new Error('Progress reset is only enabled in Firestore client mode.')),
+    request<ProgressResetResponse>('/api/admin/study-progress/reset', { method: 'POST' }),
   attachQuestionVisual: (
     questionId: string,
     payload: { altText: string; caption?: string; imageBase64?: string; filename?: string; visual?: VisualSpec }
   ) =>
-    clientFirestoreMode
-      ? fsClient.attachQuestionVisual(questionId, payload)
-      : request<{ ok: boolean; visual: VisualSpec; qcStatus?: QuestionItem['qcStatus'] }>(
-          `/api/admin/questions/${encodeURIComponent(questionId)}/visual`,
-          {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          }
-        ),
+    request<{ ok: boolean; visual: VisualSpec; qcStatus?: QuestionItem['qcStatus'] }>(
+      `/api/admin/questions/${encodeURIComponent(questionId)}/visual`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
   uploadMedia: (payload: { filename: string; imageBase64: string; questionId?: string }) =>
     request<{ ok: boolean; asset: MediaAssetRecord }>('/api/admin/media/upload', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
   getMediaMigrationManifest: () =>
-    clientFirestoreMode
-      ? fsClient.getMediaMigrationManifest()
-      : request<{ manifest: MediaMigrationManifest }>('/api/admin/media/migration-manifest'),
+    request<{ manifest: MediaMigrationManifest }>('/api/admin/media/migration-manifest'),
   createCalibrationSession: (payload: {
     questionIds?: string[];
     items?: { questionId: string }[];
@@ -641,103 +493,81 @@ export const api = {
     customTimeLimitSec?: number;
     isSandbox?: boolean;
   }) =>
-    clientFirestoreMode
-      ? fsClient.createCalibrationSession(payload)
-      : request<{ sessionId: string; count: number; session: SessionRecord }>(
-          '/api/admin/calibration/session',
-          {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          }
-        ),
+    request<{ sessionId: string; count: number; session: SessionRecord }>(
+      '/api/admin/calibration/session',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
   getCalibrationInspector: (sessionId: string) =>
-    clientFirestoreMode
-      ? fsClient.getCalibrationInspector(sessionId)
-      : request<{ inspectorByQuestionId: Record<string, QuestionItem> }>(
-          `/api/admin/calibration/session/${encodeURIComponent(sessionId)}`
-        ),
+    request<{ inspectorByQuestionId: Record<string, QuestionItem> }>(
+      `/api/admin/calibration/session/${encodeURIComponent(sessionId)}`
+    ),
   dryRunManifest: (manifest: unknown) =>
-    clientFirestoreMode
-      ? fsClient.dryRunManifest(manifest)
-      : request<{
-          report: {
-            valid: boolean;
-            batchLabel: string;
-            stimuliCount: number;
-            questionsCount: number;
-            newQuestions: number;
-            unchangedQuestions: number;
-            versionBumpedQuestions: number;
-            errors: string[];
-            warnings: string[];
-          };
-        }>('/api/admin/import/dry-run', {
-          method: 'POST',
-          body: JSON.stringify({ manifest }),
-        }),
+    request<{
+      report: {
+        valid: boolean;
+        batchLabel: string;
+        stimuliCount: number;
+        questionsCount: number;
+        newQuestions: number;
+        unchangedQuestions: number;
+        versionBumpedQuestions: number;
+        errors: string[];
+        warnings: string[];
+      };
+    }>('/api/admin/import/dry-run', {
+      method: 'POST',
+      body: JSON.stringify({ manifest }),
+    }),
   commitManifest: (manifest: BankImportManifest) =>
-    clientFirestoreMode
-      ? fsClient.commitManifest(manifest)
-      : request<{
-          ok: boolean;
-          result: { imported: number; skipped: number; versionBumped: number };
-          batch?: ImportBatchRecord;
-        }>('/api/admin/import/commit', {
-          method: 'POST',
-          body: JSON.stringify({ manifest }),
-        }),
+    request<{
+      ok: boolean;
+      result: { imported: number; skipped: number; versionBumped: number };
+      batch?: ImportBatchRecord;
+    }>('/api/admin/import/commit', {
+      method: 'POST',
+      body: JSON.stringify({ manifest }),
+    }),
   getImportSchema: () =>
-    clientFirestoreMode
-      ? fsClient.getImportSchema()
-      : request<{ schema: unknown; starterExample: unknown }>('/api/admin/import/schema'),
+    request<{ schema: unknown; starterExample: unknown }>('/api/admin/import/schema'),
   getAdminConfig: () =>
-    clientFirestoreMode
-      ? fsClient.getAdminConfig()
-      : request<{
-          active: { configVersionId: string; versionNumber: number; config: LearningConfig };
-          history: {
-            configVersionId: string;
-            versionNumber: number;
-            notes?: string;
-            createdAt: string;
-            config: LearningConfig;
-          }[];
-        }>('/api/admin/config'),
+    request<{
+      active: { configVersionId: string; versionNumber: number; config: LearningConfig };
+      history: {
+        configVersionId: string;
+        versionNumber: number;
+        notes?: string;
+        createdAt: string;
+        config: LearningConfig;
+      }[];
+    }>('/api/admin/config'),
   saveAdminConfig: (config: LearningConfig, notes?: string) =>
-    clientFirestoreMode
-      ? fsClient.saveAdminConfig(config, notes)
-      : request<{
-          ok: boolean;
-          configVersionId: string;
-          versionNumber: number;
-          config?: LearningConfig;
-          notes?: string;
-          createdAtIso?: string;
-        }>('/api/admin/config', {
-          method: 'POST',
-          body: JSON.stringify({ config, notes }),
-        }),
+    request<{
+      ok: boolean;
+      configVersionId: string;
+      versionNumber: number;
+      config?: LearningConfig;
+      notes?: string;
+      createdAtIso?: string;
+    }>('/api/admin/config', {
+      method: 'POST',
+      body: JSON.stringify({ config, notes }),
+    }),
   getAdminFlags: () =>
-    clientFirestoreMode
-      ? fsClient.getAdminFlags()
-      : request<{ flags: QuestionFlagRecord[] }>('/api/admin/flags'),
+    request<{ flags: QuestionFlagRecord[] }>('/api/admin/flags'),
   resolveFlag: (flagId: string) =>
-    clientFirestoreMode
-      ? fsClient.resolveFlag(flagId)
-      : request<{ ok: boolean }>(`/api/admin/flags/${encodeURIComponent(flagId)}/resolve`, {
-          method: 'POST',
-        }),
+    request<{ ok: boolean }>(`/api/admin/flags/${encodeURIComponent(flagId)}/resolve`, {
+      method: 'POST',
+    }),
   restoreBackup: (backup: unknown, dryRun = true) =>
-    clientFirestoreMode
-      ? fsClient.restoreBackup(backup, dryRun)
-      : request<{ ok: boolean; report: RestoreReport }>('/api/admin/restore', {
-          method: 'POST',
-          body: JSON.stringify({ backup, dryRun }),
-        }),
+    request<{ ok: boolean; report: RestoreReport }>('/api/admin/restore', {
+      method: 'POST',
+      body: JSON.stringify({ backup, dryRun }),
+    }),
   getMigrationPreflight: () =>
-    clientFirestoreMode
-      ? fsClient.getMigrationPreflight()
-      : request<{ report: MigrationPreflightReport }>('/api/admin/migrate/preflight'),
+    request<{ report: MigrationPreflightReport }>('/api/admin/migrate/preflight'),
   applyMigration: (payload: unknown, dryRun = true, studentId?: string) =>
     request<{ ok: boolean; mode: string; report?: RestoreReport; counts?: Record<string, number> }>(
       '/api/admin/migrate/apply',

@@ -1,6 +1,6 @@
 ---
 name: selective-lab-question-skill
-description: Generate original 1.5x-difficulty NSW Selective High School practice questions (Reading, Mathematical Reasoning, Thinking Skills, Writing) as Selective Lab BankImportManifest JSON. Supports any requested volume or a full standardised exam set with natural randomised skill distribution, clear Year 6 worked solutions, and Sunlit Editorial Studio inline SVGs.
+description: Generate original 1.5x-difficulty NSW Selective High School practice questions (Reading, Mathematical Reasoning, Thinking Skills, Writing) as Selective Lab BankImportManifest JSON. In the Selective Lab checkout, also accept pasted question text or Claude.ai JSON for validated import into the live question bank. Supports any requested volume or a full standardised exam set with natural randomised skill distribution, clear Year 6 worked solutions, and Sunlit Editorial Studio inline SVGs.
 ---
 
 # Difficulty Anchor First (Never Zero-Shot)
@@ -84,6 +84,12 @@ Full palette and sizing rules in `references/visual-palette-and-sizing.md`:
 - **THINK (21):** `THINK.VERBAL.STRENGTHEN_ARGUMENT`, `THINK.VERBAL.WEAKEN_ARGUMENT`, `THINK.VERBAL.IDENTIFY_FLAW`, `THINK.VERBAL.IMPLICIT_ASSUMPTION`, `THINK.DEDUCT.WHOSE_REASONING_CORRECT`, `THINK.DEDUCT.CONDITIONAL_CONTRAPOSITIVE`, `THINK.DEDUCT.LOGIC_GRID_CONSTRAINTS`, `THINK.DEDUCT.LINE_CIRCLE_ARRANGEMENT`, `THINK.DEDUCT.DEDUCTIVE_ORDERING`, `THINK.DEDUCT.SET_SYLLOGISMS`, `THINK.DEDUCT.KNIGHTS_AND_LIARS`, `THINK.DEDUCT.CRYPTOGRAM_MAPPING`, `THINK.DEDUCT.CYCLE_CHAIN_REASONING`, `THINK.NUM.SYSTEMS_WORD_PUZZLES`, `THINK.NUM.MIN_COST_COMBINATIONS`, `THINK.NUM.TABLE_CHART_RATE_LOGIC`, `THINK.NUM.OVERLAP_COUNTING`, `THINK.NUM.NETWORK_GRAPH_ROUTES`, `THINK.SPATIAL.VIEWS_3D_SILHOUETTES`, `THINK.SPATIAL.FOLD_CUT_TILE_ASSEMBLY`, `THINK.SPATIAL.PATTERN_ROTATION_SYMMETRY`.
 - **WRIT (6):** `WRIT.CRIT.TOPIC_PROMPT_ADHERENCE`, `WRIT.CRIT.IDEAS_CREATIVITY`, `WRIT.CRIT.PURPOSE_AUDIENCE_VOICE`, `WRIT.CRIT.STRUCTURE_LAYOUT`, `WRIT.CRIT.STYLE_VOCABULARY`, `WRIT.CRIT.GRAMMAR_SPELLING_PUNCT`.
 
-# Output Contract
+# Output and local sync
 
-Unless the user asks for an interactive preview, **emit ONLY one raw valid `BankImportManifest` JSON object** (no intro prose, no commentary, no trailing notes). Self-verify every calculation, logic deduction, option uniqueness, SVG XML, and `distractorRationales` silently before emitting.
+In the Selective Lab checkout, follow the preparation steps in the root `AGENTS.md`. Verify answers and visuals, save the batch, and complete strict validation and the database dry run before publishing.
+
+- **Generated here.** After the whole requested batch is ready, give the question count and ask once, “Sync these questions to the live bank now?” Wait for an affirmative reply, then publish that exact archived manifest. A decline or no reply leaves it saved locally. An explicit “generate and sync” authorizes publication in the same turn.
+- **Pasted here.** A pasted batch for the bank is a sync request, including a bare Claude.ai manifest, fenced JSON, or plain-text questions. Preserve the supplied questions, options, correct answers, and shared stimuli when fitting them to the schema. Resolve routine formatting and metadata locally. If essential content is missing or the correct answer is ambiguous, ask for that detail. Once validated, publish immediately. If the user asks to solve, review, preview, or save a draft instead, follow that request.
+- **Publishing.** Run `npm run db:push -- <validated-batch-path>` and report the returned batch ID and counts. If the CLI reports a replay, say the batch was already synced. Reuse the same archived manifest and IDs on retry. If validation or the push fails, report the issue and keep the draft.
+
+On Claude.ai or in another authoring-only chat, emit one raw valid `BankImportManifest` JSON object unless the user requests a preview. Check calculations, deductions, option uniqueness, SVG XML, and distractor rationales before returning it.

@@ -1,14 +1,14 @@
 # Selective Lab — Local Agent Playbook (`AGENTS.md`)
 
 ## Codebase Rule: Authorized Models for Code Edits
-- **Only models from Google (Gemini), Anthropic (Claude), and OpenAI (GPT/Codex) are permitted to edit real application code** (anything under `src/`, `server.ts`, `firestore.rules`, `storage.rules`, `scripts/`, `package.json`, config files, etc.).
+- **Only models from Google (Gemini), Anthropic (Claude), and OpenAI (GPT/Codex) are permitted to edit real application code** (anything under `src/`, `api/`, `server.ts`, `scripts/`, `package.json`, config files, etc.).
 - **No other models/providers** may modify real codebase files; other models are restricted to read-only tasks or content/question JSON drafts only unless explicitly approved by the user.
 
 ---
 
 ## Question-Bank Generation & Claude Paste Workflow
 
-When the user asks you to **generate questions** (e.g., *"generate a set of 40 maths"*, *"generate today's full exam set"*, *"generate 5 reading and 5 thinking"*) OR **pastes raw JSON from Claude.ai**, handle the entire pipeline automatically without making the user think about batch labels, scripts, or schema checks.
+When the user asks you to **generate questions** (e.g., *"generate a set of 40 maths"*, *"generate today's full exam set"*, *"generate 5 reading and 5 thinking"*) or **pastes questions into this project chat**, use the question skill for both preparation and the sync decision. Accept plain question text as well as Claude.ai JSON.
 
 ## 1. Authoring Reference
 - Always read `docs/selective-lab-question-skill/SKILL.md` and `docs/selective-lab-question-skill/references/calibration-anchors-1.5x.json` before authoring.
@@ -25,7 +25,7 @@ When the user asks you to **generate questions** (e.g., *"generate a set of 40 m
 - Verify every mathematical answer, SVG coordinate, and logic deduction in code before saving.
 
 ## 3. Automatic Post-Generation & Claude Paste Handling (Zero User Friction)
-Whether you generated the questions locally OR the user pasted raw JSON from Claude.ai:
+For either source, prepare a manifest containing only the current batch.
 1. Strip any accidental Markdown code fences, ensure unique `batchLabel` / `questionId` / `partId` / `stimulusId`, and fix any schema, SVG, or `distractorRationales` issues automatically.
 2. Validate strictly with:
    ```bash
@@ -39,10 +39,11 @@ Whether you generated the questions locally OR the user pasted raw JSON from Cla
      --batch-label "batch_YYYY_MM_DD_<slug>" \
      --append-scenarios batches/scenarios-log.txt
    ```
-4. **Never commit `batches/` to git.** Questions live in live cloud Firestore, not in git.
+4. Strictly validate the final merged file, then run the read-only bank check with `npm run db:push -- batches/ready-to-import.json --dry-run`. Keep the validated archive for this batch.
+5. Follow **Output and local sync** in the question skill. For local generation, ask at the end and wait for the answer. For pasted question content, sync automatically after validation. Explicit instructions such as “review only” take precedence.
 
-## 4. Pushing to the Live Online Website (Important Truth)
-- Selective Lab runs on **Starter Tier Google-hosted Firebase Firestore** (`firebase-applet-config.json`). **No git commit or redeploy is ever needed to add questions.**
-- Because Starter Tier projects do not grant server-side IAM Admin SDK write credentials (unless `FIREBASE_SERVICE_ACCOUNT_JSON` is added to `.env` later), live Firestore writes must come from the signed-in admin Google account (`bowenzou0@gmail.com`).
-- **If `FIREBASE_SERVICE_ACCOUNT_JSON` is configured in `.env`:** Push straight to live Firestore via `createRepository().importManifest(...)`.
-- **Otherwise (current Starter Tier default):** Tell the user `batches/ready-to-import.json` is validated and ready — they can drop that single file into Selective Lab's **Admin → Import & Batches** (or ask you to upload it via the signed-in browser tab).
+## 4. Publishing questions to Neon
+
+- When publishing, run `npm run db:push -- <validated-batch-path>` from this checkout. Use the specific archived file when acting on a later approval. The command reads the server-only `DATABASE_URL` from the environment or the ignored local `.env` and writes directly to Postgres. Check the command’s exit status and summary before reporting publication.
+- Keep `batches/` out of git. Question edits are data changes and take effect on the next bank read. Deploy with `npm run deploy` when the application code changes.
+- Use the pooled TLS URL from the Selective Lab Neon project. Keep database credentials and the session signing secret in the local `.env` and the Vercel production environment. Google Identity Services supplies sign-in and `ADMIN_EMAILS` controls admin access.

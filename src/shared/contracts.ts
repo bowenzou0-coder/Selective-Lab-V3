@@ -548,7 +548,8 @@ export interface MediaAssetRecord {
   mimeType: string;
   sizeBytes: number;
   sha256: string;
-  storageProvider: 'gcs' | 'local_temp';
+  storageProvider: 'postgres' | 'gcs' | 'local_temp';
+  bytesBase64?: string;
   createdAtIso: string;
 }
 

@@ -1,24 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import { api, type AuthState, type HealthResponse } from './client/api';
+import { useCallback, useEffect, useState } from 'react';
+import { api, type AuthState } from './client/api';
 import { AdminView } from './client/components/AdminView';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
 import { HomeView } from './client/components/HomeView';
 import { ProgressView } from './client/components/ProgressView';
 import { SessionPlayerView } from './client/components/SessionPlayerView';
 import { StudioShell } from './client/components/TopNav';
-import { auth as firebaseAuth, testFirestoreConnection } from './lib/firebase';
+
+const signedOut: AuthState = { authenticated: false, role: null, studentId: null };
 
 export default function App() {
   const [path, setPath] = useState<string>(() => window.location.pathname || '/');
   const [auth, setAuth] = useState<AuthState | null>(null);
-  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
-  const [authSyncError, setAuthSyncError] = useState('');
-  const inFlightSyncRef = useRef<Map<string, Promise<AuthState>>>(new Map());
+  const [authError, setAuthError] = useState('');
+  const [logoutError, setLogoutError] = useState('');
 
   useEffect(() => {
-    api.getHealth().then(setHealth).catch(() => undefined);
     const onPopState = () => {
       setPath(window.location.pathname || '/');
     };
@@ -26,75 +24,43 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const syncFirebaseUser = useCallback(async (user: User): Promise<AuthState> => {
-    const existing = inFlightSyncRef.current.get(user.uid);
-    if (existing) return existing;
-
-    const task = (async () => {
-      const idToken = await user.getIdToken();
-      const loginState = await api.firebaseLogin(idToken);
-      setAuthSyncError('');
-      setAuth(loginState);
-      return loginState;
-    })().finally(() => {
-      inFlightSyncRef.current.delete(user.uid);
-    });
-
-    inFlightSyncRef.current.set(user.uid, task);
-    return task;
-  }, []);
-
   useEffect(() => {
     let active = true;
-    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
-      if (!active) return;
-      if (user) {
-        testFirestoreConnection().catch(() => undefined);
-        try {
-          await syncFirebaseUser(user);
-        } catch (err) {
-          console.error('Firebase session auth failed:', err);
-          if (active) {
-            setAuthSyncError(
-              err instanceof Error
-                ? err.message
-                : 'Unable to complete server sign-in. Check backend database configuration.'
-            );
-          }
-          const fallback = await api.getMe().catch(() => ({
-            authenticated: false,
-            role: null,
-            studentId: null,
-          }));
-          if (active) setAuth(fallback);
-        } finally {
-          if (active) setLoadingAuth(false);
+    api.getMe()
+      .then((identity) => {
+        if (active) setAuth(identity);
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setAuth(signedOut);
+          setAuthError(err instanceof Error ? err.message : 'Unable to check sign-in status.');
         }
-      } else {
-        api
-          .getMe()
-          .then((res) => {
-            if (active) setAuth(res);
-          })
-          .catch(() => {
-            if (active) setAuth({ authenticated: false, role: null, studentId: null });
-          })
-          .finally(() => {
-            if (active) setLoadingAuth(false);
-          });
-      }
-    });
+      })
+      .finally(() => {
+        if (active) setLoadingAuth(false);
+      });
 
     const onExpired = () => {
-      setAuth({ authenticated: false, role: null, studentId: null });
+      setAuth((previous) => ({
+        ...previous,
+        ...signedOut,
+        email: undefined,
+        activeSessionId: null,
+      }));
+      setAuthError('Your session expired. Please sign in again.');
     };
     window.addEventListener('nsw-auth-expired', onExpired);
     return () => {
       active = false;
-      unsubscribe();
       window.removeEventListener('nsw-auth-expired', onExpired);
     };
-  }, [syncFirebaseUser]);
+  }, []);
+
+  const onAuthenticated = useCallback((identity: AuthState) => {
+    setAuthError('');
+    setLogoutError('');
+    setAuth(identity);
+  }, []);
 
   const navigate = useCallback(
     (nextPath: string) => {
@@ -134,13 +100,20 @@ export default function App() {
   }, [auth, path]);
 
   const handleLogout = async () => {
-    await Promise.all([
-      api.logout().catch(() => undefined),
-      signOut(firebaseAuth).catch(() => undefined),
-    ]);
-    setAuthSyncError('');
-    setAuth({ authenticated: false, role: null, studentId: null, activeSessionId: null });
-    navigate('/');
+    setLogoutError('');
+    try {
+      await api.logout();
+      setAuth((previous) => ({
+        ...previous,
+        ...signedOut,
+        email: undefined,
+        activeSessionId: null,
+      }));
+      window.history.replaceState({}, '', '/');
+      setPath('/');
+    } catch {
+      setLogoutError('Unable to sign out. Please try again.');
+    }
   };
 
   if (loadingAuth) {
@@ -151,8 +124,8 @@ export default function App() {
     );
   }
 
-  const localDevPinEnabled = auth?.localDevPinEnabled ?? health?.localDevPinEnabled ?? true;
-  const isDisposableDemo = Boolean(auth?.isDisposableDemo || health?.isDisposableDemo);
+  const localDevPinEnabled = auth?.localDevPinEnabled === true;
+  const isDisposableDemo = auth?.isDisposableDemo === true;
 
   const lockedPath =
     auth?.authenticated && auth.activeSessionId ? `/session/${auth.activeSessionId}` : null;
@@ -165,9 +138,20 @@ export default function App() {
       role="status"
       className="w-full bg-[var(--status-warn-bg)] border-b border-[var(--status-warn)]/25 px-4 py-1.5 text-center text-xs font-medium text-[var(--status-warn)]"
     >
-      Disposable preview storage ({health?.backendName || auth?.backendName || 'memory_preview'}) — data resets on server restart.
+      Disposable preview storage ({auth?.backendName}) — data resets on server restart.
     </div>
   ) : null;
+
+  const banner = (
+    <>
+      {demoBanner}
+      {logoutError ? (
+        <div role="alert" className="p-3 text-center text-sm text-[var(--status-error)]">
+          {logoutError}
+        </div>
+      ) : null}
+    </>
+  );
 
   // Gate unauthenticated visitors
   if (!auth?.authenticated) {
@@ -177,14 +161,8 @@ export default function App() {
           {demoBanner}
           <AdminPasswordGate
             localDevPinEnabled={localDevPinEnabled}
-            initialError={authSyncError}
-            onAuthenticated={(next) => {
-              setAuthSyncError('');
-              setAuth(next);
-            }}
-            onGoogleAuthenticated={async (user) => {
-              await syncFirebaseUser(user);
-            }}
+            initialError={authError}
+            onAuthenticated={onAuthenticated}
             onBackHome={() => navigate('/')}
           />
         </>
@@ -195,14 +173,8 @@ export default function App() {
         {demoBanner}
         <StudentPinGate
           localDevPinEnabled={localDevPinEnabled}
-          initialError={authSyncError}
-          onAuthenticated={(next) => {
-            setAuthSyncError('');
-            setAuth(next);
-          }}
-          onGoogleAuthenticated={async (user) => {
-            await syncFirebaseUser(user);
-          }}
+          initialError={authError}
+          onAuthenticated={onAuthenticated}
           onGoAdmin={() => navigate('/admin')}
         />
       </>
@@ -218,22 +190,13 @@ export default function App() {
         studentId={auth.studentId}
         onNavigate={navigate}
         onSignOut={handleLogout}
-        banner={demoBanner}
+        banner={banner}
       >
         <AdminPasswordGate
           embedded
           localDevPinEnabled={localDevPinEnabled}
-          initialError={authSyncError}
-          onAuthenticated={(next) => {
-            setAuthSyncError('');
-            setAuth(next);
-          }}
-          onGoogleAuthenticated={async (user) => {
-            const nextAuth = await syncFirebaseUser(user);
-            if (nextAuth.role !== 'admin') {
-              throw new Error('Only bowenzou0@gmail.com currently has Admin permissions.');
-            }
-          }}
+          initialError={authError}
+          onAuthenticated={onAuthenticated}
           onBackHome={() => navigate('/')}
         />
       </StudioShell>
@@ -246,8 +209,9 @@ export default function App() {
       <>
         {demoBanner}
         <SessionPlayerView
+          key={auth.studentId}
           sessionId={decodeURIComponent(sessionMatch[1])}
-          studentId={auth.studentId || 'default-student'}
+          studentId={auth.studentId}
           isAdmin={auth.role === 'admin'}
           onNavigate={navigate}
           onActiveSessionCleared={handleActiveSessionCleared}
@@ -263,7 +227,7 @@ export default function App() {
       studentId={auth.studentId}
       onNavigate={navigate}
       onSignOut={handleLogout}
-      banner={demoBanner}
+      banner={banner}
     >
       {isAdminRoute ? (
         <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
@@ -271,9 +235,10 @@ export default function App() {
         <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
       ) : (
         <HomeView
+          key={auth.studentId}
           onOpenSession={(id, isLocked = true) => {
             if (isLocked) {
-              setAuth((prev) => (prev ? { ...prev, activeSessionId: id } : prev));
+              setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
             }
             navigate(`/session/${id}`);
           }}

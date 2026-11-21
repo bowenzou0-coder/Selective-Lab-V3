@@ -3,25 +3,30 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express, { type Express } from 'express';
-import { createServer as createViteServer } from 'vite';
 import {
   assertAuthRuntimeConfig,
   attachAuth,
   clearAuthCookie,
+  clearGoogleNonce,
   getAdminPassword,
+  getGoogleNonce,
   getStudentPin,
   isLocalDevPinAuthEnabled,
   requireAdmin,
+  requireSameOriginMutation,
   requireStudentOrAdmin,
   setAuthCookie,
+  setGoogleNonce,
   signSessionToken,
   type AuthenticatedRequest,
+  type UserIdentity,
 } from './src/server/auth.ts';
-import { isClientFirestoreMode, isFirebaseEmulatorActive } from './src/server/firebaseAdmin.ts';
 import {
-  isSoleAdminEmail,
-  verifyFirebaseIdToken,
-} from './src/server/firebaseVerify.ts';
+  getGoogleClientId,
+  getGoogleStudentId,
+  isGoogleAdminEmail,
+  verifyGoogleCredential,
+} from './src/server/authGoogle.ts';
 import { getRuntimeDiagnostics } from './src/server/diagnostics.ts';
 import { GeminiServiceError } from './src/server/geminiClient.ts';
 import {
@@ -34,7 +39,7 @@ import { validateAndDryRunManifest } from './src/server/manifestValidator.ts';
 import {
   buildMediaMigrationManifest,
   readMediaBytesFromStorage,
-  storeMediaUpload,
+  prepareMediaUpload,
 } from './src/server/mediaService.ts';
 import { createRepository } from './src/server/storage/index.ts';
 import {
@@ -42,8 +47,10 @@ import {
   NotFoundError,
   RevisionConflictError,
   type AppRepository,
+  type QuestionQueryParams,
   type SyncHydratePayload,
 } from './src/server/storage/repository.ts';
+import { deriveQuestionProgressMeta } from './src/shared/bankStatus.ts';
 import {
   DEFAULT_LEARNING_CONFIG,
   type BankImportManifest,
@@ -91,7 +98,8 @@ import {
 import { SKILLS_TAXONOMY } from './src/shared/skills.ts';
 import { V3_MANIFEST_JSON_SCHEMA, V3_STARTER_MANIFEST_EXAMPLE } from './src/shared/v3Schema.ts';
 
-dotenv.config();
+// Keep the test runner isolated from live database and Gemini credentials.
+if (!process.env.NODE_TEST_CONTEXT) dotenv.config({ quiet: true });
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT_DIR = process.cwd();
@@ -554,31 +562,12 @@ export interface CreateAppOptions {
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; repo: AppRepository }> {
   assertAuthRuntimeConfig();
-  const clientFirestoreMode = !options.repo && isClientFirestoreMode();
-  const repo: AppRepository = clientFirestoreMode
-    ? (null as unknown as AppRepository)
-    : (options.repo ?? createRepository());
-  const backendName = clientFirestoreMode ? 'firestore_client' : repo.backendName;
+  const repo = options.repo ?? createRepository();
+  const { backendName } = repo;
   let seedPromise: Promise<void> | null = null;
-  let cachedSeedManifestsPromise: Promise<BankImportManifest[]> | null = null;
-
-  async function loadAllSeedManifests(): Promise<BankImportManifest[]> {
-    if (!cachedSeedManifestsPromise) {
-      cachedSeedManifestsPromise = (async () => {
-        const files = [
-          'golden-smoke-pack.json',
-          'official-doe-pt1-2.json',
-          'official-doe-pt3-holdout.json',
-        ];
-        const loaded = await Promise.all(files.map((f) => readSeedManifest(f)));
-        return loaded.filter((m): m is BankImportManifest => m !== null);
-      })();
-    }
-    return cachedSeedManifestsPromise;
-  }
 
   async function ensureSeeded(): Promise<void> {
-    if (options.skipSeed || clientFirestoreMode) return;
+    if (options.skipSeed) return;
     if (!seedPromise) {
       seedPromise = (async () => {
         const smoke = await readSeedManifest('golden-smoke-pack.json');
@@ -605,6 +594,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   const app = express();
   app.set('trust proxy', 1);
+  app.use('/api', requireSameOriginMutation);
+  app.use(['/api/auth', '/api/student', '/api/admin'], (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   app.use(express.json({ limit: '15mb' }));
   app.use(attachAuth);
 
@@ -618,116 +612,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       ok: true,
       backendName,
       isDisposableDemo: backendName === 'memory_preview',
-      emulatorActive: isFirebaseEmulatorActive(),
       localDevPinEnabled: isLocalDevPinAuthEnabled(),
     });
   });
 
-  // Stateless Starter-Tier endpoints (no Firebase Admin IAM required)
-  app.get('/api/seed/manifests', requireStudentOrAdmin, async (_req, res) => {
-    try {
-      const manifests = await loadAllSeedManifests();
-      res.json({ manifests });
-    } catch (err) {
-      console.error('GET /api/seed/manifests error:', err);
-      res.status(500).json({ error: 'Failed to load bundled seed manifests.' });
-    }
-  });
-
-  app.post('/api/ai/daily-focus', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
-    try {
-      const {
-        skillStates = {},
-        evidenceMap = {},
-        questionMemory = {},
-        questions = [],
-        config = DEFAULT_LEARNING_CONFIG,
-        nowIso,
-      } = req.body || {};
-      const result = await generateDailyFocusPlanStateless({
-        studentId: req.auth!.studentId,
-        skillStates,
-        evidenceMap,
-        questionMemory,
-        questions,
-        config,
-        nowIso,
-      });
-      res.json(result);
-    } catch (err) {
-      console.error('POST /api/ai/daily-focus error:', err);
-      res.status(500).json({ error: 'Failed to generate daily focus plan.' });
-    }
-  });
-
-  app.post('/api/ai/practice/order', requireStudentOrAdmin, async (req, res) => {
-    try {
-      const {
-        mode,
-        sectionFilter,
-        questions = [],
-        skillStates = {},
-        questionMemory = {},
-        evidenceMap = {},
-        dailyPlan = null,
-        questionCountOverride,
-        config = DEFAULT_LEARNING_CONFIG,
-        nowIso = new Date().toISOString(),
-        seed = Date.now(),
-      } = req.body || {};
-      const result = await decidePracticeQuestionOrderWithGemini({
-        mode,
-        sectionFilter,
-        questions,
-        skillStates,
-        questionMemory,
-        evidenceMap,
-        dailyPlan,
-        questionCountOverride,
-        config,
-        nowIso,
-        seed,
-      });
-      res.json({
-        questionIds: result.questions.map((q) => q.questionId),
-        decision: result.decision,
-      });
-    } catch (err) {
-      console.error('POST /api/ai/practice/order error:', err);
-      res.status(500).json({ error: 'Failed to rank practice questions.' });
-    }
-  });
-
-  app.post('/api/ai/writing/evaluate', requireStudentOrAdmin, async (req, res) => {
-    try {
-      const { submissionId, question, stimulus, planNotes = '', responseText = '', metrics } =
-        req.body || {};
-      if (!submissionId || !question || !metrics) {
-        res.status(400).json({ error: 'submissionId, question, and metrics are required.' });
-        return;
-      }
-      const evaluation = await evaluateWritingWithGemini({
-        submissionId,
-        question,
-        stimulus,
-        planNotes,
-        responseText,
-        metrics,
-      });
-      res.json({ evaluation });
-    } catch (err) {
-      if (err instanceof GeminiServiceError) {
-        res.status(err.statusCode).json({ error: err.message });
-        return;
-      }
-      console.error('POST /api/ai/writing/evaluate error:', err);
-      res.status(502).json({
-        error: err instanceof Error ? err.message : 'Writing evaluation failed.',
-      });
-    }
-  });
-
-  // Stream stored media assets (GCS or local temp fallback in dev)
+  // Media stored with the question bank survives serverless cold starts.
   app.get('/api/media/:assetId', async (req, res) => {
     try {
       const asset = await repo.getMediaAsset(req.params.assetId);
@@ -742,6 +631,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       }
       res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream');
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
       res.send(buf);
     } catch (err) {
       console.error('GET /api/media/:assetId error:', err);
@@ -752,56 +643,44 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   // ---------------------------------------------------------------------------
   // Auth Routes
   // ---------------------------------------------------------------------------
+  const getAuthState = async (identity?: Omit<UserIdentity, 'exp'>) => ({
+    authenticated: Boolean(identity),
+    role: identity?.role ?? null,
+    studentId: identity?.studentId ?? null,
+    email: identity?.email,
+    activeSessionId: identity ? await findActiveSessionId(repo, identity.studentId) : null,
+    backendName,
+    isDisposableDemo: backendName === 'memory_preview',
+    localDevPinEnabled: isLocalDevPinAuthEnabled(),
+  });
+
+  async function completeLogin(
+    req: express.Request, res: express.Response, identity: Omit<UserIdentity, 'exp'>
+  ) {
+    await ensureSeeded();
+    const state = await getAuthState(identity);
+    setAuthCookie(res, signSessionToken(identity), req);
+    clearGoogleNonce(res, req);
+    res.json(state);
+  }
+
   app.get('/api/auth/me', async (req: AuthenticatedRequest, res) => {
-    if (!req.auth) {
-      res.json({
-        authenticated: false,
-        role: null,
-        studentId: null,
-        activeSessionId: null,
-        backendName,
-        isDisposableDemo: backendName === 'memory_preview',
-        localDevPinEnabled: isLocalDevPinAuthEnabled(),
-      });
-      return;
-    }
-    if (clientFirestoreMode) {
-      res.json({
-        authenticated: true,
-        role: req.auth.role,
-        studentId: req.auth.studentId,
-        email: req.auth.email,
-        activeSessionId: null,
-        backendName,
-        isDisposableDemo: false,
-        localDevPinEnabled: isLocalDevPinAuthEnabled(),
-      });
-      return;
-    }
     try {
-      await ensureSeeded();
-      const activeSessionId = await findActiveSessionId(repo, req.auth.studentId);
-      res.json({
-        authenticated: true,
-        role: req.auth.role,
-        studentId: req.auth.studentId,
-        email: req.auth.email,
-        activeSessionId,
-        backendName,
-        isDisposableDemo: backendName === 'memory_preview',
-        localDevPinEnabled: isLocalDevPinAuthEnabled(),
-      });
+      res.json(await getAuthState(req.auth));
     } catch (err) {
       console.error('GET /api/auth/me active-session check failed:', err);
       res.status(503).json({ error: 'Unable to verify active session lock right now.' });
     }
   });
 
+  app.get('/api/auth/google-config', (req, res) => {
+    const clientId = getGoogleClientId();
+    res.json({ clientId, nonce: clientId ? setGoogleNonce(res, req) : null });
+  });
+
   app.post('/api/auth/student-login', async (req, res) => {
     if (!isLocalDevPinAuthEnabled()) {
-      res.status(403).json({
-        error: 'Local PIN sign-in is disabled in this environment. Please sign in with Firebase.',
-      });
+      res.status(403).json({ error: 'Local PIN sign-in is disabled. Sign in with Google.' });
       return;
     }
     const pin = String(req.body?.pin ?? '').trim();
@@ -809,24 +688,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       res.status(401).json({ error: 'Incorrect PIN. Please try again.' });
       return;
     }
-    const studentId = 'default-student';
-    const token = signSessionToken({ role: 'student', studentId, authMethod: 'local_pin' });
-    setAuthCookie(res, token, req);
-    let activeSessionId: string | null = null;
     try {
-      await ensureSeeded();
-      activeSessionId = await findActiveSessionId(repo, studentId);
-    } catch {
-      // ignore
+      await completeLogin(req, res, { role: 'student', studentId: 'default-student', authMethod: 'local_pin' });
+    } catch (err) {
+      console.error('POST /api/auth/student-login persistence error:', err);
+      res.status(503).json({ error: 'Unable to complete sign-in right now.' });
     }
-    res.json({ authenticated: true, role: 'student', studentId, activeSessionId, token });
   });
 
   app.post('/api/auth/admin-login', async (req, res) => {
     if (!isLocalDevPinAuthEnabled()) {
-      res.status(403).json({
-        error: 'Local admin password sign-in is disabled in this environment. Use Firebase sign-in.',
-      });
+      res.status(403).json({ error: 'Local admin password sign-in is disabled. Sign in with Google.' });
       return;
     }
     const password = String(req.body?.password ?? '');
@@ -834,108 +706,63 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       res.status(401).json({ error: 'Incorrect admin password.' });
       return;
     }
-    const studentId = 'default-student';
-    const token = signSessionToken({ role: 'admin', studentId, authMethod: 'local_admin' });
-    setAuthCookie(res, token, req);
-    let activeSessionId: string | null = null;
     try {
-      await ensureSeeded();
-      activeSessionId = await findActiveSessionId(repo, studentId);
-    } catch {
-      // ignore
+      await completeLogin(req, res, { role: 'admin', studentId: 'default-student', authMethod: 'local_admin' });
+    } catch (err) {
+      console.error('POST /api/auth/admin-login persistence error:', err);
+      res.status(503).json({ error: 'Unable to complete sign-in right now.' });
     }
-    res.json({ authenticated: true, role: 'admin', studentId, activeSessionId, token });
   });
 
-  app.post('/api/auth/firebase-login', async (req, res) => {
-    const idToken = String(req.body?.idToken ?? '').trim();
-    if (!idToken) {
-      res.status(400).json({ error: 'Firebase ID token is required.' });
+  app.post('/api/auth/google-login', async (req, res) => {
+    if (!req.is('application/json')) {
+      res.status(415).json({ error: 'Google sign-in requires a JSON request.' });
+      return;
+    }
+    const clientId = getGoogleClientId();
+    if (!clientId) {
+      res.status(503).json({ error: 'Google sign-in is currently unavailable.' });
+      return;
+    }
+    const { credential, admin } = req.body ?? {};
+    if (typeof credential !== 'string' || !credential || credential.length > 8192) {
+      res.status(400).json({ error: 'A Google credential is required.' });
+      return;
+    }
+    const nonce = getGoogleNonce(req);
+    if (!nonce) {
+      res.status(401).json({ error: 'The sign-in request expired. Please try again.' });
       return;
     }
 
-    let decoded;
+    let googleUser;
     try {
-      decoded = await verifyFirebaseIdToken(idToken);
-    } catch (err) {
-      res.status(401).json({
-        error: err instanceof Error ? err.message : 'Invalid Firebase credentials.',
-      });
+      googleUser = await verifyGoogleCredential(credential, clientId, nonce);
+    } catch {
+      res.status(401).json({ error: 'Unable to verify Google sign-in. Please try again.' });
       return;
     }
 
-    const isSoleAdmin = isSoleAdminEmail(decoded.email);
-
-    // In Starter Tier client-Firestore mode, never call Firebase Admin Firestore on the server.
-    // Persistence and security rules run directly through the authenticated client Firebase SDK.
-    if (clientFirestoreMode) {
-      const role: 'student' | 'admin' = isSoleAdmin ? 'admin' : 'student';
-      const studentId = decoded.uid;
-      const token = signSessionToken({
-        role,
-        studentId,
-        email: decoded.email,
-        authMethod: 'firebase',
-      });
-      setAuthCookie(res, token, req);
-      res.json({
-        authenticated: true,
-        role,
-        studentId,
-        email: decoded.email,
-        activeSessionId: null,
-        backendName,
-        isDisposableDemo: false,
-        localDevPinEnabled: isLocalDevPinAuthEnabled(),
-        token,
-      });
+    const { sub, email, name, hostedDomain } = googleUser;
+    const isAdmin = isGoogleAdminEmail(email, hostedDomain);
+    if (admin === true && !isAdmin) {
+      res.status(403).json({ error: 'This Google account does not have admin access.' });
       return;
     }
-
+    const studentId = getGoogleStudentId(sub);
     try {
-      const { role } = await repo.upsertUserFromAuth({
-        uid: decoded.uid,
-        email: decoded.email,
-        displayName: decoded.name,
-        isBootstrappedAdmin: isSoleAdmin,
-      });
-      const studentId = decoded.uid;
-      const token = signSessionToken({
-        role,
+      await repo.upsertUserFromAuth({ uid: studentId, email, displayName: name, isBootstrappedAdmin: isAdmin });
+      await completeLogin(req, res, {
+        role: isAdmin ? 'admin' : 'student',
         studentId,
-        email: decoded.email,
-        authMethod: 'firebase',
-      });
-      setAuthCookie(res, token, req);
-      let activeSessionId: string | null = null;
-      try {
-        await ensureSeeded();
-        activeSessionId = await findActiveSessionId(repo, studentId);
-      } catch (seedErr) {
-        console.warn(
-          'Post-login seed/session scan warning:',
-          seedErr instanceof Error ? seedErr.message : seedErr
-        );
-      }
-      res.json({
-        authenticated: true,
-        role,
-        studentId,
-        email: decoded.email,
-        activeSessionId,
-        backendName,
-        isDisposableDemo: backendName === 'memory_preview',
-        localDevPinEnabled: isLocalDevPinAuthEnabled(),
-        token,
+        email,
+        authMethod: 'google',
+        googleSub: sub,
+        hostedDomain,
       });
     } catch (err) {
-      console.error('POST /api/auth/firebase-login persistence error:', err);
-      res.status(503).json({
-        error:
-          err instanceof Error
-            ? `Database connection error during sign-in: ${err.message}`
-            : 'Database connection error during sign-in.',
-      });
+      console.error('POST /api/auth/google-login persistence error:', err);
+      res.status(503).json({ error: 'Unable to complete sign-in right now.' });
     }
   });
 
@@ -949,6 +776,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.post('/api/auth/logout', (req, res) => {
     clearAuthCookie(res, req);
+    clearGoogleNonce(res, req);
     res.json({ ok: true });
   });
 
@@ -959,16 +787,25 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     try {
       await ensureSeeded();
       const studentId = req.auth!.studentId;
-      const [configData, rawSessions, initialAttempts, questions, skillStates, evidenceMap, questionMemory] =
-        await Promise.all([
-          repo.getActiveConfig(),
-          repo.listSessions(100, studentId, false),
-          repo.listPartAttempts(500, studentId, false),
-          repo.listQuestions({ qcStatus: 'active' }),
-          repo.getSkillStates(studentId),
-          repo.getQuestionEvidence(studentId),
-          repo.getQuestionMemory(studentId),
-        ]);
+      const [
+        configData,
+        rawSessions,
+        initialAttempts,
+        questions,
+        importBatches,
+        initialSkillStates,
+        initialEvidenceMap,
+        initialQuestionMemory,
+      ] = await Promise.all([
+        repo.getActiveConfig(),
+        repo.listSessions(100, studentId, false),
+        repo.listPartAttempts(500, studentId, false),
+        repo.listQuestions({ qcStatus: 'active' }),
+        repo.listImportBatches(),
+        repo.getSkillStates(studentId),
+        repo.getQuestionEvidence(studentId),
+        repo.getQuestionMemory(studentId),
+      ]);
 
       let anyExpired = false;
       const sessions: SessionRecord[] = [];
@@ -980,7 +817,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           sessions.push(s);
         }
       }
-      const attempts = anyExpired ? await repo.listPartAttempts(500, studentId, false) : initialAttempts;
+      const [attempts, skillStates, evidenceMap, questionMemory] = anyExpired
+        ? await Promise.all([
+            repo.listPartAttempts(500, studentId, false),
+            repo.getSkillStates(studentId),
+            repo.getQuestionEvidence(studentId),
+            repo.getQuestionMemory(studentId),
+          ])
+        : [initialAttempts, initialSkillStates, initialEvidenceMap, initialQuestionMemory];
 
       const { plan: dailyFocusPlan } = await getOrCreateDailyFocusPlan({
         repo,
@@ -989,6 +833,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         evidenceMap,
         questionMemory,
         questions,
+        config: configData.config,
       });
 
       const todayPrefix = new Date().toISOString().slice(0, 10);
@@ -1004,26 +849,76 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         PT2: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
         PT3: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
       };
+      const poolCounts: Record<SectionCode, { live: number; unseen: number }> = {
+        READ: { live: 0, unseen: 0 },
+        MATH: { live: 0, unseen: 0 },
+        THINK: { live: 0, unseen: 0 },
+        WRIT: { live: 0, unseen: 0 },
+      };
+      const batchById = new Map(importBatches.map((b) => [b.batchId, b]));
+      const customBatchMap = new Map<
+        string,
+        { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
+      >();
+      const autoRetire = Boolean(configData.config.poolPolicy?.autoRetireMastered);
+
       for (const q of questions) {
         const tag = getQuestionBatchTag(q);
         if (tag === 'PT1' || tag === 'PT2' || tag === 'PT3') {
           batchCounts[tag][q.section] += 1;
         }
+        if (q.poolType !== 'benchmark_holdout') {
+          const prog = deriveQuestionProgressMeta(q, evidenceMap, questionMemory);
+          if (!(autoRetire && prog.completionStatus === 'done')) {
+            poolCounts[q.section].live += 1;
+            if (prog.completionStatus === 'unseen') {
+              poolCounts[q.section].unseen += 1;
+            }
+          }
+        }
+        if (q.batchId && tag !== 'PT1' && tag !== 'PT2' && tag !== 'PT3' && q.poolType !== 'benchmark_holdout') {
+          const batchMeta = batchById.get(q.batchId);
+          if (batchMeta?.importedBy !== 'system_seed') {
+            const entry = customBatchMap.get(q.batchId) || {
+              batchId: q.batchId,
+              batchLabel: batchMeta?.batchLabel || q.batchLabel || q.batchId,
+              counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+              total: 0,
+            };
+            entry.counts[q.section] += 1;
+            entry.total += 1;
+            customBatchMap.set(q.batchId, entry);
+          }
+        }
       }
 
       const activeInProgress = sessions.find((s) => s.status === 'in_progress' && !s.isSandbox) || null;
+      const autoCalEnabled = Boolean(configData.config.autoCalibrate?.enabled);
+      const effectiveDailyLimits =
+        autoCalEnabled && dailyFocusPlan?.dailyQuestionLimitBySection
+          ? dailyFocusPlan.dailyQuestionLimitBySection
+          : configData.config.sessionDefaults.dailyQuestionLimitBySection;
+      const effectiveDailyGoalMinutes =
+        autoCalEnabled && dailyFocusPlan?.dailyGoalMinutes
+          ? dailyFocusPlan.dailyGoalMinutes
+          : configData.config.sessionDefaults.dailyGoalMinutes;
 
       res.json({
         studentId,
         streakDays: computeSessionStreak(sessions),
-        dailyGoalMinutes: configData.config.sessionDefaults.dailyGoalMinutes,
+        dailyGoalMinutes: effectiveDailyGoalMinutes,
         sectionDrillQuestionCount: configData.config.sessionDefaults.sectionDrillQuestionCount ?? 10,
         sectionDrillTimeMinutes: configData.config.sessionDefaults.sectionDrillTimeMinutes ?? 8,
         todayMinutes,
         todaySlotsAttempted: todayAttempts.length,
         todaySlotsCorrect: todayCorrect,
-        dailyLimits: configData.config.sessionDefaults.dailyQuestionLimitBySection,
+        dailyLimits: effectiveDailyLimits,
+        autoCalibrateEnabled: autoCalEnabled,
+        poolCounts,
         batchCounts,
+        customBatches: Array.from(customBatchMap.values()).sort((a, b) =>
+          b.batchLabel.localeCompare(a.batchLabel)
+        ),
         activeSession: activeInProgress,
         recentSessions: sessions.filter((s) => !s.isSandbox).slice(0, 8),
         dailyFocusPlan,
@@ -1796,11 +1691,70 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   // ---------------------------------------------------------------------------
   app.get('/api/admin/diagnostics', requireAdmin, async (_req, res) => {
     try {
-      const report = await getRuntimeDiagnostics(clientFirestoreMode ? null : repo, backendName);
+      const report = await getRuntimeDiagnostics(repo);
       res.json(report);
     } catch (err) {
       console.error('GET /api/admin/diagnostics error:', err);
       res.status(500).json({ error: 'Failed to collect runtime diagnostics.' });
+    }
+  });
+
+  app.get('/api/admin/study-progress', requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ensureSeeded();
+      if (!repo.getProgressCounts) {
+        res.status(501).json({ error: 'Study progress counts are unavailable for this repository.' });
+        return;
+      }
+      res.json(await repo.getProgressCounts(req.auth!.studentId));
+    } catch (err) {
+      console.error('GET /api/admin/study-progress error:', err);
+      res.status(500).json({ error: 'Unable to load study progress counts.' });
+    }
+  });
+
+  app.post('/api/admin/study-progress/reset', requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ensureSeeded();
+      if (!repo.resetStudentProgress) {
+        res.status(501).json({ error: 'Study progress reset is unavailable for this repository.' });
+        return;
+      }
+      res.json(await repo.resetStudentProgress(req.auth!.studentId));
+    } catch (err) {
+      console.error('POST /api/admin/study-progress/reset error:', err);
+      res.status(500).json({ error: 'Unable to reset study progress.' });
+    }
+  });
+
+  app.post('/api/admin/recalibrate-daily-plan', requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ensureSeeded();
+      const studentId = req.auth!.studentId;
+      const [configData, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
+        repo.getActiveConfig(),
+        repo.listQuestions({ qcStatus: 'active' }),
+        repo.getSkillStates(studentId),
+        repo.getQuestionEvidence(studentId),
+        repo.getQuestionMemory(studentId),
+      ]);
+      const config = req.body?.config;
+      const result = await generateDailyFocusPlanStateless({
+        studentId,
+        skillStates,
+        evidenceMap,
+        questionMemory,
+        questions,
+        config: {
+          ...configData.config,
+          autoCalibrate: config?.autoCalibrate ?? configData.config.autoCalibrate,
+        },
+      });
+      await repo.saveDailyFocusPlan(studentId, result.plan);
+      res.json(result);
+    } catch (err) {
+      console.error('POST /api/admin/recalibrate-daily-plan error:', err);
+      res.status(500).json({ error: 'Unable to recalibrate the daily focus plan.' });
     }
   });
 
@@ -1854,14 +1808,25 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     }
   });
 
-  app.get('/api/admin/questions', requireAdmin, async (req, res) => {
+  app.get('/api/admin/questions', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
+      const studentId = req.auth!.studentId;
+      const [evidence, memory, { config }] = await Promise.all([
+        repo.getQuestionEvidence(studentId),
+        repo.getQuestionMemory(studentId),
+        repo.getActiveConfig(),
+      ]);
+      const dailyLimits = config.sessionDefaults.dailyQuestionLimitBySection;
+      const dailyQuestionTarget = Math.max(1, (dailyLimits.READ || 0) + (dailyLimits.MATH || 0) + (dailyLimits.THINK || 0));
       const result = await repo.listQuestionsPaginated({
         search: req.query.search ? String(req.query.search) : undefined,
         section: req.query.section ? String(req.query.section) : undefined,
         poolType: req.query.poolType ? String(req.query.poolType) : undefined,
         qcStatus: req.query.qcStatus ? String(req.query.qcStatus) : undefined,
+        poolStatus: req.query.poolStatus as QuestionQueryParams['poolStatus'],
+        completionStatus: req.query.completionStatus as QuestionQueryParams['completionStatus'],
+        progress: { evidence, memory, dailyQuestionTarget },
         formatType: req.query.formatType ? String(req.query.formatType) : undefined,
         batchId: req.query.batchId ? String(req.query.batchId) : undefined,
         batchTag: req.query.batchTag ? String(req.query.batchTag) : undefined,
@@ -1959,11 +1924,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
       let visual: VisualSpec | null = null;
       if (req.body?.imageBase64 && req.body?.filename) {
-        const asset = await storeMediaUpload({
+        const asset = prepareMediaUpload({
           questionId,
           filename: String(req.body.filename),
           imageBase64: String(req.body.imageBase64),
-          uploadsDir: UPLOADS_DIR,
         });
         await repo.saveMediaAsset(asset);
         visual = {
@@ -2007,14 +1971,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         res.status(400).json({ error: 'filename and imageBase64 are required.' });
         return;
       }
-      const asset = await storeMediaUpload({
+      const asset = prepareMediaUpload({
         questionId,
         filename,
         imageBase64,
-        uploadsDir: UPLOADS_DIR,
       });
       await repo.saveMediaAsset(asset);
-      res.status(201).json({ ok: true, asset });
+      const { bytesBase64: _bytes, ...metadata } = asset;
+      res.status(201).json({ ok: true, asset: metadata });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Media upload failed.';
       const status = msg.includes('Unsupported') || msg.includes('exceeds') || msg.includes('Empty') ? 400 : 500;
@@ -2155,18 +2119,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.post('/api/admin/import/dry-run', requireAdmin, async (req, res) => {
     try {
-      if (clientFirestoreMode) {
-        const existing = Array.isArray(req.body?.existingQuestions)
-          ? (req.body.existingQuestions as QuestionItem[])
-          : [];
-        const existingStimuli =
-          req.body?.existingStimuli && typeof req.body.existingStimuli === 'object'
-            ? (req.body.existingStimuli as Record<string, StimulusGroup>)
-            : {};
-        const { report } = validateAndDryRunManifest(req.body?.manifest, existing, existingStimuli);
-        res.json({ report });
-        return;
-      }
       await ensureSeeded();
       const existing = await repo.listQuestions({ includeHistorical: true });
       const stimIds = Array.from(
@@ -2291,7 +2243,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     }
   });
 
-  app.get('/api/admin/backup', requireAdmin, async (_req, res) => {
+  app.get(['/api/admin/backup', '/api/admin/export/full'], requireAdmin, async (_req, res) => {
     try {
       await ensureSeeded();
       const backup = await repo.exportFullBackup();
@@ -2393,8 +2345,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   // ---------------------------------------------------------------------------
   // Frontend Serving (Vite dev middleware in dev, dist/ in production)
   // ---------------------------------------------------------------------------
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found.' }));
   if (!options.skipVite) {
     if (process.env.NODE_ENV !== 'production') {
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa',
@@ -2403,9 +2357,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     } else {
       const distDir = path.join(ROOT_DIR, 'dist');
       app.use(express.static(distDir));
-      app.all('/api/*', (_req, res) => {
-        res.status(404).json({ error: 'API endpoint not found.' });
-      });
       app.get('*', (_req, res) => {
         res.sendFile(path.join(distDir, 'index.html'));
       });
@@ -2416,6 +2367,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 }
 
 const isEntrypoint =
+  !process.env.VERCEL &&
   typeof process !== 'undefined' &&
   Array.isArray(process.argv) &&
   Boolean(process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js'));
@@ -2425,7 +2377,7 @@ if (isEntrypoint) {
     .then(({ app, repo }) => {
       app.listen(PORT, '0.0.0.0', () => {
         console.log(
-          `Selective Lab server listening on http://0.0.0.0:${PORT} (${repo?.backendName ?? 'firestore_client'})`
+          `Selective Lab server listening on http://0.0.0.0:${PORT} (${repo.backendName})`
         );
       });
     })

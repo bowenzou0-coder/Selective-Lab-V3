@@ -33,6 +33,8 @@ import {
   type FinalizeSessionInput,
   type FinalizeSessionResult,
   type MigrationPreflightReport,
+  type ProgressCountsResponse,
+  type ProgressResetResponse,
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
@@ -97,8 +99,7 @@ export class MemoryRepository implements AppRepository {
     displayName?: string;
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }> {
-    const isAdmin =
-      input.email.trim().toLowerCase() === 'bowenzou0@gmail.com';
+    const isAdmin = input.isBootstrappedAdmin;
     const role: 'student' | 'admin' = isAdmin ? 'admin' : 'student';
     if (isAdmin) {
       this.admins.add(input.uid);
@@ -116,6 +117,67 @@ export class MemoryRepository implements AppRepository {
 
   async isUserAdmin(uid: string): Promise<boolean> {
     return this.admins.has(uid) || this.users.get(uid)?.role === 'admin';
+  }
+
+  async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {
+    return {
+      sessionsCount: [...this.sessions.values()].filter((row) => (row.studentId || DEFAULT_STUDENT_ID) === studentId).length,
+      attemptsCount: this.attempts.filter((row) => (row.studentId || DEFAULT_STUDENT_ID) === studentId).length,
+      evidenceCount: Object.keys(this.questionEvidenceByStudent.get(studentId) ?? {}).length,
+      writingCount: [...this.writingSubmissions.values()].filter((row) => (row.studentId || DEFAULT_STUDENT_ID) === studentId).length,
+      bankQuestionsCount: new Set([...this.questions.values()].map((q) => q.questionFamilyId)).size,
+    };
+  }
+
+  async resetStudentProgress(studentId: string): Promise<ProgressResetResponse> {
+    let clearedSessions = 0;
+    for (const [id, session] of this.sessions) {
+      if ((session.studentId || DEFAULT_STUDENT_ID) === studentId) {
+        this.sessions.delete(id);
+        this.snapshotsBySessionId.delete(id);
+        clearedSessions++;
+      }
+    }
+    this.activeLocksByStudent.delete(studentId);
+
+    const attemptsBefore = this.attempts.length;
+    this.attempts = this.attempts.filter((row) => (row.studentId || DEFAULT_STUDENT_ID) !== studentId);
+    const clearedAttempts = attemptsBefore - this.attempts.length;
+
+    const submissionIds = new Set<string>();
+    for (const [id, submission] of this.writingSubmissions) {
+      if ((submission.studentId || DEFAULT_STUDENT_ID) === studentId) {
+        this.writingSubmissions.delete(id);
+        submissionIds.add(id);
+      }
+    }
+    this.writingEvaluations = this.writingEvaluations.filter((row) => !submissionIds.has(row.submissionId));
+
+    const clearedSkillStates = Object.keys(this.skillStatesByStudent.get(studentId) ?? {}).length;
+    const clearedMemory = Object.keys(this.questionMemoryByStudent.get(studentId) ?? {}).length;
+    const clearedEvidence = Object.keys(this.questionEvidenceByStudent.get(studentId) ?? {}).length;
+    this.skillStatesByStudent.delete(studentId);
+    this.questionMemoryByStudent.delete(studentId);
+    this.questionEvidenceByStudent.delete(studentId);
+
+    let clearedDailyPlans = 0;
+    for (const [key, plan] of this.dailyPlansByStudent) {
+      if (key === `${studentId}::${plan.planDate}`) {
+        this.dailyPlansByStudent.delete(key);
+        clearedDailyPlans++;
+      }
+    }
+    return {
+      ok: true,
+      clearedSessions,
+      clearedAttempts,
+      clearedSkillStates,
+      clearedMemory,
+      clearedEvidence,
+      clearedWriting: submissionIds.size,
+      clearedDailyPlans,
+      preservedQuestionsCount: new Set([...this.questions.values()].map((q) => q.questionFamilyId)).size,
+    };
   }
 
   async hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void> {
@@ -779,7 +841,14 @@ export class MemoryRepository implements AppRepository {
     const uids = new Set<string>(this.users.keys());
     for (const s of this.sessions.values()) uids.add(s.studentId || DEFAULT_STUDENT_ID);
     for (const a of this.attempts) uids.add(a.studentId || DEFAULT_STUDENT_ID);
+    for (const k of this.skillStatesByStudent.keys()) uids.add(k);
+    for (const k of this.questionMemoryByStudent.keys()) uids.add(k);
     for (const k of this.questionEvidenceByStudent.keys()) uids.add(k);
+    for (const ws of this.writingSubmissions.values()) uids.add(ws.studentId || DEFAULT_STUDENT_ID);
+    for (const [key, plan] of this.dailyPlansByStudent.entries()) {
+      const sep = key.lastIndexOf('::');
+      uids.add(sep >= 0 ? key.slice(0, sep) : plan.studentId || DEFAULT_STUDENT_ID);
+    }
 
     const users = Array.from(uids)
       .sort()
@@ -790,6 +859,13 @@ export class MemoryRepository implements AppRepository {
         for (const s of sessions) {
           snapsBySid[s.sessionId] = structuredClone(this.snapshotsBySessionId.get(s.sessionId) || []);
         }
+        const dailyFocusPlans: DailyFocusPlan[] = [];
+        for (const [key, plan] of this.dailyPlansByStudent.entries()) {
+          if (key === `${uid}::${plan.planDate}`) {
+            dailyFocusPlans.push(structuredClone(plan));
+          }
+        }
+        dailyFocusPlans.sort((a, b) => a.planDate.localeCompare(b.planDate));
         return {
           uid,
           role: u?.role || 'student',
@@ -807,6 +883,7 @@ export class MemoryRepository implements AppRepository {
               ...structuredClone(ws),
               evaluations: structuredClone(this.writingEvaluations.filter((e) => e.submissionId === ws.submissionId)),
             })),
+          dailyFocusPlans,
         };
       });
 
@@ -829,16 +906,24 @@ export class MemoryRepository implements AppRepository {
       return emptyRestoreReport(false, options.dryRun, validated.checksumVerified, validated.errors, validated.warnings);
     }
     const bundle = validated.bundle;
+    const totalSessions = bundle.users.reduce((n, u) => n + u.sessions.length, 0);
+    const totalPlans = bundle.users.reduce((n, u) => n + (u.dailyFocusPlans?.length ?? 0), 0);
     const wouldCreate = {
       stimuli: bundle.stimuli.filter((s) => !this.stimuli.has(s.stimulusId)).length,
       questions: bundle.questions.filter((q) => !this.questions.has(q.questionId)).length,
       configVersions: bundle.configVersions.filter((c) => !this.configs.some((e) => e.configVersionId === c.configVersionId)).length,
       sessions: bundle.users.reduce((n, u) => n + u.sessions.filter((s) => !this.sessions.has(s.sessionId)).length, 0),
+      dailyFocusPlans: bundle.users.reduce(
+        (n, u) => n + (u.dailyFocusPlans || []).filter((p) => !this.dailyPlansByStudent.has(`${u.uid}::${p.planDate}`)).length,
+        0
+      ),
     };
     const wouldSkipExisting = {
       stimuli: bundle.stimuli.length - wouldCreate.stimuli,
       questions: bundle.questions.length - wouldCreate.questions,
       configVersions: bundle.configVersions.length - wouldCreate.configVersions,
+      sessions: totalSessions - wouldCreate.sessions,
+      dailyFocusPlans: totalPlans - wouldCreate.dailyFocusPlans,
     };
 
     if (options.dryRun) {
@@ -854,7 +939,15 @@ export class MemoryRepository implements AppRepository {
       };
     }
 
-    const applied = { stimuli: 0, questions: 0, configVersions: 0, sessions: 0, attempts: 0, evidence: 0 };
+    const applied = {
+      stimuli: 0,
+      questions: 0,
+      configVersions: 0,
+      sessions: 0,
+      attempts: 0,
+      evidence: 0,
+      dailyFocusPlans: 0,
+    };
     for (const s of bundle.stimuli) {
       if (!this.stimuli.has(s.stimulusId)) {
         this.stimuli.set(s.stimulusId, structuredClone(s));
@@ -882,8 +975,11 @@ export class MemoryRepository implements AppRepository {
     for (const f of bundle.questionFlags || []) {
       if (!this.flags.has(f.flagId)) this.flags.set(f.flagId, structuredClone(f));
     }
+    const existingEvalIds = new Set(this.writingEvaluations.map((e) => e.evaluationId));
     for (const u of bundle.users) {
-      this.users.set(u.uid, { uid: u.uid, role: u.role, displayName: u.displayName, email: u.email });
+      if (!this.users.has(u.uid)) {
+        this.users.set(u.uid, { uid: u.uid, role: 'student', displayName: u.displayName, email: u.email });
+      }
       for (const s of u.sessions) {
         if (!this.sessions.has(s.sessionId)) {
           this.sessions.set(s.sessionId, structuredClone(s));
@@ -899,17 +995,35 @@ export class MemoryRepository implements AppRepository {
           applied.attempts++;
         }
       }
-      await this.upsertSkillStates(u.skillStates, u.uid);
-      await this.upsertQuestionMemory(u.questionMemory, u.uid);
-      await this.upsertQuestionEvidence(u.questionEvidence, u.uid);
-      applied.evidence += u.questionEvidence.length;
+      const existingSkills = this.skillStatesByStudent.get(u.uid) || {};
+      const newSkills = u.skillStates.filter((sk) => !(sk.skillId in existingSkills));
+      if (newSkills.length) await this.upsertSkillStates(newSkills, u.uid);
+      const existingMem = this.questionMemoryByStudent.get(u.uid) || {};
+      const newMem = u.questionMemory.filter((m) => !(m.questionFamilyId in existingMem));
+      if (newMem.length) await this.upsertQuestionMemory(newMem, u.uid);
+      const existingEv = this.questionEvidenceByStudent.get(u.uid) || {};
+      const newEv = u.questionEvidence.filter((ev) => !(ev.evidenceKey in existingEv));
+      if (newEv.length) {
+        await this.upsertQuestionEvidence(newEv, u.uid);
+        applied.evidence += newEv.length;
+      }
       for (const ws of u.writingSubmissions) {
+        const { evaluations: evs, ...rest } = ws;
         if (!this.writingSubmissions.has(ws.submissionId)) {
-          const { evaluations: evs, ...rest } = ws;
           this.writingSubmissions.set(ws.submissionId, structuredClone(rest));
-          for (const ev of evs || []) {
+        }
+        for (const ev of evs || []) {
+          if (!existingEvalIds.has(ev.evaluationId)) {
             this.writingEvaluations.push(structuredClone(ev));
+            existingEvalIds.add(ev.evaluationId);
           }
+        }
+      }
+      for (const plan of u.dailyFocusPlans || []) {
+        const key = `${u.uid}::${plan.planDate}`;
+        if (!this.dailyPlansByStudent.has(key)) {
+          this.dailyPlansByStudent.set(key, structuredClone({ ...plan, studentId: u.uid }));
+          applied.dailyFocusPlans++;
         }
       }
     }

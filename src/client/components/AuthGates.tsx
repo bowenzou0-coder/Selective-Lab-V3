@@ -1,61 +1,15 @@
 import { useState, type FormEvent } from 'react';
-import { signInWithPopup, type User } from 'firebase/auth';
-import { auth, googleAuthProvider } from '../../lib/firebase';
 import { api, type AuthState } from '../api';
+import { GoogleSignInButton } from './GoogleSignInButton';
 import { IsometricBookStarIllustration } from './StudioIllustrations';
-
-function formatFirebaseAuthError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err || 'Google sign-in failed.');
-  const code = typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : '';
-  const combined = `${code} ${msg}`;
-  if (combined.includes('auth/unauthorized-domain')) {
-    const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-    return `Google Sign-In is blocked for ${host}. Add this domain in Firebase Console under Authentication Authorized domains.`;
-  }
-  if (combined.includes('auth/popup-blocked')) {
-    return 'Sign-in pop-up was blocked by your browser. Allow pop-ups for this site and try again.';
-  }
-  if (combined.includes('auth/popup-closed-by-user')) {
-    return 'Sign-in pop-up was closed before completing.';
-  }
-  if (combined.includes('auth/cancelled-popup-request')) {
-    return 'A sign-in pop-up is already open. Please complete or close it and try again.';
-  }
-  return msg;
-}
-
-function GoogleBadgeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="w-4 h-4 shrink-0" aria-hidden="true">
-      <path
-        fill="#4285F4"
-        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
-      />
-    </svg>
-  );
-}
 
 export function StudentPinGate({
   onAuthenticated,
-  onGoogleAuthenticated,
   onGoAdmin,
-  localDevPinEnabled = true,
+  localDevPinEnabled = false,
   initialError = '',
 }: {
   onAuthenticated: (auth: AuthState) => void;
-  onGoogleAuthenticated: (user: User) => Promise<void>;
   onGoAdmin: () => void;
   localDevPinEnabled?: boolean;
   initialError?: string;
@@ -65,19 +19,6 @@ export function StudentPinGate({
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const displayError = error || initialError;
-
-  const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
-    setError('');
-    try {
-      const cred = await signInWithPopup(auth, googleAuthProvider);
-      await onGoogleAuthenticated(cred.user);
-    } catch (err) {
-      setError(formatFirebaseAuthError(err));
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -116,15 +57,13 @@ export function StudentPinGate({
           Sign in with Google to keep your practice drills, writing feedback, and progress synced across devices.
         </p>
 
-        <button
-          type="button"
-          disabled={googleLoading || loading}
-          onClick={handleGoogleSignIn}
-          className="w-full py-2.5 px-4 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] font-sans-display font-semibold text-sm inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 cursor-pointer"
-        >
-          <GoogleBadgeIcon />
-          <span>{googleLoading ? 'Signing in with Google...' : 'Sign in with Google'}</span>
-        </button>
+        <GoogleSignInButton
+          admin={false}
+          localDevPinEnabled={localDevPinEnabled}
+          disabled={loading}
+          onBusyChange={setGoogleLoading}
+          onAuthenticated={onAuthenticated}
+        />
 
         {!localDevPinEnabled && displayError && (
           <p
@@ -200,14 +139,12 @@ export function StudentPinGate({
 
 export function AdminPasswordGate({
   onAuthenticated,
-  onGoogleAuthenticated,
   onBackHome,
-  localDevPinEnabled = true,
+  localDevPinEnabled = false,
   initialError = '',
   embedded = false,
 }: {
   onAuthenticated: (auth: AuthState) => void;
-  onGoogleAuthenticated: (user: User) => Promise<void>;
   onBackHome: () => void;
   localDevPinEnabled?: boolean;
   initialError?: string;
@@ -218,19 +155,6 @@ export function AdminPasswordGate({
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const displayError = error || initialError;
-
-  const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
-    setError('');
-    try {
-      const cred = await signInWithPopup(auth, googleAuthProvider);
-      await onGoogleAuthenticated(cred.user);
-    } catch (err) {
-      setError(formatFirebaseAuthError(err));
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -267,15 +191,13 @@ export function AdminPasswordGate({
           Sign in with an authorized admin account to manage the question bank, calibration simulator, imports, and settings.
         </p>
 
-        <button
-          type="button"
-          disabled={googleLoading || loading}
-          onClick={handleGoogleSignIn}
-          className="w-full py-2.5 px-4 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] font-sans-display font-semibold text-sm inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 cursor-pointer"
-        >
-          <GoogleBadgeIcon />
-          <span>{googleLoading ? 'Signing in with Google...' : 'Sign in with admin Google'}</span>
-        </button>
+        <GoogleSignInButton
+          admin={true}
+          localDevPinEnabled={localDevPinEnabled}
+          disabled={loading}
+          onBusyChange={setGoogleLoading}
+          onAuthenticated={onAuthenticated}
+        />
 
         {!localDevPinEnabled && (
           <div className="mt-4 space-y-3">

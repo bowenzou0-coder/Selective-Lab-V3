@@ -22,6 +22,20 @@ export interface QuestionProgressMeta {
   nextEligibleAtIso?: string;
 }
 
+export interface BatchDirectorySummary {
+  batchId: string;
+  batchLabel: string;
+  createdAtIso: string;
+  importedBy: string;
+  total: number;
+  live: number;
+  unseen: number;
+  done: number;
+  paused: number;
+  archived: number;
+  questionIds: string[];
+}
+
 export interface PoolHealthSummary {
   totalLatest: number;
   liveCount: number;
