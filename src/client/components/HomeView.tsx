@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Clock, Play, RotateCcw } from 'lucide-react';
 import { api, type DashboardResponse } from '../api';
 import type { MockTestBatch, SectionCode, SessionMode } from '../../shared/contracts';
@@ -380,79 +381,82 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       )}
 
       {/* Ready Confirmation Modal before starting a timed session */}
-      {pendingLaunch && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
-          role="presentation"
-          onClick={() => {
-            if (!launching) setPendingLaunch(null);
-          }}
-        >
+      {pendingLaunch &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ready-modal-title"
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
+            className="fixed inset-0 z-50 m-0 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
+            role="presentation"
+            onClick={() => {
+              if (!launching) setPendingLaunch(null);
+            }}
           >
-            <div className="space-y-1">
-              <p className="text-xs font-sans-display font-medium text-[#78756E]">
-                Before you begin
-              </p>
-              <h2
-                id="ready-modal-title"
-                className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
-              >
-                {pendingLaunch.title}
-              </h2>
-            </div>
-
-            <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
-              <div>
-                <dt className="text-[#78756E]">Questions</dt>
-                <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
-                  {pendingLaunch.questionCountLabel}
-                </dd>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="ready-modal-title"
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
+            >
+              <div className="space-y-1">
+                <p className="text-xs font-sans-display font-medium text-[#78756E]">
+                  Before you begin
+                </p>
+                <h2
+                  id="ready-modal-title"
+                  className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
+                >
+                  {pendingLaunch.title}
+                </h2>
               </div>
-              <div>
-                <dt className="text-[#78756E]">Time allowed</dt>
-                <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
-                  {pendingLaunch.durationLabel}
-                </dd>
+
+              <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
+                <div>
+                  <dt className="text-[#78756E]">Questions</dt>
+                  <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
+                    {pendingLaunch.questionCountLabel}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[#78756E]">Time allowed</dt>
+                  <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
+                    {pendingLaunch.durationLabel}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="p-3.5 rounded-[12px] bg-[#FDF0E2] border border-[#A35116]/20 text-xs text-[#A35116] flex items-start gap-2.5 leading-relaxed">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  {pendingLaunch.isUntimed
+                    ? 'Once started, your workspace stays inside this paper until you submit. Reloading keeps your answers saved.'
+                    : 'Once started, the exam clock runs continuously on the server until you submit. Reloading keeps you inside the test.'}
+                </span>
               </div>
-            </dl>
 
-            <div className="p-3.5 rounded-[12px] bg-[#FDF0E2] border border-[#A35116]/20 text-xs text-[#A35116] flex items-start gap-2.5 leading-relaxed">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                {pendingLaunch.isUntimed
-                  ? 'Once started, your workspace stays inside this paper until you submit. Reloading keeps your answers saved.'
-                  : 'Once started, the exam clock runs continuously on the server until you submit. Reloading keeps you inside the test.'}
-              </span>
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={launching !== null}
+                  onClick={() => setPendingLaunch(null)}
+                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={launching !== null}
+                  onClick={() => launch(pendingLaunch.key, pendingLaunch.payload)}
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{launching ? 'Starting...' : 'Confirm and start'}</span>
+                </button>
+              </div>
             </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-1">
-              <button
-                type="button"
-                disabled={launching !== null}
-                onClick={() => setPendingLaunch(null)}
-                className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={launching !== null}
-                onClick={() => launch(pendingLaunch.key, pendingLaunch.payload)}
-                className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>{launching ? 'Starting...' : 'Confirm and start'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* Editorial Studio Greeting Header */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">

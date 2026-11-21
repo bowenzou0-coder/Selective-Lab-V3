@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, Maximize2, X, XCircle } from 'lucide-react';
 import type {
   EvidenceCitationRef,
@@ -723,37 +724,40 @@ export function QuestionWorkspace({
         </section>
       </div>
 
-      {zoomedOption && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Zoomed preview for option ${zoomedOption.key}`}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
-          onClick={() => setZoomedOption(null)}
-        >
+      {zoomedOption &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            className="max-w-3xl w-full bg-white rounded-[16px] border border-[#E5DFD5] p-5 shadow-xl space-y-3"
-            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Zoomed preview for option ${zoomedOption.key}`}
+            className="fixed inset-0 z-50 m-0 bg-black/60 flex items-center justify-center p-6"
+            onClick={() => setZoomedOption(null)}
           >
-            <div className="flex items-center justify-between">
-              <h3 className="font-sans-display font-semibold text-sm text-[#113C36]">
-                Option {zoomedOption.key}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setZoomedOption(null)}
-                aria-label="Close option zoom preview"
-                className="p-1.5 rounded-[8px] hover:bg-[#F3EFE8] text-[#4A5955] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            <div
+              className="max-w-3xl w-full bg-white rounded-[16px] border border-[#E5DFD5] p-5 shadow-xl space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="font-sans-display font-semibold text-sm text-[#113C36]">
+                  Option {zoomedOption.key}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setZoomedOption(null)}
+                  aria-label="Close option zoom preview"
+                  className="p-1.5 rounded-[8px] hover:bg-[#F3EFE8] text-[#4A5955] cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex items-center justify-center min-h-[200px] max-h-[70vh] overflow-auto">
+                <VisualRenderer visual={zoomedOption.visual} />
+              </div>
             </div>
-            <div className="flex items-center justify-center min-h-[200px] max-h-[70vh] overflow-auto">
-              <VisualRenderer visual={zoomedOption.visual} />
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ImageOff, Maximize2, X } from 'lucide-react';
 import type { VisualSpec } from '../../shared/contracts';
 
@@ -169,48 +170,51 @@ export function VisualRenderer({
         </figure>
       )}
 
-      {zoomOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={visual.altText}
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
-          onClick={() => setZoomOpen(false)}
-        >
+      {zoomOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            className="max-w-4xl w-full bg-[var(--bg-elevated)] rounded-[var(--radius-lg)] border border-[var(--border-hairline)] p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={visual.altText}
+            className="fixed inset-0 z-50 m-0 bg-black/60 flex items-center justify-center p-6"
+            onClick={() => setZoomOpen(false)}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                {visual.caption || visual.altText}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setZoomOpen(false)}
-                aria-label="Close zoom preview"
-                className="p-2 rounded-[var(--radius-sm)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            <div
+              className="max-w-4xl w-full bg-[var(--bg-elevated)] rounded-[var(--radius-lg)] border border-[var(--border-hairline)] p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                  {visual.caption || visual.altText}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setZoomOpen(false)}
+                  aria-label="Close zoom preview"
+                  className="p-2 rounded-[var(--radius-sm)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {visual.visualType === 'inline_svg' && visual.svgMarkup && (
+                <div
+                  className="flex justify-center [&_svg]:w-full [&_svg]:max-h-[70vh]"
+                  dangerouslySetInnerHTML={{ __html: sanitizeSvg(visual.svgMarkup) }}
+                />
+              )}
+              {visual.visualType === 'image_asset' && visual.imageUrl && (
+                <img
+                  src={visual.imageUrl}
+                  alt={visual.altText}
+                  referrerPolicy="no-referrer"
+                  className="mx-auto max-h-[72vh] w-auto object-contain"
+                />
+              )}
             </div>
-            {visual.visualType === 'inline_svg' && visual.svgMarkup && (
-              <div
-                className="flex justify-center [&_svg]:w-full [&_svg]:max-h-[70vh]"
-                dangerouslySetInnerHTML={{ __html: sanitizeSvg(visual.svgMarkup) }}
-              />
-            )}
-            {visual.visualType === 'image_asset' && visual.imageUrl && (
-              <img
-                src={visual.imageUrl}
-                alt={visual.altText}
-                referrerPolicy="no-referrer"
-                className="mx-auto max-h-[72vh] w-auto object-contain"
-              />
-            )}
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -1146,75 +1147,78 @@ export function SessionPlayerView({
       />
 
       {/* 2-Step Finish Test Confirmation Modal */}
-      {submitConfirmOpen && (
-        <div
-          role="presentation"
-          onClick={() => !submitting && setSubmitConfirmOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
-        >
+      {submitConfirmOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="submit-confirm-title"
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
+            role="presentation"
+            onClick={() => !submitting && setSubmitConfirmOpen(false)}
+            className="fixed inset-0 z-50 m-0 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
           >
-            <div className="space-y-1">
-              <p className="text-xs font-sans-display font-medium text-[#78756E]">Finish test</p>
-              <h2
-                id="submit-confirm-title"
-                className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
-              >
-                Ready to submit your answers?
-              </h2>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="submit-confirm-title"
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
+            >
+              <div className="space-y-1">
+                <p className="text-xs font-sans-display font-medium text-[#78756E]">Finish test</p>
+                <h2
+                  id="submit-confirm-title"
+                  className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
+                >
+                  Ready to submit your answers?
+                </h2>
+              </div>
+
+              <dl className="grid grid-cols-3 gap-2.5 p-3.5 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs text-center tabular-nums">
+                <div>
+                  <dt className="text-[#78756E]">Answered</dt>
+                  <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#1D6346]">
+                    {answeredSlotsCount}/{totalSlotsCount}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[#78756E]">Unanswered</dt>
+                  <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#113C36]">
+                    {Math.max(0, totalSlotsCount - answeredSlotsCount)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[#78756E]">Flagged</dt>
+                  <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#A35116]">
+                    {flaggedQuestionIds.length}
+                  </dd>
+                </div>
+              </dl>
+
+              <p className="text-xs text-[#4A5955] leading-relaxed">
+                Submitting records your final answers and opens the full review screen with worked explanations.
+              </p>
+
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => setSubmitConfirmOpen(false)}
+                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
+                >
+                  Keep working
+                </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={handleSubmit}
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-60"
+                >
+                  {submitting ? 'Submitting...' : 'Confirm and submit'}
+                </button>
+              </div>
             </div>
-
-            <dl className="grid grid-cols-3 gap-2.5 p-3.5 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs text-center tabular-nums">
-              <div>
-                <dt className="text-[#78756E]">Answered</dt>
-                <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#1D6346]">
-                  {answeredSlotsCount}/{totalSlotsCount}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[#78756E]">Unanswered</dt>
-                <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#113C36]">
-                  {Math.max(0, totalSlotsCount - answeredSlotsCount)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[#78756E]">Flagged</dt>
-                <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#A35116]">
-                  {flaggedQuestionIds.length}
-                </dd>
-              </div>
-            </dl>
-
-            <p className="text-xs text-[#4A5955] leading-relaxed">
-              Submitting records your final answers and opens the full review screen with worked explanations.
-            </p>
-
-            <div className="flex items-center justify-end gap-2.5 pt-1">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => setSubmitConfirmOpen(false)}
-                className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
-              >
-                Keep working
-              </button>
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={handleSubmit}
-                className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-60"
-              >
-                {submitting ? 'Submitting...' : 'Confirm and submit'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
