@@ -3,15 +3,17 @@ import { useI18n } from '../i18n';
 import { createPortal } from 'react-dom';
 import { ImageOff, Maximize2, X } from 'lucide-react';
 import type { VisualSpec } from '../../shared/contracts';
+import { normalizeSvgFonts } from '../../shared/svgFonts';
 
-// Admin-authored SVG only; still strip anything executable or able to embed other documents.
+// Admin-authored SVG only; strip anything executable and normalize diagram fonts to Anthropic faces.
 function sanitizeSvg(markup: string): string {
-  return markup
+  const safe = markup
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
     .replace(/<(foreignObject|iframe|object|embed)[\s\S]*?<\/\1>/gi, '')
     .replace(/<(iframe|object|embed)\b[^>]*\/?>/gi, '')
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/javascript:/gi, '');
+  return normalizeSvgFonts(safe);
 }
 
 interface VisualRendererProps {
@@ -51,10 +53,10 @@ export const VisualRenderer = memo(function VisualRenderer({
           <div
             className={
               isOptionTile
-                ? 'w-full h-full flex items-center justify-center [&_svg]:max-h-full [&_svg]:max-w-full [&_svg]:w-auto [&_svg]:h-full'
+                ? 'visual-svg-host w-full h-full flex items-center justify-center [&_svg]:max-h-full [&_svg]:max-w-full [&_svg]:w-auto [&_svg]:h-full'
                 : isCompact
-                  ? 'flex justify-center overflow-hidden max-h-28 [&_svg]:max-h-28 [&_svg]:max-w-full [&_svg]:w-auto [&_svg]:h-auto'
-                  : 'flex justify-center overflow-x-auto [&_svg]:max-w-full [&_svg]:h-auto'
+                  ? 'visual-svg-host flex justify-center overflow-hidden max-h-28 [&_svg]:max-h-28 [&_svg]:max-w-full [&_svg]:w-auto [&_svg]:h-auto'
+                  : 'visual-svg-host flex justify-center overflow-x-auto [&_svg]:max-w-full [&_svg]:h-auto'
             }
             role="img"
             aria-label={visual.altText}
@@ -214,7 +216,7 @@ export const VisualRenderer = memo(function VisualRenderer({
               </div>
               {visual.visualType === 'inline_svg' && visual.svgMarkup && (
                 <div
-                  className="flex justify-center [&_svg]:w-full [&_svg]:max-h-[70vh]"
+                  className="visual-svg-host flex justify-center [&_svg]:w-full [&_svg]:max-h-[70vh]"
                   dangerouslySetInnerHTML={safeSvg}
                 />
               )}

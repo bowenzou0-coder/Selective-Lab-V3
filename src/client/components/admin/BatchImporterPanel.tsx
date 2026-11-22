@@ -445,7 +445,7 @@ export function BatchImporterPanel({
             setManifestText(e.target.value);
             setDryRunReport(null);
           }}
-          placeholder='{"batchLabel": "April Fresh Drop", "stimuli": [], "questions": [...]}'
+          placeholder='{"batchLabel": "2026-11-22_b01", "stimuli": [], "questions": [...]}'
           className="w-full p-3.5 rounded-[12px] border border-[#CFC6B9] bg-[#FAF8F5] font-mono-code text-xs text-[#113C36] focus:bg-white focus:outline-none focus:border-[#113C36]"
         />
 

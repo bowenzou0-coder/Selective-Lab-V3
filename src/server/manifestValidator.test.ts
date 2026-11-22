@@ -7,7 +7,7 @@ test('validateAndDryRunManifest accepts V3 starter manifest example with zero er
   const { manifest, report } = validateAndDryRunManifest(V3_STARTER_MANIFEST_EXAMPLE, []);
   assert.equal(report.valid, true, `Unexpected errors: ${report.errors.join('; ')}`);
   assert.equal(report.questionsCount, 3);
-  assert.equal(report.stimuliCount, 1);
+  assert.equal(report.stimuliCount, 2);
   assert.ok(manifest);
   const gapped = manifest.questions.find((q) => q.formatType === 'READ_GAPPED_TEXT');
   assert.equal(gapped?.sharedPoolConfig?.reuseAllowed, false);

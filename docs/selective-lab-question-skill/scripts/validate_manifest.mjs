@@ -19,6 +19,8 @@ const taxonomy = JSON.parse(fs.readFileSync(taxonomyPath, 'utf8'));
 const VALID_SKILLS = new Map(taxonomy.skills.map((s) => [s.skillId, s]));
 
 const ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+export const BATCH_LABEL_RE = /^\d{4}-\d{2}-\d{2}_b\d{2,}$/;
+export const OFFICIAL_BATCH_RE = /^official_pt[1-3]$/;
 const OPTION_KEY_RE = /^[A-H]$/;
 const VALID_SECTIONS = new Set(['READ', 'MATH', 'THINK', 'WRIT']);
 const VALID_FORMATS = new Set([
@@ -48,35 +50,122 @@ const VALID_COGNITIVE = new Set(['recall_locate', 'apply_procedural', 'analyze_i
 const VALID_VISUAL_TYPES = new Set(['none', 'inline_svg', 'image_asset', 'structured_table']);
 const FORBIDDEN_GENERATED_FIELDS = ['contentHash', 'evidenceRevision', 'batchId', 'createdAtIso', 'updatedAtIso'];
 
-const ALLOWED_SVG_FONTS = new Set([
+const ANTHROPIC_SVG_FONTS = new Set([
   'AnthropicSansText',
   'AnthropicSansDisplay',
   'AnthropicSerifText',
   'AnthropicSerifDisplay',
   'AnthropicMono',
 ]);
+const GENERIC_FONT_TOKENS = new Set([
+  'sans-serif',
+  'serif',
+  'monospace',
+  'system-ui',
+  '-apple-system',
+  'blinkmacsystemfont',
+  'ui-sans-serif',
+  'ui-serif',
+  'ui-monospace',
+  'inherit',
+]);
 
-function checkSvgAnthropicFonts(svg, location, errors) {
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function decodeBasicQuotes(raw) {
+  return String(raw || '')
+    .replace(/&apos;|&#39;|&#x27;/gi, "'")
+    .replace(/&quot;|&#34;|&#x22;/gi, '"');
+}
+
+export function resolveAnthropicFontFamily(rawList) {
+  const tokens = decodeBasicQuotes(rawList)
+    .split(',')
+    .map((p) => p.trim().replace(/^['"]+|['"]+$/g, '').trim())
+    .filter(Boolean);
+  for (const t of tokens) {
+    if (ANTHROPIC_SVG_FONTS.has(t)) return t;
+  }
+  for (const t of tokens) {
+    const low = t.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    if (low === 'anthropic sans display') return 'AnthropicSansDisplay';
+    if (low === 'anthropic sans text' || low === 'anthropic sans') return 'AnthropicSansText';
+    if (low === 'anthropic serif display') return 'AnthropicSerifDisplay';
+    if (low === 'anthropic serif text' || low === 'anthropic serif') return 'AnthropicSerifText';
+    if (low === 'anthropic mono') return 'AnthropicMono';
+  }
+  for (const t of tokens) {
+    const low = t.toLowerCase();
+    if (/\b(mono|monospace|courier|consolas|menlo|monaco)\b/.test(low)) return 'AnthropicMono';
+    if (!low.includes('sans') && /\b(serif|georgia|times|cambria|garamond|palatino)\b/.test(low)) {
+      return 'AnthropicSerifText';
+    }
+  }
+  return 'AnthropicSansText';
+}
+
+export function normalizeSvgFonts(markup) {
+  if (!markup || typeof markup !== 'string' || !/<svg\b/i.test(markup)) return markup;
+  let out = markup
+    .replace(/\bfont-family\s*=\s*(?:"([^"]*)"|'([^']*)')/gi, (_m, d, s) => {
+      return `font-family="${resolveAnthropicFontFamily(d ?? s ?? '')}"`;
+    })
+    .replace(/\bfont-family\s*:\s*([^;"'}]+)/gi, (_m, val) => {
+      return `font-family: ${resolveAnthropicFontFamily(val ?? '')}`;
+    });
+  const hasText = /<(?:text|tspan)\b/i.test(out);
+  let rootFont = null;
+  out = out.replace(/<svg\b([^>]*)>/i, (full, attrs) => {
+    const existing = attrs.match(/\bfont-family="([^"]*)"/i);
+    if (existing) {
+      rootFont = existing[1];
+      return full;
+    }
+    if (hasText) {
+      rootFont = 'AnthropicSansText';
+      return `<svg${attrs} font-family="AnthropicSansText">`;
+    }
+    return full;
+  });
+  if (rootFont && !/<g\b[^>]*\bfont-family=/i.test(out) && !/<style\b/i.test(out)) {
+    out = out.replace(new RegExp(`(<(?:text|tspan)\\b[^>]*?)\\s+font-family="${rootFont}"`, 'gi'), '$1');
+  }
+  return out;
+}
+
+/**
+ * Lightweight SVG font hygiene: omitting font-family is fine (Selective Lab applies
+ * AnthropicSansText automatically). Only warn if an author explicitly specifies a
+ * non-Anthropic named font (e.g. Arial or misspelled "Anthropic Sans") with no
+ * Anthropic font in the declaration.
+ */
+function checkSvgFontsLight(svg, location, warnings) {
   if (!/<(?:text|tspan)\b/i.test(svg)) return;
   const families = [];
-  for (const m of svg.matchAll(/font-family\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+  for (const m of svg.matchAll(/\bfont-family\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
     families.push(m[1] ?? m[2] ?? '');
   }
-  for (const m of svg.matchAll(/font-family\s*:\s*([^;"'}]+)/gi)) {
+  for (const m of svg.matchAll(/\bfont-family\s*:\s*([^;"'}]+)/gi)) {
     families.push(m[1] ?? '');
   }
-  if (families.length === 0) {
-    errors.push(`${location}: svgMarkup with text must specify an Anthropic font-family (e.g. font-family="'AnthropicSansText'").`);
-    return;
-  }
+  if (families.length === 0) return;
+  const badNamed = new Set();
   for (const rawList of families) {
-    for (const part of rawList.split(',')) {
-      const fam = part.trim().replace(/^['"]|['"]$/g, '');
-      if (!fam) continue;
-      if (!ALLOWED_SVG_FONTS.has(fam)) {
-        errors.push(`${location}: svgMarkup must exclusively use Anthropic fonts (AnthropicSansText/Display, AnthropicSerifText/Display, AnthropicMono); found "${fam}".`);
-      }
+    const tokens = decodeBasicQuotes(rawList)
+      .split(',')
+      .map((part) => part.trim().replace(/^['"]+|['"]+$/g, '').trim())
+      .filter(Boolean);
+    if (tokens.some((t) => ANTHROPIC_SVG_FONTS.has(t))) continue;
+    for (const t of tokens) {
+      if (!GENERIC_FONT_TOKENS.has(t.toLowerCase())) badNamed.add(t);
     }
+  }
+  if (badNamed.size > 0) {
+    warnings.push(
+      `${location}: svgMarkup names non-Anthropic font(s) (${[...badNamed].join(', ')}); omit font-family or use AnthropicSansText/Display, AnthropicSerifText/Display, or AnthropicMono.`
+    );
   }
 }
 
@@ -151,7 +240,7 @@ function checkVisual(visual, location, isOptionTile, errors, warnings) {
         errors.push(`${location}: unbalanced <${tag}> tags (${opens - selfClosing} open vs ${closes} close).`);
       }
     }
-    checkSvgAnthropicFonts(trimmed, location, errors);
+    checkSvgFontsLight(trimmed, location, warnings);
     if (vbMatch) checkSvgTextGeometry(trimmed, vbMatch, location, warnings);
     if (/width\s*=\s*["']\s*(\d{4,})/.test(trimmed) || /height\s*=\s*["']\s*(\d{4,})/.test(trimmed)) {
       warnings.push(`${location}: svgMarkup has a huge explicit pixel width/height attribute; rely on viewBox instead.`);
@@ -324,10 +413,20 @@ export function validateManifestObject(raw) {
   if (raw.manifestVersion !== '1.0') {
     errors.push(`manifestVersion must be "1.0" (got ${JSON.stringify(raw.manifestVersion)}).`);
   }
-  if (typeof raw.batchLabel !== 'string' || !raw.batchLabel.trim()) {
+  const questions = Array.isArray(raw.questions) ? raw.questions : [];
+  const isAllOfficial =
+    questions.length > 0 && questions.every((q) => q?.provenance?.sourceType === 'official_doe');
+  const batchLabel = typeof raw.batchLabel === 'string' ? raw.batchLabel.trim() : '';
+  const hasStandardBatch =
+    BATCH_LABEL_RE.test(batchLabel) || (isAllOfficial && OFFICIAL_BATCH_RE.test(batchLabel));
+  if (!batchLabel) {
     errors.push('batchLabel must be a non-empty string.');
-  } else if (raw.batchLabel.length > 200) {
-    errors.push(`batchLabel exceeds 200 chars (${raw.batchLabel.length}).`);
+  } else if (batchLabel.length > 200) {
+    errors.push(`batchLabel exceeds 200 chars (${batchLabel.length}).`);
+  } else if (!hasStandardBatch) {
+    errors.push(
+      `batchLabel "${batchLabel}" must match YYYY-MM-DD_bNN (e.g. "2026-11-22_b01").`
+    );
   }
   if (raw.defaultPoolType !== undefined && !VALID_POOL_TYPES.has(raw.defaultPoolType)) {
     errors.push(`Invalid defaultPoolType "${String(raw.defaultPoolType)}".`);
@@ -340,7 +439,6 @@ export function validateManifestObject(raw) {
   if (raw.stimuli !== undefined && !Array.isArray(raw.stimuli)) {
     errors.push('stimuli must be an array.');
   }
-  const questions = Array.isArray(raw.questions) ? raw.questions : [];
   if (!Array.isArray(raw.questions) || raw.questions.length === 0) {
     errors.push('questions must be a non-empty array.');
   }
@@ -368,7 +466,7 @@ export function validateManifestObject(raw) {
     } else {
       stimuliById.set(s.stimulusId, s);
     }
-    if (s.stimulusFamilyId !== undefined && !ID_RE.test(s.stimulusFamilyId)) {
+    if (!s.stimulusFamilyId || !ID_RE.test(s.stimulusFamilyId)) {
       errors.push(`${loc}: stimulusFamilyId must match ^[a-zA-Z0-9_-]{1,128}$.`);
     }
     if (!Number.isInteger(s.version) || s.version < 1) {
@@ -376,6 +474,20 @@ export function validateManifestObject(raw) {
     }
     if (!VALID_SECTIONS.has(s.section)) {
       errors.push(`${loc}: invalid section "${String(s.section)}".`);
+    } else if (hasStandardBatch) {
+      const sec = s.section.toLowerCase();
+      const stimFamRe = new RegExp(`^${escapeRegExp(batchLabel)}_${sec}_s\\d{2,}$`);
+      if (s.stimulusFamilyId && !stimFamRe.test(s.stimulusFamilyId)) {
+        errors.push(
+          `${loc}: stimulusFamilyId "${s.stimulusFamilyId}" must match ${batchLabel}_${sec}_sNN (e.g. "${batchLabel}_${sec}_s01").`
+        );
+      }
+      if (s.stimulusFamilyId && Number.isInteger(s.version) && s.version >= 1) {
+        const expectedStimId = `${s.stimulusFamilyId}_v${s.version}`;
+        if (s.stimulusId !== expectedStimId) {
+          errors.push(`${loc}: stimulusId "${String(s.stimulusId)}" must equal "${expectedStimId}".`);
+        }
+      }
     }
     if (!s.genreOrTextType || typeof s.genreOrTextType !== 'string') {
       errors.push(`${loc}: missing genreOrTextType string.`);
@@ -435,6 +547,21 @@ export function validateManifestObject(raw) {
       errors.push(`${qLoc}: invalid section "${String(q.section)}".`);
     } else {
       stats.bySection[q.section]++;
+      if (hasStandardBatch) {
+        const sec = q.section.toLowerCase();
+        const qFamRe = new RegExp(`^${escapeRegExp(batchLabel)}_${sec}_\\d{2,}$`);
+        if (q.questionFamilyId && !qFamRe.test(q.questionFamilyId)) {
+          errors.push(
+            `${qLoc}: questionFamilyId "${q.questionFamilyId}" must match ${batchLabel}_${sec}_NN (e.g. "${batchLabel}_${sec}_01").`
+          );
+        }
+        if (q.questionFamilyId && Number.isInteger(q.version) && q.version >= 1) {
+          const expectedQId = `${q.questionFamilyId}_v${q.version}`;
+          if (q.questionId !== expectedQId) {
+            errors.push(`${qLoc}: questionId "${String(q.questionId)}" must equal "${expectedQId}".`);
+          }
+        }
+      }
     }
     if (!VALID_FORMATS.has(q.formatType)) {
       errors.push(`${qLoc}: invalid formatType "${String(q.formatType)}".`);
@@ -551,6 +678,12 @@ export function validateManifestObject(raw) {
         errors.push(`${pLoc}: duplicate partId "${p.partId}" across manifest.`);
       } else {
         seenPartIds.add(p.partId);
+        if (hasStandardBatch && q.questionFamilyId) {
+          const expectedPartId = `${q.questionFamilyId}_p${pIdx + 1}`;
+          if (p.partId !== expectedPartId) {
+            errors.push(`${pLoc}: partId "${p.partId}" must equal "${expectedPartId}".`);
+          }
+        }
       }
       if (p.partIndex !== pIdx) {
         errors.push(`${pLoc}: partIndex (${String(p.partIndex)}) must be zero-based and equal array index ${pIdx}.`);

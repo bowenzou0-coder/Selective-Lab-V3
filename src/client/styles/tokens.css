@@ -225,3 +225,8 @@ body {
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+/* Inline diagram SVGs inherit AnthropicSansText automatically; explicit SVG font-family attrs still override */
+.visual-svg-host {
+  font-family: 'AnthropicSansText', var(--font-sans-text);
+}

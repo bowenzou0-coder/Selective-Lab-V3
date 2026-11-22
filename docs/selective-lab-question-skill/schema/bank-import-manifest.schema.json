@@ -14,7 +14,8 @@
     },
     "batchLabel": {
       "type": "string",
-      "description": "Unique batch identifier, e.g. ai_batch_2027_01"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}_b\\d{2,}$",
+      "description": "Date + daily batch number: YYYY-MM-DD_bNN (e.g. 2026-11-22_b01)"
     },
     "defaultPoolType": {
       "type": "string",
@@ -47,10 +48,12 @@
         ],
         "properties": {
           "stimulusId": {
-            "type": "string"
+            "type": "string",
+            "description": "<batchLabel>_<sec>_s<nn>_v<version> (e.g. 2026-11-22_b01_read_s01_v1)"
           },
           "stimulusFamilyId": {
-            "type": "string"
+            "type": "string",
+            "description": "<batchLabel>_<sec>_s<nn> (e.g. 2026-11-22_b01_read_s01)"
           },
           "version": {
             "type": "integer",
@@ -134,10 +137,12 @@
         ],
         "properties": {
           "questionId": {
-            "type": "string"
+            "type": "string",
+            "description": "<batchLabel>_<sec>_<nn>_v<version> (e.g. 2026-11-22_b01_math_01_v1)"
           },
           "questionFamilyId": {
-            "type": "string"
+            "type": "string",
+            "description": "<batchLabel>_<sec>_<nn> (e.g. 2026-11-22_b01_math_01)"
           },
           "version": {
             "type": "integer",
@@ -275,7 +280,8 @@
               ],
               "properties": {
                 "partId": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "<questionFamilyId>_p<partIndex+1> (e.g. 2026-11-22_b01_math_01_p1)"
                 },
                 "partIndex": {
                   "type": "integer",

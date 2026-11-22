@@ -13,6 +13,7 @@ import type {
 } from '../shared/contracts.ts';
 import { computeEvidenceRevision } from '../shared/mastery.ts';
 import { VALID_SKILL_IDS } from '../shared/skills.ts';
+import { normalizeSvgFonts } from '../shared/svgFonts.ts';
 
 export interface ManifestDryRunReport {
   valid: boolean;
@@ -56,7 +57,10 @@ function normalizeVisual(v: unknown): VisualSpec | undefined {
   return {
     visualType,
     altText: String(obj.altText || 'Question figure'),
-    svgMarkup: obj.svgMarkup,
+    svgMarkup:
+      visualType === 'inline_svg' && typeof obj.svgMarkup === 'string'
+        ? normalizeSvgFonts(obj.svgMarkup)
+        : obj.svgMarkup,
     imageUrl: obj.imageUrl,
     caption: obj.caption,
     tableData: obj.tableData,

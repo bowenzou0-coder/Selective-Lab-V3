@@ -9,7 +9,11 @@ export const V3_MANIFEST_JSON_SCHEMA = {
   required: ['manifestVersion', 'batchLabel', 'questions'],
   properties: {
     manifestVersion: { type: 'string', const: '1.0' },
-    batchLabel: { type: 'string', description: 'Unique batch identifier, e.g. ai_batch_2027_01' },
+    batchLabel: {
+      type: 'string',
+      pattern: '^\\d{4}-\\d{2}-\\d{2}_b\\d{2,}$',
+      description: 'Date + daily batch number, e.g. 2026-11-22_b01',
+    },
     defaultPoolType: {
       type: 'string',
       enum: ['practice', 'diagnostic', 'official_calibration', 'benchmark_holdout'],
@@ -216,13 +220,13 @@ export const V3_MANIFEST_JSON_SCHEMA = {
 
 export const V3_STARTER_MANIFEST_EXAMPLE = {
   manifestVersion: '1.0',
-  batchLabel: 'ai_generated_sample_01',
+  batchLabel: '2026-11-22_b01',
   defaultPoolType: 'practice',
   defaultQcStatus: 'active',
   stimuli: [
     {
-      stimulusId: 'stim_ai_gapped_01',
-      stimulusFamilyId: 'stim_ai_gapped_01',
+      stimulusId: '2026-11-22_b01_read_s01_v1',
+      stimulusFamilyId: '2026-11-22_b01_read_s01',
       version: 1,
       section: 'READ',
       genreOrTextType: 'gapped_text',
@@ -236,19 +240,30 @@ export const V3_STARTER_MANIFEST_EXAMPLE = {
       ],
       sourceType: 'ai_generated',
     },
+    {
+      stimulusId: '2026-11-22_b01_writ_s01_v1',
+      stimulusFamilyId: '2026-11-22_b01_writ_s01',
+      version: 1,
+      section: 'WRIT',
+      genreOrTextType: 'narrative',
+      title: 'The Lantern on the Pier',
+      mainTextMarkdown:
+        'A sudden king tide rises around a quiet coastal jetty just as the storm lantern goes dark. Write a suspenseful narrative beginning with the mandatory opening line.',
+      sourceType: 'ai_generated',
+    },
   ],
   questions: [
     {
-      questionId: 'q_ai_gapped_01_v1',
-      questionFamilyId: 'q_ai_gapped_01',
+      questionId: '2026-11-22_b01_read_01_v1',
+      questionFamilyId: '2026-11-22_b01_read_01',
       version: 1,
       section: 'READ',
       formatType: 'READ_GAPPED_TEXT',
-      stimulusId: 'stim_ai_gapped_01',
+      stimulusId: '2026-11-22_b01_read_s01_v1',
       sharedPoolConfig: { reuseAllowed: false, poolKeys: ['A', 'B', 'C'] },
       parts: [
         {
-          partId: 'q_ai_gapped_01_p1',
+          partId: '2026-11-22_b01_read_01_p1',
           partIndex: 0,
           slotRef: 'gap:1',
           promptText: 'Select the extract that best fits Gap 1.',
@@ -261,7 +276,7 @@ export const V3_STARTER_MANIFEST_EXAMPLE = {
           workedExplanation: 'Extract A directly elaborates on the speed and camouflage described in sentence 1.',
         },
         {
-          partId: 'q_ai_gapped_01_p2',
+          partId: '2026-11-22_b01_read_01_p2',
           partIndex: 1,
           slotRef: 'gap:2',
           promptText: 'Select the extract that best fits Gap 2.',
@@ -276,8 +291,8 @@ export const V3_STARTER_MANIFEST_EXAMPLE = {
       ],
     },
     {
-      questionId: 'q_ai_math_svg_01_v1',
-      questionFamilyId: 'q_ai_math_svg_01',
+      questionId: '2026-11-22_b01_math_01_v1',
+      questionFamilyId: '2026-11-22_b01_math_01',
       version: 1,
       section: 'MATH',
       formatType: 'MATH_MCQ_5',
@@ -289,7 +304,7 @@ export const V3_STARTER_MANIFEST_EXAMPLE = {
       },
       parts: [
         {
-          partId: 'q_ai_math_svg_01_p1',
+          partId: '2026-11-22_b01_math_01_p1',
           partIndex: 0,
           promptText: 'What is the area of the right-angled triangle shown?',
           skillId: 'MATH.GEO2D.COMPOSITE_AREA',
@@ -297,25 +312,30 @@ export const V3_STARTER_MANIFEST_EXAMPLE = {
           targetTimeSec: 50,
           cognitiveDemand: 'apply_procedural',
           options: [
-            { key: 'A', text: '14 cm^2' },
-            { key: 'B', text: '24 cm^2' },
-            { key: 'C', text: '28 cm^2' },
-            { key: 'D', text: '48 cm^2' },
-            { key: 'E', text: '60 cm^2' },
-            { key: 'F', text: '96 cm^2' },
+            { key: 'A', text: '14 cm²' },
+            { key: 'B', text: '24 cm²' },
+            { key: 'C', text: '28 cm²' },
+            { key: 'D', text: '48 cm²' },
+            { key: 'E', text: '60 cm²' },
           ],
           correctAnswerKey: 'B',
-          workedExplanation: 'Area = 1/2 x base x height = 1/2 x 8 x 6 = 24 cm^2.',
-          distractorRationales: { D: 'Forgot to halve base x height.' },
+          workedExplanation: '1) Area = 1/2 × base × height = 1/2 × 8 × 6 = 24 cm².\n2) Therefore the answer is B.',
+          distractorRationales: {
+            A: 'Added the two legs (6 + 8 = 14) instead of finding half their product.',
+            C: 'Added the three side lengths (6 + 8 + 14) instead of computing area.',
+            D: 'Forgot to halve base × height (8 × 6 = 48).',
+            E: 'Multiplied an incorrect side combination rather than 1/2 × 8 × 6.',
+          },
         },
       ],
     },
     {
-      questionId: 'q_ai_writ_01_v1',
-      questionFamilyId: 'q_ai_writ_01',
+      questionId: '2026-11-22_b01_writ_01_v1',
+      questionFamilyId: '2026-11-22_b01_writ_01',
       version: 1,
       section: 'WRIT',
       formatType: 'WRIT_TYPED_TASK',
+      stimulusId: '2026-11-22_b01_writ_s01_v1',
       writingSpec: {
         genre: 'Narrative',
         audience: 'Young readers',
@@ -327,7 +347,7 @@ export const V3_STARTER_MANIFEST_EXAMPLE = {
       },
       parts: [
         {
-          partId: 'q_ai_writ_01_p1',
+          partId: '2026-11-22_b01_writ_01_p1',
           partIndex: 0,
           promptText: 'Write a story starting with the mandatory opening line above.',
           skillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE',

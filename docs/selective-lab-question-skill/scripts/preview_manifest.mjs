@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateManifestObject } from './validate_manifest.mjs';
+import { normalizeSvgFonts, validateManifestObject } from './validate_manifest.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +34,21 @@ const absIn = path.resolve(inputPath);
 const absOut = path.resolve(outputPath);
 const manifest = JSON.parse(fs.readFileSync(absIn, 'utf8'));
 const validation = validateManifestObject(manifest);
+
+// Normalize inline SVG fonts for preview parity with VisualRenderer.tsx
+const previewManifest = structuredClone(manifest);
+const fixVis = (v) => {
+  if (v && v.visualType === 'inline_svg' && typeof v.svgMarkup === 'string') {
+    v.svgMarkup = normalizeSvgFonts(v.svgMarkup);
+  }
+};
+for (const s of previewManifest.stimuli || []) fixVis(s.visual);
+for (const q of previewManifest.questions || []) {
+  fixVis(q.visual);
+  for (const p of q.parts || []) {
+    for (const o of p.options || []) fixVis(o.visual);
+  }
+}
 
 const FONT_SPECS = [
   ['AnthropicSerifDisplay', 'AnthropicSerif-Display-Regular-Static.woff2', 400, 'normal'],
@@ -67,7 +82,7 @@ function buildFontCss() {
 }
 
 // Safely escape JSON for embedding in <script>
-const safeManifestJson = JSON.stringify(manifest).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+const safeManifestJson = JSON.stringify(previewManifest).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 const safeValidationJson = JSON.stringify(validation).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
 const html = `<!doctype html>

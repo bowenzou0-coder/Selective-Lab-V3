@@ -1,12 +1,12 @@
 {
   "manifestVersion": "1.0",
-  "batchLabel": "skill_pilot_showcase_1_5x_v2",
+  "batchLabel": "2026-01-01_b01",
   "defaultPoolType": "practice",
   "defaultQcStatus": "verified",
   "stimuli": [
     {
-      "stimulusId": "stim_pilot_paired_01",
-      "stimulusFamilyId": "stim_pilot_paired_01",
+      "stimulusId": "2026-01-01_b01_read_s01_v1",
+      "stimulusFamilyId": "2026-01-01_b01_read_s01",
       "version": 1,
       "section": "READ",
       "genreOrTextType": "paired_extracts",
@@ -27,18 +27,8 @@
       "sourceType": "ai_generated"
     },
     {
-      "stimulusId": "stim_pilot_poem_01",
-      "stimulusFamilyId": "stim_pilot_poem_01",
-      "version": 1,
-      "section": "READ",
-      "genreOrTextType": "poem",
-      "title": "Low Tide at the Jetty",
-      "mainTextMarkdown": "At noon the harbour folds its cover back,\nexposing rungs of green-furred timber knees,\nold iron bolts that grip the weathered rack,\nand half a sunken tyre beneath the lees.\nWhat looked like seamless mirror an hour past\ngives up its cluttered basement to the sun.\n\nA heron stitches slow along the shoal,\neach careful step a pause between two breaths,\nreading the silt as if it were a scroll\nof tiny vanishings and tiny deaths.\nHe does not mourn the splendour of the blue;\nhis hunger knows the tide has set a feast.\n\nAlong the rail, the afternoon crowd sighs,\nchecks bus timetables, tilts a camera high\nto crop the brown mud flat out of the frame\nand keep the polished headland and the sky.\n\"We came too late,\" a father tells his son,\nalready turning sandals toward the road.\n\nBehind their backs a hundred silver claws\nunlatch from shadows underneath the stones,\nand brittle mussel shells click dry applause\nalong the jetty's salt-encrusted bones—\na quiet emptiness that starts to brim\nwith lives that hide whenever waters rise.",
-      "sourceType": "ai_generated"
-    },
-    {
-      "stimulusId": "stim_pilot_cloze_01",
-      "stimulusFamilyId": "stim_pilot_cloze_01",
+      "stimulusId": "2026-01-01_b01_read_s02_v1",
+      "stimulusFamilyId": "2026-01-01_b01_read_s02",
       "version": 1,
       "section": "READ",
       "genreOrTextType": "informational_cloze",
@@ -47,8 +37,18 @@
       "sourceType": "ai_generated"
     },
     {
-      "stimulusId": "stim_pilot_gapped_01",
-      "stimulusFamilyId": "stim_pilot_gapped_01",
+      "stimulusId": "2026-01-01_b01_read_s03_v1",
+      "stimulusFamilyId": "2026-01-01_b01_read_s03",
+      "version": 1,
+      "section": "READ",
+      "genreOrTextType": "poem",
+      "title": "Low Tide at the Jetty",
+      "mainTextMarkdown": "At noon the harbour folds its cover back,\nexposing rungs of green-furred timber knees,\nold iron bolts that grip the weathered rack,\nand half a sunken tyre beneath the lees.\nWhat looked like seamless mirror an hour past\ngives up its cluttered basement to the sun.\n\nA heron stitches slow along the shoal,\neach careful step a pause between two breaths,\nreading the silt as if it were a scroll\nof tiny vanishings and tiny deaths.\nHe does not mourn the splendour of the blue;\nhis hunger knows the tide has set a feast.\n\nAlong the rail, the afternoon crowd sighs,\nchecks bus timetables, tilts a camera high\nto crop the brown mud flat out of the frame\nand keep the polished headland and the sky.\n\"We came too late,\" a father tells his son,\nalready turning sandals toward the road.\n\nBehind their backs a hundred silver claws\nunlatch from shadows underneath the stones,\nand brittle mussel shells click dry applause\nalong the jetty's salt-encrusted bones—\na quiet emptiness that starts to brim\nwith lives that hide whenever waters rise.",
+      "sourceType": "ai_generated"
+    },
+    {
+      "stimulusId": "2026-01-01_b01_read_s04_v1",
+      "stimulusFamilyId": "2026-01-01_b01_read_s04",
       "version": 1,
       "section": "READ",
       "genreOrTextType": "gapped_text",
@@ -95,8 +95,8 @@
       "sourceType": "ai_generated"
     },
     {
-      "stimulusId": "stim_pilot_match_01",
-      "stimulusFamilyId": "stim_pilot_match_01",
+      "stimulusId": "2026-01-01_b01_read_s05_v1",
+      "stimulusFamilyId": "2026-01-01_b01_read_s05",
       "version": 1,
       "section": "READ",
       "genreOrTextType": "multiple_match",
@@ -127,8 +127,8 @@
       "sourceType": "ai_generated"
     },
     {
-      "stimulusId": "stim_pilot_writ_01",
-      "stimulusFamilyId": "stim_pilot_writ_01",
+      "stimulusId": "2026-01-01_b01_writ_s01_v1",
+      "stimulusFamilyId": "2026-01-01_b01_writ_s01",
       "version": 1,
       "section": "WRIT",
       "genreOrTextType": "newspaper_report",
@@ -137,7 +137,7 @@
       "visual": {
         "visualType": "inline_svg",
         "altText": "A tilted orange-striped hot-air balloon and wicker basket resting on a green school oval beside a school building at 7:45 am",
-        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 240\"><rect width=\"560\" height=\"240\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"16\" y=\"16\" width=\"528\" height=\"148\" fill=\"#E6EEF2\" rx=\"6\"/><circle cx=\"476\" cy=\"56\" r=\"22\" fill=\"#F9CAA7\"/><path d=\"M16,154 Q280,136 544,154 L544,224 L16,224 Z\" fill=\"#E5F3EC\" stroke=\"#1F7A4C\" stroke-width=\"1.5\"/><rect x=\"42\" y=\"106\" width=\"110\" height=\"48\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"1.8\"/><polygon points=\"36,106 97,76 158,106\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"1.8\"/><rect x=\"62\" y=\"120\" width=\"18\" height=\"16\" fill=\"#E6EEF2\" stroke=\"#113C36\" stroke-width=\"1.2\"/><rect x=\"112\" y=\"120\" width=\"18\" height=\"16\" fill=\"#E6EEF2\" stroke=\"#113C36\" stroke-width=\"1.2\"/><ellipse cx=\"332\" cy=\"118\" rx=\"74\" ry=\"44\" transform=\"rotate(-14 332 118)\" fill=\"#F29A63\" stroke=\"#113C36\" stroke-width=\"2\"/><path d=\"M276,120 Q332,88 388,104\" fill=\"none\" stroke=\"#FFFFFF\" stroke-width=\"5\" stroke-opacity=\"0.7\"/><path d=\"M286,144 Q338,118 394,126\" fill=\"none\" stroke=\"#113C36\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><rect x=\"224\" y=\"152\" width=\"38\" height=\"26\" rx=\"4\" fill=\"#F9CAA7\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"256\" y1=\"154\" x2=\"278\" y2=\"132\" stroke=\"#113C36\" stroke-width=\"1.5\"/><line x1=\"258\" y1=\"168\" x2=\"284\" y2=\"144\" stroke=\"#113C36\" stroke-width=\"1.5\"/><text x=\"280\" y=\"210\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"13\" fill=\"#4A5955\">7:45 am — Unexpected landing on Riverbend Primary School oval</text></svg>",
+        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 240\" font-family=\"AnthropicSansText\"><rect width=\"560\" height=\"240\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"16\" y=\"16\" width=\"528\" height=\"148\" fill=\"#E6EEF2\" rx=\"6\"/><circle cx=\"476\" cy=\"56\" r=\"22\" fill=\"#F9CAA7\"/><path d=\"M16,154 Q280,136 544,154 L544,224 L16,224 Z\" fill=\"#E5F3EC\" stroke=\"#1F7A4C\" stroke-width=\"1.5\"/><rect x=\"42\" y=\"106\" width=\"110\" height=\"48\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"1.8\"/><polygon points=\"36,106 97,76 158,106\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"1.8\"/><rect x=\"62\" y=\"120\" width=\"18\" height=\"16\" fill=\"#E6EEF2\" stroke=\"#113C36\" stroke-width=\"1.2\"/><rect x=\"112\" y=\"120\" width=\"18\" height=\"16\" fill=\"#E6EEF2\" stroke=\"#113C36\" stroke-width=\"1.2\"/><ellipse cx=\"332\" cy=\"118\" rx=\"74\" ry=\"44\" transform=\"rotate(-14 332 118)\" fill=\"#F29A63\" stroke=\"#113C36\" stroke-width=\"2\"/><path d=\"M276,120 Q332,88 388,104\" fill=\"none\" stroke=\"#FFFFFF\" stroke-width=\"5\" stroke-opacity=\"0.7\"/><path d=\"M286,144 Q338,118 394,126\" fill=\"none\" stroke=\"#113C36\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><rect x=\"224\" y=\"152\" width=\"38\" height=\"26\" rx=\"4\" fill=\"#F9CAA7\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"256\" y1=\"154\" x2=\"278\" y2=\"132\" stroke=\"#113C36\" stroke-width=\"1.5\"/><line x1=\"258\" y1=\"168\" x2=\"284\" y2=\"144\" stroke=\"#113C36\" stroke-width=\"1.5\"/><text x=\"280\" y=\"210\" text-anchor=\"middle\" font-size=\"13\" fill=\"#4A5955\">7:45 am — Unexpected landing on Riverbend Primary School oval</text></svg>",
         "caption": "Scene on the school oval at 7:45 am"
       },
       "sourceType": "ai_generated"
@@ -145,15 +145,15 @@
   ],
   "questions": [
     {
-      "questionId": "q_pilot_read_paired_01_v1",
-      "questionFamilyId": "q_pilot_read_paired_01",
+      "questionId": "2026-01-01_b01_read_01_v1",
+      "questionFamilyId": "2026-01-01_b01_read_01",
       "version": 1,
       "section": "READ",
       "formatType": "READ_FICTION_MCQ",
-      "stimulusId": "stim_pilot_paired_01",
+      "stimulusId": "2026-01-01_b01_read_s01_v1",
       "parts": [
         {
-          "partId": "q_pilot_read_paired_01_p1",
+          "partId": "2026-01-01_b01_read_01_p1",
           "partIndex": 0,
           "promptText": "How does Text B qualify (add a caution to) the kind of observation Old Hal relies on in Text A?",
           "skillId": "READ.FIC.IMPLIED_MEANING",
@@ -207,21 +207,21 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_read_paired_02_v1",
-      "questionFamilyId": "q_pilot_read_paired_02",
+      "questionId": "2026-01-01_b01_read_02_v1",
+      "questionFamilyId": "2026-01-01_b01_read_02",
       "version": 1,
       "section": "READ",
       "formatType": "READ_FICTION_MCQ",
-      "stimulusId": "stim_pilot_paired_01",
+      "stimulusId": "2026-01-01_b01_read_s01_v1",
       "parts": [
         {
-          "partId": "q_pilot_read_paired_02_p1",
+          "partId": "2026-01-01_b01_read_02_p1",
           "partIndex": 0,
           "promptText": "What does the narrator's final sentence in Text A (\"I never tapped the barometer quite so proudly again\") mainly reveal?",
           "skillId": "READ.FIC.CHARACTER_INFERENCE",
@@ -284,21 +284,341 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_read_poem_01_v1",
-      "questionFamilyId": "q_pilot_read_poem_01",
+      "questionId": "2026-01-01_b01_read_03_v1",
+      "questionFamilyId": "2026-01-01_b01_read_03",
+      "version": 1,
+      "section": "READ",
+      "formatType": "READ_VOCAB_CLOZE",
+      "stimulusId": "2026-01-01_b01_read_s02_v1",
+      "parts": [
+        {
+          "partId": "2026-01-01_b01_read_03_p1",
+          "partIndex": 0,
+          "slotRef": "gap:1",
+          "promptText": "Choose the best word for Gap 1.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "near_synonym_precision"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "drift"
+            },
+            {
+              "key": "B",
+              "text": "migrate"
+            },
+            {
+              "key": "C",
+              "text": "roam"
+            },
+            {
+              "key": "D",
+              "text": "disperse"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "All four verbs fit grammatically, so check exact meaning: \"Every spring... more than a thousand kilometres south to cool alpine caves.\" Only \"migrate\" describes regular seasonal travel along a directed route to a specific destination (echoed by \"migrating moths\" at the end). Option B is correct.",
+          "distractorRationales": {
+            "A": "\"Drift\" implies passive movement pushed by wind without active navigation, contradicting the compass discovery.",
+            "C": "\"Roam\" implies aimless wandering over an area rather than a directed seasonal journey south.",
+            "D": "\"Disperse\" means scattering apart in different directions rather than converging on alpine caves."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p2",
+          "partIndex": 1,
+          "slotRef": "gap:2",
+          "promptText": "Choose the best word for Gap 2.",
+          "skillId": "READ.CLOZE.COLLOCATION",
+          "difficultyInitial": 3.9,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "apply_procedural",
+          "trapTags": [
+            "preposition_collocation"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "trust"
+            },
+            {
+              "key": "B",
+              "text": "rely"
+            },
+            {
+              "key": "C",
+              "text": "count"
+            },
+            {
+              "key": "D",
+              "text": "lean"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Look at both precision and natural scientific collocation with \"...on memories from an earlier flight.\" While \"count on\" and \"lean on\" exist informally for people, \"rely on memories\" is the precise, standard collocation in informational science prose. Option B is best.",
+          "distractorRationales": {
+            "A": "\"Trust\" does not collocate with \"on\" (\"trust memories\" or \"trust in\").",
+            "C": "\"Count on\" is informal and normally applies to people or expected outcomes rather than biological navigation memories.",
+            "D": "\"Lean on\" is physical or figurative for emotional support, not scientific navigation."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p3",
+          "partIndex": 2,
+          "slotRef": "gap:3",
+          "promptText": "Choose the best word for Gap 3.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "tone_collocation"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "baffled"
+            },
+            {
+              "key": "B",
+              "text": "deterred"
+            },
+            {
+              "key": "C",
+              "text": "startled"
+            },
+            {
+              "key": "D",
+              "text": "persuaded"
+            }
+          ],
+          "correctAnswerKey": "A",
+          "workedExplanation": "The sentence describes a decades-long scientific mystery (\"For decades, biologists were ___ by how...\") finally solved by \"Recent flight-simulator experiments.\" \"Baffled by\" accurately conveys sustained inability to explain a puzzle. Option A is correct.",
+          "distractorRationales": {
+            "B": "\"Deterred\" means discouraged from acting, whereas biologists actively studied the moths.",
+            "C": "\"Startled\" describes a sudden brief shock, which clashes with \"For decades\".",
+            "D": "\"Persuaded\" means convinced, contradicting the fact that they did not yet know the mechanism."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p4",
+          "partIndex": 3,
+          "slotRef": "gap:4",
+          "promptText": "Choose the best word for Gap 4.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "near_synonym_precision"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "integrate"
+            },
+            {
+              "key": "B",
+              "text": "alternate"
+            },
+            {
+              "key": "C",
+              "text": "separate"
+            },
+            {
+              "key": "D",
+              "text": "substitute"
+            }
+          ],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Look at the clue right after the blank: \"two independent compass systems simultaneously\" and later \"Only when both cues aligned...\" Using two systems together as one working guide means they \"integrate\" them — Option A.",
+          "distractorRationales": {
+            "B": "\"Alternate\" means switching back and forth one at a time, contradicting \"simultaneously\".",
+            "C": "\"Separate\" means keeping apart, the opposite of combining both cues.",
+            "D": "\"Substitute\" means replacing one with the other rather than using both together."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p5",
+          "partIndex": 4,
+          "slotRef": "gap:5",
+          "promptText": "Choose the best word for Gap 5.",
+          "skillId": "READ.CLOZE.DISCOURSE_CONNECTOR",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "contrast_vs_sequence_connector"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "nonetheless"
+            },
+            {
+              "key": "B",
+              "text": "second"
+            },
+            {
+              "key": "C",
+              "text": "otherwise"
+            },
+            {
+              "key": "D",
+              "text": "conversely"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "Look at the parallel structure across the semicolon: \"First, they sense subtle shifts...; {{gap:5}}, they steer by prominent visual landmarks...\" Both sentences list the two cues in order, so \"second\" pairs cleanly with \"First\" — Option B.",
+          "distractorRationales": {
+            "A": "\"Nonetheless\" introduces a concession (\"in spite of that\"), which does not fit two cooperating compasses.",
+            "C": "\"Otherwise\" introduces a consequence if the first action fails.",
+            "D": "\"Conversely\" signals an opposite relationship, whereas the two systems reinforce each other."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p6",
+          "partIndex": 5,
+          "slotRef": "gap:6",
+          "promptText": "Choose the best word for Gap 6.",
+          "skillId": "READ.CLOZE.COLLOCATION",
+          "difficultyInitial": 4.2,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "experimental_verb_precision"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "extinguished"
+            },
+            {
+              "key": "B",
+              "text": "rotated"
+            },
+            {
+              "key": "C",
+              "text": "harvested"
+            },
+            {
+              "key": "D",
+              "text": "compressed"
+            }
+          ],
+          "correctAnswerKey": "B",
+          "workedExplanation": "The next sentence explains the logic of the test: \"Only when both cues aligned did the insects steer...\" Keeping the visual silhouette fixed while changing the compass direction of the magnetic field means researchers \"rotated\" it — Option B.",
+          "distractorRationales": {
+            "A": "\"Extinguished\" applies to fires or lights, not turning a magnetic field's direction.",
+            "C": "\"Harvested\" means collecting crops or energy, nonsensical for a lab magnetic field.",
+            "D": "\"Compressed\" means squeezing smaller rather than changing directional alignment."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p7",
+          "partIndex": 6,
+          "slotRef": "gap:7",
+          "promptText": "Choose the best word for Gap 7.",
+          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
+          "difficultyInitial": 4,
+          "targetTimeSec": 45,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "adverb_nuance"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "consistently"
+            },
+            {
+              "key": "B",
+              "text": "hesitantly"
+            },
+            {
+              "key": "C",
+              "text": "erratically"
+            },
+            {
+              "key": "D",
+              "text": "recklessly"
+            }
+          ],
+          "correctAnswerKey": "A",
+          "workedExplanation": "Contrast this sentence with the previous one: when cues clashed, flight paths \"quickly broke down.\" When both cues aligned, the moths held a steady, accurate heading — they steered \"consistently\" toward the mountains. Option A is correct.",
+          "distractorRationales": {
+            "B": "\"Hesitantly\" suggests doubt and stopping, opposite to successful navigation.",
+            "C": "\"Erratically\" means unpredictably — that describes what happened when cues disagreed, not when they aligned.",
+            "D": "\"Recklessly\" implies careless danger, unsuitable for accurate compass flight."
+          }
+        },
+        {
+          "partId": "2026-01-01_b01_read_03_p8",
+          "partIndex": 7,
+          "slotRef": "gap:8",
+          "promptText": "Choose the best word for Gap 8.",
+          "skillId": "READ.CLOZE.COLLOCATION",
+          "difficultyInitial": 4.1,
+          "targetTimeSec": 50,
+          "cognitiveDemand": "analyze_infer",
+          "trapTags": [
+            "verb_infinitive_collocation"
+          ],
+          "options": [
+            {
+              "key": "A",
+              "text": "intends"
+            },
+            {
+              "key": "B",
+              "text": "declines"
+            },
+            {
+              "key": "C",
+              "text": "threatens"
+            },
+            {
+              "key": "D",
+              "text": "endeavours"
+            }
+          ],
+          "correctAnswerKey": "C",
+          "workedExplanation": "Notice the inanimate subject (\"expanding suburban glare\") and warning tone (\"Sadly\"). \"Threatens to disorient\" is the precise idiomatic collocation meaning \"poses a growing danger of disorienting\", without attributing conscious intention to streetlights. Option C is correct.",
+          "distractorRationales": {
+            "A": "\"Intends\" implies deliberate purpose, impossible for suburban glare.",
+            "B": "\"Declines to\" means refuses to, reversing the warning.",
+            "D": "\"Endeavours to\" means tries hard on purpose, which cannot describe unintentional light pollution."
+          }
+        }
+      ],
+      "provenance": {
+        "sourceType": "ai_generated",
+        "sourceReference": "2026-01-01_b01",
+        "verifierAgreed": true,
+        "auditorReviewed": false
+      }
+    },
+    {
+      "questionId": "2026-01-01_b01_read_04_v1",
+      "questionFamilyId": "2026-01-01_b01_read_04",
       "version": 1,
       "section": "READ",
       "formatType": "READ_POETRY_MCQ",
-      "stimulusId": "stim_pilot_poem_01",
+      "stimulusId": "2026-01-01_b01_read_s03_v1",
       "parts": [
         {
-          "partId": "q_pilot_read_poem_01_p1",
+          "partId": "2026-01-01_b01_read_04_p1",
           "partIndex": 0,
           "promptText": "In stanza 3, why does the poet mention that visitors \"tilt a camera high / to crop the brown mud flat out of the frame\"?",
           "skillId": "READ.POEM.FORM_TONE_EFFECT",
@@ -351,21 +671,21 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_read_poem_02_v1",
-      "questionFamilyId": "q_pilot_read_poem_02",
+      "questionId": "2026-01-01_b01_read_05_v1",
+      "questionFamilyId": "2026-01-01_b01_read_05",
       "version": 1,
       "section": "READ",
       "formatType": "READ_POETRY_MCQ",
-      "stimulusId": "stim_pilot_poem_01",
+      "stimulusId": "2026-01-01_b01_read_s03_v1",
       "parts": [
         {
-          "partId": "q_pilot_read_poem_02_p1",
+          "partId": "2026-01-01_b01_read_05_p1",
           "partIndex": 0,
           "promptText": "What does comparing the silt to \"a scroll / of tiny vanishings and tiny deaths\" (lines 9–10) suggest about the heron?",
           "skillId": "READ.POEM.FIGURATIVE_IMAGERY",
@@ -418,338 +738,18 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_read_cloze_01_v1",
-      "questionFamilyId": "q_pilot_read_cloze_01",
-      "version": 1,
-      "section": "READ",
-      "formatType": "READ_VOCAB_CLOZE",
-      "stimulusId": "stim_pilot_cloze_01",
-      "parts": [
-        {
-          "partId": "q_pilot_read_cloze_01_p1",
-          "partIndex": 0,
-          "slotRef": "gap:1",
-          "promptText": "Choose the best word for Gap 1.",
-          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
-          "difficultyInitial": 4,
-          "targetTimeSec": 45,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "near_synonym_precision"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "drift"
-            },
-            {
-              "key": "B",
-              "text": "migrate"
-            },
-            {
-              "key": "C",
-              "text": "roam"
-            },
-            {
-              "key": "D",
-              "text": "disperse"
-            }
-          ],
-          "correctAnswerKey": "B",
-          "workedExplanation": "All four verbs fit grammatically, so check exact meaning: \"Every spring... more than a thousand kilometres south to cool alpine caves.\" Only \"migrate\" describes regular seasonal travel along a directed route to a specific destination (echoed by \"migrating moths\" at the end). Option B is correct.",
-          "distractorRationales": {
-            "A": "\"Drift\" implies passive movement pushed by wind without active navigation, contradicting the compass discovery.",
-            "C": "\"Roam\" implies aimless wandering over an area rather than a directed seasonal journey south.",
-            "D": "\"Disperse\" means scattering apart in different directions rather than converging on alpine caves."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p2",
-          "partIndex": 1,
-          "slotRef": "gap:2",
-          "promptText": "Choose the best word for Gap 2.",
-          "skillId": "READ.CLOZE.COLLOCATION",
-          "difficultyInitial": 3.9,
-          "targetTimeSec": 45,
-          "cognitiveDemand": "apply_procedural",
-          "trapTags": [
-            "preposition_collocation"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "trust"
-            },
-            {
-              "key": "B",
-              "text": "rely"
-            },
-            {
-              "key": "C",
-              "text": "count"
-            },
-            {
-              "key": "D",
-              "text": "lean"
-            }
-          ],
-          "correctAnswerKey": "B",
-          "workedExplanation": "Look at both precision and natural scientific collocation with \"...on memories from an earlier flight.\" While \"count on\" and \"lean on\" exist informally for people, \"rely on memories\" is the precise, standard collocation in informational science prose. Option B is best.",
-          "distractorRationales": {
-            "A": "\"Trust\" does not collocate with \"on\" (\"trust memories\" or \"trust in\").",
-            "C": "\"Count on\" is informal and normally applies to people or expected outcomes rather than biological navigation memories.",
-            "D": "\"Lean on\" is physical or figurative for emotional support, not scientific navigation."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p3",
-          "partIndex": 2,
-          "slotRef": "gap:3",
-          "promptText": "Choose the best word for Gap 3.",
-          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
-          "difficultyInitial": 4.1,
-          "targetTimeSec": 50,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "tone_collocation"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "baffled"
-            },
-            {
-              "key": "B",
-              "text": "deterred"
-            },
-            {
-              "key": "C",
-              "text": "startled"
-            },
-            {
-              "key": "D",
-              "text": "persuaded"
-            }
-          ],
-          "correctAnswerKey": "A",
-          "workedExplanation": "The sentence describes a decades-long scientific mystery (\"For decades, biologists were ___ by how...\") finally solved by \"Recent flight-simulator experiments.\" \"Baffled by\" accurately conveys sustained inability to explain a puzzle. Option A is correct.",
-          "distractorRationales": {
-            "B": "\"Deterred\" means discouraged from acting, whereas biologists actively studied the moths.",
-            "C": "\"Startled\" describes a sudden brief shock, which clashes with \"For decades\".",
-            "D": "\"Persuaded\" means convinced, contradicting the fact that they did not yet know the mechanism."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p4",
-          "partIndex": 3,
-          "slotRef": "gap:4",
-          "promptText": "Choose the best word for Gap 4.",
-          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
-          "difficultyInitial": 4.1,
-          "targetTimeSec": 45,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "near_synonym_precision"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "integrate"
-            },
-            {
-              "key": "B",
-              "text": "alternate"
-            },
-            {
-              "key": "C",
-              "text": "separate"
-            },
-            {
-              "key": "D",
-              "text": "substitute"
-            }
-          ],
-          "correctAnswerKey": "A",
-          "workedExplanation": "Look at the clue right after the blank: \"two independent compass systems simultaneously\" and later \"Only when both cues aligned...\" Using two systems together as one working guide means they \"integrate\" them — Option A.",
-          "distractorRationales": {
-            "B": "\"Alternate\" means switching back and forth one at a time, contradicting \"simultaneously\".",
-            "C": "\"Separate\" means keeping apart, the opposite of combining both cues.",
-            "D": "\"Substitute\" means replacing one with the other rather than using both together."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p5",
-          "partIndex": 4,
-          "slotRef": "gap:5",
-          "promptText": "Choose the best word for Gap 5.",
-          "skillId": "READ.CLOZE.DISCOURSE_CONNECTOR",
-          "difficultyInitial": 4.1,
-          "targetTimeSec": 50,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "contrast_vs_sequence_connector"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "nonetheless"
-            },
-            {
-              "key": "B",
-              "text": "second"
-            },
-            {
-              "key": "C",
-              "text": "otherwise"
-            },
-            {
-              "key": "D",
-              "text": "conversely"
-            }
-          ],
-          "correctAnswerKey": "B",
-          "workedExplanation": "Look at the parallel structure across the semicolon: \"First, they sense subtle shifts...; {{gap:5}}, they steer by prominent visual landmarks...\" Both sentences list the two cues in order, so \"second\" pairs cleanly with \"First\" — Option B.",
-          "distractorRationales": {
-            "A": "\"Nonetheless\" introduces a concession (\"in spite of that\"), which does not fit two cooperating compasses.",
-            "C": "\"Otherwise\" introduces a consequence if the first action fails.",
-            "D": "\"Conversely\" signals an opposite relationship, whereas the two systems reinforce each other."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p6",
-          "partIndex": 5,
-          "slotRef": "gap:6",
-          "promptText": "Choose the best word for Gap 6.",
-          "skillId": "READ.CLOZE.COLLOCATION",
-          "difficultyInitial": 4.2,
-          "targetTimeSec": 50,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "experimental_verb_precision"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "extinguished"
-            },
-            {
-              "key": "B",
-              "text": "rotated"
-            },
-            {
-              "key": "C",
-              "text": "harvested"
-            },
-            {
-              "key": "D",
-              "text": "compressed"
-            }
-          ],
-          "correctAnswerKey": "B",
-          "workedExplanation": "The next sentence explains the logic of the test: \"Only when both cues aligned did the insects steer...\" Keeping the visual silhouette fixed while changing the compass direction of the magnetic field means researchers \"rotated\" it — Option B.",
-          "distractorRationales": {
-            "A": "\"Extinguished\" applies to fires or lights, not turning a magnetic field's direction.",
-            "C": "\"Harvested\" means collecting crops or energy, nonsensical for a lab magnetic field.",
-            "D": "\"Compressed\" means squeezing smaller rather than changing directional alignment."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p7",
-          "partIndex": 6,
-          "slotRef": "gap:7",
-          "promptText": "Choose the best word for Gap 7.",
-          "skillId": "READ.CLOZE.CONTEXT_NUANCE",
-          "difficultyInitial": 4,
-          "targetTimeSec": 45,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "adverb_nuance"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "consistently"
-            },
-            {
-              "key": "B",
-              "text": "hesitantly"
-            },
-            {
-              "key": "C",
-              "text": "erratically"
-            },
-            {
-              "key": "D",
-              "text": "recklessly"
-            }
-          ],
-          "correctAnswerKey": "A",
-          "workedExplanation": "Contrast this sentence with the previous one: when cues clashed, flight paths \"quickly broke down.\" When both cues aligned, the moths held a steady, accurate heading — they steered \"consistently\" toward the mountains. Option A is correct.",
-          "distractorRationales": {
-            "B": "\"Hesitantly\" suggests doubt and stopping, opposite to successful navigation.",
-            "C": "\"Erratically\" means unpredictably — that describes what happened when cues disagreed, not when they aligned.",
-            "D": "\"Recklessly\" implies careless danger, unsuitable for accurate compass flight."
-          }
-        },
-        {
-          "partId": "q_pilot_read_cloze_01_p8",
-          "partIndex": 7,
-          "slotRef": "gap:8",
-          "promptText": "Choose the best word for Gap 8.",
-          "skillId": "READ.CLOZE.COLLOCATION",
-          "difficultyInitial": 4.1,
-          "targetTimeSec": 50,
-          "cognitiveDemand": "analyze_infer",
-          "trapTags": [
-            "verb_infinitive_collocation"
-          ],
-          "options": [
-            {
-              "key": "A",
-              "text": "intends"
-            },
-            {
-              "key": "B",
-              "text": "declines"
-            },
-            {
-              "key": "C",
-              "text": "threatens"
-            },
-            {
-              "key": "D",
-              "text": "endeavours"
-            }
-          ],
-          "correctAnswerKey": "C",
-          "workedExplanation": "Notice the inanimate subject (\"expanding suburban glare\") and warning tone (\"Sadly\"). \"Threatens to disorient\" is the precise idiomatic collocation meaning \"poses a growing danger of disorienting\", without attributing conscious intention to streetlights. Option C is correct.",
-          "distractorRationales": {
-            "A": "\"Intends\" implies deliberate purpose, impossible for suburban glare.",
-            "B": "\"Declines to\" means refuses to, reversing the warning.",
-            "D": "\"Endeavours to\" means tries hard on purpose, which cannot describe unintentional light pollution."
-          }
-        }
-      ],
-      "provenance": {
-        "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
-        "verifierAgreed": true,
-        "auditorReviewed": false
-      }
-    },
-    {
-      "questionId": "q_pilot_read_gapped_01_v1",
-      "questionFamilyId": "q_pilot_read_gapped_01",
+      "questionId": "2026-01-01_b01_read_06_v1",
+      "questionFamilyId": "2026-01-01_b01_read_06",
       "version": 1,
       "section": "READ",
       "formatType": "READ_GAPPED_TEXT",
-      "stimulusId": "stim_pilot_gapped_01",
+      "stimulusId": "2026-01-01_b01_read_s04_v1",
       "sharedPoolConfig": {
         "reuseAllowed": false,
         "poolKeys": [
@@ -764,7 +764,7 @@
       },
       "parts": [
         {
-          "partId": "q_pilot_read_gapped_01_p1",
+          "partId": "2026-01-01_b01_read_06_p1",
           "partIndex": 0,
           "slotRef": "gap:1",
           "promptText": "Select the heading (A–G) that best summarises Paragraph 1.",
@@ -788,7 +788,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_gapped_01_p2",
+          "partId": "2026-01-01_b01_read_06_p2",
           "partIndex": 1,
           "slotRef": "gap:2",
           "promptText": "Select the heading (A–G) that best summarises Paragraph 2.",
@@ -812,7 +812,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_gapped_01_p3",
+          "partId": "2026-01-01_b01_read_06_p3",
           "partIndex": 2,
           "slotRef": "gap:3",
           "promptText": "Select the heading (A–G) that best summarises Paragraph 3.",
@@ -836,7 +836,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_gapped_01_p4",
+          "partId": "2026-01-01_b01_read_06_p4",
           "partIndex": 3,
           "slotRef": "gap:4",
           "promptText": "Select the heading (A–G) that best summarises Paragraph 4.",
@@ -860,7 +860,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_gapped_01_p5",
+          "partId": "2026-01-01_b01_read_06_p5",
           "partIndex": 4,
           "slotRef": "gap:5",
           "promptText": "Select the heading (A–G) that best summarises Paragraph 5.",
@@ -884,7 +884,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_gapped_01_p6",
+          "partId": "2026-01-01_b01_read_06_p6",
           "partIndex": 5,
           "slotRef": "gap:6",
           "promptText": "Select the heading (A–G) that best summarises Paragraph 6.",
@@ -910,18 +910,18 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_read_match_01_v1",
-      "questionFamilyId": "q_pilot_read_match_01",
+      "questionId": "2026-01-01_b01_read_07_v1",
+      "questionFamilyId": "2026-01-01_b01_read_07",
       "version": 1,
       "section": "READ",
       "formatType": "READ_MULTIPLE_MATCH",
-      "stimulusId": "stim_pilot_match_01",
+      "stimulusId": "2026-01-01_b01_read_s05_v1",
       "sharedPoolConfig": {
         "reuseAllowed": true,
         "poolKeys": [
@@ -933,7 +933,7 @@
       },
       "parts": [
         {
-          "partId": "q_pilot_read_match_01_p1",
+          "partId": "2026-01-01_b01_read_07_p1",
           "partIndex": 0,
           "slotRef": "stmt:1",
           "promptText": "Which writer took on night shifts primarily to protect time with a family member?",
@@ -954,7 +954,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p2",
+          "partId": "2026-01-01_b01_read_07_p2",
           "partIndex": 1,
           "slotRef": "stmt:2",
           "promptText": "Which writer corrects an overly glamorous assumption people hold about what their job actually achieves?",
@@ -975,7 +975,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p3",
+          "partId": "2026-01-01_b01_read_07_p3",
           "partIndex": 2,
           "slotRef": "stmt:3",
           "promptText": "Which writer describes growing to appreciate a quiet atmosphere they once found intimidating?",
@@ -996,7 +996,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p4",
+          "partId": "2026-01-01_b01_read_07_p4",
           "partIndex": 3,
           "slotRef": "stmt:4",
           "promptText": "Which writer mentions that evidence collected on shift resulted in changes to public infrastructure?",
@@ -1017,7 +1017,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p5",
+          "partId": "2026-01-01_b01_read_07_p5",
           "partIndex": 4,
           "slotRef": "stmt:5",
           "promptText": "Which writer finds daytime rest more difficult to manage than staying alert during work hours?",
@@ -1038,7 +1038,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p6",
+          "partId": "2026-01-01_b01_read_07_p6",
           "partIndex": 5,
           "slotRef": "stmt:6",
           "promptText": "Which writer relies on verbal verification with a co-worker because darkness hides a physical obstacle?",
@@ -1059,7 +1059,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p7",
+          "partId": "2026-01-01_b01_read_07_p7",
           "partIndex": 6,
           "slotRef": "stmt:7",
           "promptText": "Which writer stresses that an abrupt change in conditions can erase several hours of technical setup?",
@@ -1080,7 +1080,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p8",
+          "partId": "2026-01-01_b01_read_07_p8",
           "partIndex": 7,
           "slotRef": "stmt:8",
           "promptText": "Which writer contrasts outsiders' dramatic safety worries with an everyday clumsiness risk?",
@@ -1101,7 +1101,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p9",
+          "partId": "2026-01-01_b01_read_07_p9",
           "partIndex": 8,
           "slotRef": "stmt:9",
           "promptText": "Which writer notes that a relaxed atmosphere among the public does not reduce the mental focus their job demands?",
@@ -1122,7 +1122,7 @@
           }
         },
         {
-          "partId": "q_pilot_read_match_01_p10",
+          "partId": "2026-01-01_b01_read_07_p10",
           "partIndex": 9,
           "slotRef": "stmt:10",
           "promptText": "Which writer treats physical discomfort from harsh temperatures as a minor price compared with another frustration?",
@@ -1145,26 +1145,26 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_math_overlap_01_v1",
-      "questionFamilyId": "q_pilot_math_overlap_01",
+      "questionId": "2026-01-01_b01_math_01_v1",
+      "questionFamilyId": "2026-01-01_b01_math_01",
       "version": 1,
       "section": "MATH",
       "formatType": "MATH_MCQ_5",
       "visual": {
         "visualType": "inline_svg",
         "altText": "Two identical 14 cm by 6 cm rectangles positioned offset from one another so that their corner overlap forms a shaded square",
-        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 285\"><rect width=\"560\" height=\"285\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"96\" y=\"104\" width=\"224\" height=\"96\" fill=\"#E5F3EC\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"240\" y=\"88\" width=\"224\" height=\"96\" fill=\"#E6EEF2\" fill-opacity=\"0.82\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"240\" y=\"104\" width=\"80\" height=\"80\" fill=\"#F29A63\" fill-opacity=\"0.55\" stroke=\"#113C36\" stroke-width=\"2\" stroke-dasharray=\"5 3\"/><text x=\"280\" y=\"140\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"12\" font-weight=\"600\" fill=\"#113C36\">square</text><text x=\"280\" y=\"156\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"12\" font-weight=\"600\" fill=\"#113C36\">overlap</text><line x1=\"96\" y1=\"218\" x2=\"320\" y2=\"218\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"96\" y1=\"212\" x2=\"96\" y2=\"224\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"320\" y1=\"212\" x2=\"320\" y2=\"224\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"208\" y=\"238\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">14 cm</text><line x1=\"80\" y1=\"104\" x2=\"80\" y2=\"200\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"74\" y1=\"104\" x2=\"86\" y2=\"104\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"74\" y1=\"200\" x2=\"86\" y2=\"200\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"70\" y=\"157\" text-anchor=\"end\" font-family=\"'AnthropicSansText'\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">6 cm</text><line x1=\"240\" y1=\"72\" x2=\"464\" y2=\"72\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"240\" y1=\"66\" x2=\"240\" y2=\"78\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"464\" y1=\"66\" x2=\"464\" y2=\"78\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"352\" y=\"64\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">14 cm</text><line x1=\"480\" y1=\"88\" x2=\"480\" y2=\"184\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"474\" y1=\"88\" x2=\"486\" y2=\"88\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"474\" y1=\"184\" x2=\"486\" y2=\"184\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"490\" y=\"141\" text-anchor=\"start\" font-family=\"'AnthropicSansText'\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">6 cm</text><text x=\"280\" y=\"268\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"12\" fill=\"#78756E\">[diagram not to scale]</text></svg>",
+        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 285\" font-family=\"AnthropicSansText\"><rect width=\"560\" height=\"285\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"96\" y=\"104\" width=\"224\" height=\"96\" fill=\"#E5F3EC\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"240\" y=\"88\" width=\"224\" height=\"96\" fill=\"#E6EEF2\" fill-opacity=\"0.82\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"240\" y=\"104\" width=\"80\" height=\"80\" fill=\"#F29A63\" fill-opacity=\"0.55\" stroke=\"#113C36\" stroke-width=\"2\" stroke-dasharray=\"5 3\"/><text x=\"280\" y=\"140\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"600\" fill=\"#113C36\">square</text><text x=\"280\" y=\"156\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"600\" fill=\"#113C36\">overlap</text><line x1=\"96\" y1=\"218\" x2=\"320\" y2=\"218\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"96\" y1=\"212\" x2=\"96\" y2=\"224\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"320\" y1=\"212\" x2=\"320\" y2=\"224\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"208\" y=\"238\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">14 cm</text><line x1=\"80\" y1=\"104\" x2=\"80\" y2=\"200\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"74\" y1=\"104\" x2=\"86\" y2=\"104\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"74\" y1=\"200\" x2=\"86\" y2=\"200\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"70\" y=\"157\" text-anchor=\"end\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">6 cm</text><line x1=\"240\" y1=\"72\" x2=\"464\" y2=\"72\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"240\" y1=\"66\" x2=\"240\" y2=\"78\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"464\" y1=\"66\" x2=\"464\" y2=\"78\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"352\" y=\"64\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">14 cm</text><line x1=\"480\" y1=\"88\" x2=\"480\" y2=\"184\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"474\" y1=\"88\" x2=\"486\" y2=\"88\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><line x1=\"474\" y1=\"184\" x2=\"486\" y2=\"184\" stroke=\"#4A5955\" stroke-width=\"1.5\"/><text x=\"490\" y=\"141\" text-anchor=\"start\" font-size=\"14\" font-weight=\"600\" font-variant-numeric=\"tabular-nums\" fill=\"#113C36\">6 cm</text><text x=\"280\" y=\"268\" text-anchor=\"middle\" font-size=\"12\" fill=\"#78756E\">[diagram not to scale]</text></svg>",
         "caption": "Two identical 14 cm × 6 cm rectangles overlapping in a square"
       },
       "parts": [
         {
-          "partId": "q_pilot_math_overlap_01_p1",
+          "partId": "2026-01-01_b01_math_01_p1",
           "partIndex": 0,
           "promptText": "Two identical rectangular cards, each 14 cm long and 6 cm wide, are placed flat on a table so that their overlapping region is a square, as shown.\n\nThe TOTAL area of the table covered by the combined shape (counting the overlap only once) is 143 cm².\n\nWhat is the PERIMETER of the entire combined shape?",
           "skillId": "MATH.GEO2D.COMPOSITE_AREA",
@@ -1213,20 +1213,20 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_math_transfer_01_v1",
-      "questionFamilyId": "q_pilot_math_transfer_01",
+      "questionId": "2026-01-01_b01_math_02_v1",
+      "questionFamilyId": "2026-01-01_b01_math_02",
       "version": 1,
       "section": "MATH",
       "formatType": "MATH_MCQ_5",
       "parts": [
         {
-          "partId": "q_pilot_math_transfer_01_p1",
+          "partId": "2026-01-01_b01_math_02_p1",
           "partIndex": 0,
           "promptText": "At the start of the week, Maya has 3 times as many fundraiser stickers as Noah.\n\nOn Wednesday, Maya gives 18 of her stickers to Noah. Then Noah's aunt donates 6 extra stickers to Noah (while Maya receives none).\n\nAfter both changes, Noah has 3/4 as many stickers as Maya.\n\nHow many stickers did Maya have at the START of the week?",
           "skillId": "MATH.ALG.TWO_UNKNOWN_SYSTEMS",
@@ -1276,21 +1276,21 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_think_whose_01_v1",
-      "questionFamilyId": "q_pilot_think_whose_01",
+      "questionId": "2026-01-01_b01_think_01_v1",
+      "questionFamilyId": "2026-01-01_b01_think_01",
       "version": 1,
       "section": "THINK",
       "formatType": "THINK_MCQ_4",
       "stemPrefix": "Boxed rules:\n• Every Friday, the school library stays open after 4 pm ONLY IF both Mr Cho and at least two Year 6 monitors are on duty.\n• Whenever the library stays open after 4 pm, the side courtyard gate is left unlocked. However, the caretaker also unlocks that gate on evenings when the choir rehearses in the hall.",
       "parts": [
         {
-          "partId": "q_pilot_think_whose_01_p1",
+          "partId": "2026-01-01_b01_think_01_p1",
           "partIndex": 0,
           "promptText": "On a Friday at 4:30 pm, two students make the following claims:\n\nTessa: \"The side courtyard gate is locked right now, and the roster confirms three Year 6 monitors are on duty—so Mr Cho cannot be on duty today.\"\n\nLiam: \"I know Mr Cho is on duty and three Year 6 monitors are on duty this Friday, so the side courtyard gate is definitely unlocked right now.\"\n\nIf the information in the box is true, whose reasoning is correct?",
           "skillId": "THINK.DEDUCT.WHOSE_REASONING_CORRECT",
@@ -1334,26 +1334,26 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_think_fold_01_v1",
-      "questionFamilyId": "q_pilot_think_fold_01",
+      "questionId": "2026-01-01_b01_think_02_v1",
+      "questionFamilyId": "2026-01-01_b01_think_02",
       "version": 1,
       "section": "THINK",
       "formatType": "THINK_MCQ_4",
       "visual": {
         "visualType": "inline_svg",
         "altText": "Three-step diagram showing a square paper folded bottom to top, then right to left, followed by cutting a rectangular notch in the middle of the left edge and a quarter-circle bite from the bottom-right corner",
-        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 198\"><rect width=\"560\" height=\"198\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"28\" y=\"34\" width=\"110\" height=\"110\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"22\" y1=\"89\" x2=\"144\" y2=\"89\" stroke=\"#4A5955\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/><path d=\"M116,126 Q134,89 116,52\" fill=\"none\" stroke=\"#F29A63\" stroke-width=\"2.5\"/><polygon points=\"113,47 123,53 113,59\" fill=\"#F29A63\"/><text x=\"83\" y=\"172\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"13\" fill=\"#4A5955\">1. Fold bottom to top</text><line x1=\"158\" y1=\"89\" x2=\"184\" y2=\"89\" stroke=\"#78756E\" stroke-width=\"2\"/><polygon points=\"190,89 181,84 181,94\" fill=\"#78756E\"/><rect x=\"210\" y=\"61\" width=\"110\" height=\"55\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"265\" y1=\"55\" x2=\"265\" y2=\"122\" stroke=\"#4A5955\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/><path d=\"M304,50 Q265,30 226,50\" fill=\"none\" stroke=\"#F29A63\" stroke-width=\"2.5\"/><polygon points=\"221,52 231,43 232,54\" fill=\"#F29A63\"/><text x=\"265\" y=\"172\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"13\" fill=\"#4A5955\">2. Fold right to left</text><line x1=\"340\" y1=\"89\" x2=\"366\" y2=\"89\" stroke=\"#78756E\" stroke-width=\"2\"/><polygon points=\"372,89 363,84 363,94\" fill=\"#78756E\"/><rect x=\"408\" y=\"47\" width=\"84\" height=\"84\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"408\" y=\"79\" width=\"18\" height=\"20\" fill=\"#B83A28\" fill-opacity=\"0.30\" stroke=\"#B83A28\" stroke-width=\"1.8\" stroke-dasharray=\"3 2\"/><path d=\"M492,131 L468,131 A24,24 0 0,1 492,107 Z\" fill=\"#B83A28\" fill-opacity=\"0.30\" stroke=\"#B83A28\" stroke-width=\"1.8\" stroke-dasharray=\"3 2\"/><text x=\"450\" y=\"172\" text-anchor=\"middle\" font-family=\"'AnthropicSansText'\" font-size=\"13\" fill=\"#4A5955\">3. Cut both shaded pieces</text></svg>",
+        "svgMarkup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 198\" font-family=\"AnthropicSansText\"><rect width=\"560\" height=\"198\" fill=\"#FAF8F5\" rx=\"8\"/><rect x=\"28\" y=\"34\" width=\"110\" height=\"110\" fill=\"#FFFFFF\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"22\" y1=\"89\" x2=\"144\" y2=\"89\" stroke=\"#4A5955\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/><path d=\"M116,126 Q134,89 116,52\" fill=\"none\" stroke=\"#F29A63\" stroke-width=\"2.5\"/><polygon points=\"113,47 123,53 113,59\" fill=\"#F29A63\"/><text x=\"83\" y=\"172\" text-anchor=\"middle\" font-size=\"13\" fill=\"#4A5955\">1. Fold bottom to top</text><line x1=\"158\" y1=\"89\" x2=\"184\" y2=\"89\" stroke=\"#78756E\" stroke-width=\"2\"/><polygon points=\"190,89 181,84 181,94\" fill=\"#78756E\"/><rect x=\"210\" y=\"61\" width=\"110\" height=\"55\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><line x1=\"265\" y1=\"55\" x2=\"265\" y2=\"122\" stroke=\"#4A5955\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/><path d=\"M304,50 Q265,30 226,50\" fill=\"none\" stroke=\"#F29A63\" stroke-width=\"2.5\"/><polygon points=\"221,52 231,43 232,54\" fill=\"#F29A63\"/><text x=\"265\" y=\"172\" text-anchor=\"middle\" font-size=\"13\" fill=\"#4A5955\">2. Fold right to left</text><line x1=\"340\" y1=\"89\" x2=\"366\" y2=\"89\" stroke=\"#78756E\" stroke-width=\"2\"/><polygon points=\"372,89 363,84 363,94\" fill=\"#78756E\"/><rect x=\"408\" y=\"47\" width=\"84\" height=\"84\" fill=\"#F3EFE8\" stroke=\"#113C36\" stroke-width=\"2\"/><rect x=\"408\" y=\"79\" width=\"18\" height=\"20\" fill=\"#B83A28\" fill-opacity=\"0.30\" stroke=\"#B83A28\" stroke-width=\"1.8\" stroke-dasharray=\"3 2\"/><path d=\"M492,131 L468,131 A24,24 0 0,1 492,107 Z\" fill=\"#B83A28\" fill-opacity=\"0.30\" stroke=\"#B83A28\" stroke-width=\"1.8\" stroke-dasharray=\"3 2\"/><text x=\"450\" y=\"172\" text-anchor=\"middle\" font-size=\"13\" fill=\"#4A5955\">3. Cut both shaded pieces</text></svg>",
         "caption": "Folding sequence and two shaded cuts (dotted lines show folds)"
       },
       "parts": [
         {
-          "partId": "q_pilot_think_fold_01_p1",
+          "partId": "2026-01-01_b01_think_02_p1",
           "partIndex": 0,
           "promptText": "A square sheet of paper is folded in half from bottom to top, and then folded in half again from right to left. Two shaded pieces are cut out of the folded square as shown: a rectangular notch from the middle of the left edge and a quarter-circle from the bottom-right corner.\n\nWhich diagram shows the paper when it is completely unfolded? (Dotted lines show the folds.)",
           "skillId": "THINK.SPATIAL.FOLD_CUT_TILE_ASSEMBLY",
@@ -1417,18 +1417,18 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
     },
     {
-      "questionId": "q_pilot_writ_news_01_v1",
-      "questionFamilyId": "q_pilot_writ_news_01",
+      "questionId": "2026-01-01_b01_writ_01_v1",
+      "questionFamilyId": "2026-01-01_b01_writ_01",
       "version": 1,
       "section": "WRIT",
       "formatType": "WRIT_TYPED_TASK",
-      "stimulusId": "stim_pilot_writ_01",
+      "stimulusId": "2026-01-01_b01_writ_s01_v1",
       "writingSpec": {
         "genre": "Newspaper report",
         "audience": "Local community newspaper readers",
@@ -1446,7 +1446,7 @@
       },
       "parts": [
         {
-          "partId": "q_pilot_writ_news_01_p1",
+          "partId": "2026-01-01_b01_writ_01_p1",
           "partIndex": 0,
           "promptText": "Write a newspaper report about this incident for your local community paper.",
           "skillId": "WRIT.CRIT.TOPIC_PROMPT_ADHERENCE",
@@ -1472,7 +1472,7 @@
       ],
       "provenance": {
         "sourceType": "ai_generated",
-        "sourceReference": "skill_pilot_showcase_1_5x_v2",
+        "sourceReference": "2026-01-01_b01",
         "verifierAgreed": true,
         "auditorReviewed": false
       }
