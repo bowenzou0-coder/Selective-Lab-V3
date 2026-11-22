@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -27,6 +26,8 @@ import { QuestionWorkspace } from './QuestionWorkspace';
 import { createSessionClock, useClockValue } from '../sessionClock';
 import { AdminInspectorDrawer } from './session/AdminInspectorDrawer';
 import { ExamTimer } from './session/ExamTimer';
+import { QuestionNavigator } from './session/QuestionNavigator';
+import { SubmitConfirmDialog } from './session/SubmitConfirmDialog';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
 
@@ -613,6 +614,9 @@ export function SessionPlayerView({
 
   const toggleTimerHidden = useCallback(() => setTimerHidden((v) => !v), []);
   const closeInspector = useCallback(() => setInspectorOpen(false), []);
+  const closeSubmitConfirm = useCallback(() => {
+    if (!submittingRef.current) setSubmitConfirmOpen(false);
+  }, []);
 
   const answeredSlotsCount = useMemo(() => {
     let cnt = 0;
@@ -839,64 +843,17 @@ export function SessionPlayerView({
           </div>
         </div>
 
-        {/* Collapsible Question Navigator Grid */}
         {navOpen && (
-          <div className="border-t border-[#E5DFD5] bg-[#FAF8F5] px-6 py-4">
-            <div className="max-w-[1440px] mx-auto space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#4A5955]">
-                <span className="font-medium tabular-nums">
-                  {t('session.slotsAnsweredSummary', {
-                    answered: answeredSlotsCount,
-                    total: totalSlotsCount,
-                    questions: questions.length,
-                  })}
-                </span>
-                <div className="flex items-center gap-3 text-[11px] text-[#78756E]">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#113C36]" /> {t('session.legendCurrent')}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#E5F0EA] border border-[#1D6346]/50" /> {t('session.legendAnswered')}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#A35116]" /> {t('session.legendFlagged')}
-                  </span>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5 max-w-[840px]">
-                {questions.map((q, idx) => {
-                  const isCurr = idx === currentIndex;
-                  const isQFlagged = flaggedQuestionIds.includes(q.questionId);
-                  const isQAnswered =
-                    q.formatType === 'WRIT_TYPED_TASK'
-                      ? writingDraft.responseText.trim().length > 0
-                      : q.parts.every((p) => Boolean(answersByPartId[p.partId]));
-                  return (
-                    <button
-                      key={q.questionId}
-                      type="button"
-                      onClick={() => handleGoIndex(idx)}
-                      className={`w-9 h-9 inline-flex items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums relative cursor-pointer transition-colors ${
-                        isCurr
-                          ? 'border-[#113C36] bg-[#113C36] text-white'
-                          : isQAnswered
-                            ? 'border-[#1D6346]/45 bg-[#E5F0EA] text-[#113C36]'
-                            : 'border-[#CFC6B9] bg-white text-[#113C36] hover:bg-[#F3EFE8]'
-                      }`}
-                    >
-                      {idx + 1}
-                      {isQFlagged && (
-                        <span
-                          aria-label={t('session.flagged')}
-                          className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#A35116] border border-white"
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          <QuestionNavigator
+            questions={questions}
+            currentIndex={currentIndex}
+            answersByPartId={answersByPartId}
+            flaggedQuestionIds={flaggedQuestionIds}
+            writingResponse={writingDraft.responseText}
+            answeredSlots={answeredSlotsCount}
+            totalSlots={totalSlotsCount}
+            onGoIndex={handleGoIndex}
+          />
         )}
       </header>
 
@@ -1076,79 +1033,15 @@ export function SessionPlayerView({
         }
       />
 
-      {/* 2-Step Finish Test Confirmation Modal */}
-      {submitConfirmOpen &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            role="presentation"
-            onClick={() => !submitting && setSubmitConfirmOpen(false)}
-            className="fixed inset-0 z-50 m-0 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="submit-confirm-title"
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
-            >
-              <div className="space-y-1">
-                <p className="text-xs font-sans-display font-medium text-[#78756E]">{t('session.submitModalEyebrow')}</p>
-                <h2
-                  id="submit-confirm-title"
-                  className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
-                >
-                  {t('session.submitModalTitle')}
-                </h2>
-              </div>
-
-              <dl className="grid grid-cols-3 gap-2.5 p-3.5 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs text-center tabular-nums">
-                <div>
-                  <dt className="text-[#78756E]">{t('session.answered')}</dt>
-                  <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#1D6346]">
-                    {answeredSlotsCount}/{totalSlotsCount}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[#78756E]">{t('session.unanswered')}</dt>
-                  <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#113C36]">
-                    {Math.max(0, totalSlotsCount - answeredSlotsCount)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[#78756E]">{t('session.flagged')}</dt>
-                  <dd className="mt-1 font-serif-display font-extrabold text-xl text-[#A35116]">
-                    {flaggedQuestionIds.length}
-                  </dd>
-                </div>
-              </dl>
-
-              <p className="text-xs text-[#4A5955] leading-relaxed">
-                {t('session.submitModalNote')}
-              </p>
-
-              <div className="flex items-center justify-end gap-2.5 pt-1">
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => setSubmitConfirmOpen(false)}
-                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
-                >
-                  {t('session.keepWorking')}
-                </button>
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={handleSubmit}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-60"
-                >
-                  {submitting ? t('session.submitting') : t('session.confirmAndSubmit')}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
+      <SubmitConfirmDialog
+        open={submitConfirmOpen}
+        submitting={submitting}
+        answeredSlots={answeredSlotsCount}
+        totalSlots={totalSlotsCount}
+        flaggedCount={flaggedQuestionIds.length}
+        onCancel={closeSubmitConfirm}
+        onConfirm={handleSubmit}
+      />
     </div>
   );
 }
