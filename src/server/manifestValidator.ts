@@ -283,6 +283,35 @@ export function validateAndDryRunManifest(
         `Question ${rq.questionId} references stimulus "${rq.stimulusId}" not included in manifest stimuli (will use existing bank stimulus if present).`
       );
     }
+    if (rq.formatType === 'WRIT_TYPED_TASK') {
+      if (!rq.stimulusId) {
+        warnings.push(
+          `Writing question ${rq.questionId} has no stimulusId; attach a linked WRIT stimulus with title and mainTextMarkdown.`
+        );
+      } else if (stim) {
+        if (!stim.title || !stim.title.trim()) {
+          warnings.push(
+            `Writing stimulus "${stim.stimulusId}" for ${rq.questionId} is missing a title.`
+          );
+        }
+        if (!stim.mainTextMarkdown || !stim.mainTextMarkdown.trim()) {
+          warnings.push(
+            `Writing stimulus "${stim.stimulusId}" for ${rq.questionId} is missing mainTextMarkdown.`
+          );
+        }
+        const writVisual =
+          stim.visual && stim.visual.visualType !== 'none'
+            ? stim.visual
+            : rq.visual && rq.visual.visualType !== 'none'
+              ? rq.visual
+              : undefined;
+        if (writVisual && (!writVisual.caption || !writVisual.caption.trim())) {
+          warnings.push(
+            `Writing visual for ${rq.questionId} is missing a caption.`
+          );
+        }
+      }
+    }
 
     let rawParts = Array.isArray(rq.parts) ? rq.parts : [];
     if (rq.formatType === 'WRIT_TYPED_TASK' && rawParts.length === 0) {

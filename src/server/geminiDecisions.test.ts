@@ -77,7 +77,7 @@ function scoreAnswer(score: number): DecisionAnswerMap[string] {
 
 test('Gemini client separates System 1 Decisions from writing generation and normalizes HTTP errors', () => {
   assert.equal(GEMINI_DECISION_MODEL, 'gemini-decision-1');
-  assert.equal(GEMINI_WRITING_MODEL, 'gemini-4-hydrogen');
+  assert.equal(GEMINI_WRITING_MODEL, 'gemini-3.5-flash-lite');
 
   const e403 = normalizeGeminiError(new Error('403 PERMISSION_DENIED: invalid key'));
   assert.equal(e403.statusCode, 403);
@@ -331,134 +331,468 @@ test('a failed legacy-cache migration persists a deterministic daily fallback in
   assert.equal(requests, 1);
 });
 
-test('evaluateWritingWithGemini uses gemini-4-hydrogen and normalizes all 6 writing rubric criteria', async () => {
+test('evaluateWritingWithGemini uses gemini-3.5-flash-lite and normalizes all 6 writing rubric criteria on /20 scale', async () => {
   const normalized = normalizeWritingEvaluationCriteria([
     { criterionSkillId: 'WRIT.CRIT.IDEAS_CREATIVITY', score: 9, comment: 'Imaginative plot.' },
-    { criterionSkillId: 'WRIT.CRIT.STYLE_VOCABULARY', score: 4, evidenceQuote: 'velvet twilight', comment: 'Vivid imagery.' },
+    { criterionSkillId: 'WRIT.CRIT.STYLE_VOCABULARY', score: 3, evidenceQuote: 'velvet twilight', comment: 'Vivid imagery.' },
   ]);
   assert.equal(normalized.length, WRITING_CRITERIA.length);
-  assert.equal(normalized[1].score, 5); // clamped from 9 -> 5
+  assert.equal(normalized[1].maxMarks, 4);
+  assert.equal(normalized[1].score, 4); // clamped from 9 -> 4
+  assert.equal(normalized[1].band, 'A');
+  assert.equal(normalized[4].maxMarks, 3);
+  assert.equal(normalized[4].score, 3);
   assert.equal(normalized[4].evidenceQuote, 'velvet twilight');
-  assert.equal(normalized[0].score, 3); // missing criterion filled cleanly
+  assert.equal(normalized[0].maxMarks, 4);
+  assert.equal(normalized[0].score, 2); // missing 4-mark criterion filled cleanly
+  assert.equal(normalized[2].maxMarks, 3);
+  assert.equal(normalized[2].score, 2); // missing 3-mark criterion filled cleanly
 
   const writQ = makeQuestion('w1', 'WRIT', 'WRIT.CRIT.IDEAS_CREATIVITY');
   const evalRec = await evaluateWritingWithGemini({
     submissionId: 'wsub_test_1',
     question: writQ,
     planNotes: 'Intro, climax, resolution',
-    responseText: 'The lighthouse beam swept over the silver harbour.',
+    responseText:
+      'The lighthouse beam swept over the silver harbour as the ferry engines thrummed beneath our heels.\n\nWe watched the timber pilings sink into black water while gulls wheeled around the beacon.\n\nMy sister gripped the cold brass rail until her knuckles paled.\n\nWhen the fog lifted, the headland stood closer than any chart had promised.',
     metrics: {
-      wordCount: 8,
-      paragraphCount: 1,
-      sentenceCount: 1,
-      avgWordsPerSentence: 8,
-      typeTokenRatio: 1,
+      wordCount: 280,
+      paragraphCount: 4,
+      sentenceCount: 16,
+      avgWordsPerSentence: 17.5,
+      typeTokenRatio: 0.75,
       matchedMandatoryStarter: true,
     },
     generateTextFn: async () =>
       JSON.stringify({
         topicAdherencePass: true,
+        audit: {
+          promptEngagement: 'solid',
+          hasUnfilledPlaceholders: false,
+          hasAiSlopOrCorporateCliches: false,
+          formAndParagraphControl: 'controlled',
+          substanceAndDepth: 'sound',
+          topBandChecks: {
+            holdsSpecificPromptDetails: true,
+            authenticVoiceNotSlop: true,
+            controlledStructureAndPacing: false,
+            preciseCraftAndMechanics: true,
+          },
+          pullingFaults: [],
+        },
+        overallVerdict: 'Atmospheric imagery holds interest, though missing criteria need fuller development.',
         overallBandEstimate: 'strong',
         criteriaScores: [
-          { criterionSkillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE', score: 5, comment: 'Clear opening.' },
+          { criterionSkillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE', score: 4, comment: 'Clear opening.' },
         ],
         topStrengths: ['Strong atmospheric opening'],
         priorityFixes: ['Expand the middle paragraph with dialogue'],
       }),
   });
 
-  assert.equal(evalRec.modelId, 'gemini-4-hydrogen');
+  assert.equal(evalRec.modelId, 'gemini-3.5-flash-lite');
   assert.equal(evalRec.overallBandEstimate, 'strong');
   assert.equal(evalRec.overallBand, 'B');
-  assert.equal(evalRec.totalMarks, 20);
-  assert.equal(evalRec.maxTotalMarks, 30);
+  assert.equal(evalRec.totalMarks, 14);
+  assert.equal(evalRec.maxTotalMarks, 20);
+  assert.equal(evalRec.overallVerdict, 'Atmospheric imagery holds interest, though missing criteria need fuller development.');
   assert.equal(evalRec.criteriaScores.length, 6);
-  assert.equal(evalRec.criteriaScores[0].score, 5);
+  assert.equal(evalRec.criteriaScores[0].score, 4);
   assert.equal(evalRec.criteriaScores[0].band, 'A');
-  assert.equal(evalRec.criteriaScores[0].maxMarks, 5);
+  assert.equal(evalRec.criteriaScores[0].maxMarks, 4);
 });
 
-test('Banded A-E writing rubric scores 0..5 cleanly, computes deterministic totalMarks/bands, caps off-topic essays, and supports model override', async () => {
-  // Explicit 0 must not be coerced to 3
+test('Banded A-E writing rubric scores /20 (4+4+3+3+3+3), enforces anti-slop ceilings, and reconciles criterion totals', async () => {
+  // Explicit 0 must not be coerced to default
   const withZero = normalizeWritingEvaluationCriteria([
     { criterionSkillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE', score: 0, comment: 'Off-topic.' },
-    { criterionSkillId: 'WRIT.CRIT.IDEAS_CREATIVITY', score: 5, comment: 'Excellent.' },
+    { criterionSkillId: 'WRIT.CRIT.IDEAS_CREATIVITY', score: 4, comment: 'Excellent.' },
+    { criterionSkillId: 'WRIT.CRIT.STYLE_VOCABULARY', score: 3, comment: 'Crisp diction.' },
   ]);
   assert.equal(withZero[0].score, 0);
   assert.equal(withZero[0].band, 'E');
-  assert.equal(withZero[1].score, 5);
+  assert.equal(withZero[1].score, 4);
   assert.equal(withZero[1].band, 'A');
-  assert.equal(scoreToCriterionBand(4), 'B');
-  assert.equal(scoreToCriterionBand(3), 'C');
-  assert.equal(scoreToCriterionBand(2), 'D');
-  assert.equal(scoreToCriterionBand(1), 'E');
+  assert.equal(withZero[4].score, 3);
+  assert.equal(withZero[4].band, 'A');
+
+  // Ratio band mapping for 4-mark and 3-mark criteria
+  assert.equal(scoreToCriterionBand(4, 4), 'A');
+  assert.equal(scoreToCriterionBand(3, 4), 'B');
+  assert.equal(scoreToCriterionBand(2, 4), 'C');
+  assert.equal(scoreToCriterionBand(1, 4), 'D');
+  assert.equal(scoreToCriterionBand(0, 4), 'E');
+  assert.equal(scoreToCriterionBand(3, 3), 'A');
+  assert.equal(scoreToCriterionBand(2, 3), 'B');
+  assert.equal(scoreToCriterionBand(1, 3), 'D');
+  assert.equal(scoreToCriterionBand(0, 3), 'E');
 
   const makeScores = (vals: number[]) =>
-    WRITING_CRITERIA.map((id, i) => ({
-      criterionSkillId: id,
-      score: vals[i],
-      maxMarks: 5,
-      band: scoreToCriterionBand(vals[i]),
-      comment: 'ok',
-    }));
+    WRITING_CRITERIA.map((id, i) => {
+      const maxMarks = i < 2 ? 4 : 3;
+      return {
+        criterionSkillId: id,
+        score: vals[i],
+        maxMarks,
+        band: scoreToCriterionBand(vals[i], maxMarks),
+        comment: 'ok',
+      };
+    });
 
-  // Threshold checks: A(25..30), B(19..24), C(13..18), D(7..12), E(0..6)
-  assert.equal(computeWritingBandSummary(makeScores([5, 5, 5, 5, 5, 5]), true).overallBand, 'A');
-  assert.equal(computeWritingBandSummary(makeScores([5, 4, 4, 4, 4, 4]), true).overallBand, 'A'); // 25
-  assert.equal(computeWritingBandSummary(makeScores([4, 4, 4, 4, 4, 4]), true).overallBand, 'B'); // 24
-  assert.equal(computeWritingBandSummary(makeScores([4, 3, 3, 3, 3, 3]), true).overallBand, 'B'); // 19
-  assert.equal(computeWritingBandSummary(makeScores([3, 3, 3, 3, 3, 3]), true).overallBand, 'C'); // 18
-  assert.equal(computeWritingBandSummary(makeScores([3, 2, 2, 2, 2, 2]), true).overallBand, 'C'); // 13
-  assert.equal(computeWritingBandSummary(makeScores([2, 2, 2, 2, 2, 2]), true).overallBand, 'D'); // 12
-  assert.equal(computeWritingBandSummary(makeScores([2, 1, 1, 1, 1, 1]), true).overallBand, 'D'); // 7
-  assert.equal(computeWritingBandSummary(makeScores([1, 1, 1, 1, 1, 1]), true).overallBand, 'E'); // 6
+  // Threshold checks on /20: A(17..20), B(13..16), C(9..12), D(5..8), E(0..4)
+  assert.equal(computeWritingBandSummary(makeScores([4, 4, 3, 3, 3, 3]), true).overallBand, 'A'); // 20
+  assert.equal(computeWritingBandSummary(makeScores([3, 4, 3, 3, 2, 2]), true).overallBand, 'A'); // 17
+  assert.equal(computeWritingBandSummary(makeScores([3, 3, 3, 3, 2, 2]), true).overallBand, 'B'); // 16
+  assert.equal(computeWritingBandSummary(makeScores([3, 3, 2, 2, 2, 1]), true).overallBand, 'B'); // 13
+  assert.equal(computeWritingBandSummary(makeScores([2, 2, 2, 2, 2, 2]), true).overallBand, 'C'); // 12
+  assert.equal(computeWritingBandSummary(makeScores([2, 2, 2, 1, 1, 1]), true).overallBand, 'C'); // 9
+  assert.equal(computeWritingBandSummary(makeScores([2, 2, 1, 1, 1, 1]), true).overallBand, 'D'); // 8
+  assert.equal(computeWritingBandSummary(makeScores([1, 1, 1, 1, 1, 0]), true).overallBand, 'D'); // 5
+  assert.equal(computeWritingBandSummary(makeScores([1, 1, 1, 1, 0, 0]), true).overallBand, 'E'); // 4
   assert.equal(computeWritingBandSummary(makeScores([0, 0, 0, 0, 0, 0]), true).overallBand, 'E'); // 0
 
-  // Off-topic cap: 27/30 with topicAdherencePass=false caps Band A -> Band C
-  const capped = computeWritingBandSummary(makeScores([5, 5, 5, 4, 4, 4]), false);
-  assert.equal(capped.totalMarks, 27);
+  // Off-topic cap: 18/20 with topicAdherencePass=false caps total <= 12 and Band A -> Band C
+  const capped = computeWritingBandSummary(makeScores([4, 4, 3, 3, 2, 2]), false);
+  assert.equal(capped.totalMarks, 12);
   assert.equal(capped.overallBand, 'C');
   assert.equal(capped.bandCappedByTopicAdherence, true);
   assert.equal(capped.overallBandEstimate, 'solid');
+  assert.equal(
+    capped.adjustedCriteriaScores.reduce((sum, c) => sum + c.score, 0),
+    capped.totalMarks
+  );
+
+  // 4-check top-band gate verification
+  const twoTicks = computeWritingBandSummary(makeScores([4, 4, 3, 3, 3, 3]), true, {
+    promptEngagement: 'strong',
+    substanceAndDepth: 'deep',
+    topBandChecks: {
+      holdsSpecificPromptDetails: true,
+      authenticVoiceNotSlop: true,
+      controlledStructureAndPacing: false,
+      preciseCraftAndMechanics: false,
+    },
+  });
+  assert.ok(twoTicks.totalMarks <= 16);
+  assert.equal(twoTicks.overallBand, 'B');
+
+  const threeTicks = computeWritingBandSummary(makeScores([4, 4, 3, 3, 3, 3]), true, {
+    promptEngagement: 'strong',
+    substanceAndDepth: 'deep',
+    topBandChecks: {
+      holdsSpecificPromptDetails: true,
+      authenticVoiceNotSlop: true,
+      controlledStructureAndPacing: true,
+      preciseCraftAndMechanics: false,
+    },
+  });
+  assert.equal(threeTicks.totalMarks, 18);
+
+  const fourTicksClean = computeWritingBandSummary(makeScores([4, 4, 3, 3, 3, 3]), true, {
+    promptEngagement: 'strong',
+    substanceAndDepth: 'deep',
+    pullingFaultsCount: 0,
+    topBandChecks: {
+      holdsSpecificPromptDetails: true,
+      authenticVoiceNotSlop: true,
+      controlledStructureAndPacing: true,
+      preciseCraftAndMechanics: true,
+    },
+  });
+  assert.equal(fourTicksClean.totalMarks, 20);
+  assert.equal(fourTicksClean.overallBand, 'A');
+
+  // Short response ceilings
+  const veryShortEval = await evaluateWritingWithGemini({
+    submissionId: 'wsub_short_very',
+    question: makeQuestion('w_sv', 'WRIT', 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE'),
+    planNotes: '',
+    responseText: 'A short unfinished reflection that ends abruptly.',
+    metrics: {
+      wordCount: 45,
+      paragraphCount: 2,
+      sentenceCount: 4,
+      avgWordsPerSentence: 11.2,
+      typeTokenRatio: 0.9,
+      matchedMandatoryStarter: true,
+    },
+    generateTextFn: async () =>
+      JSON.stringify({
+        topicAdherencePass: true,
+        criteriaScores: WRITING_CRITERIA.map((id, idx) => ({
+          criterionSkillId: id,
+          score: idx < 2 ? 4 : 3,
+          comment: 'Brief.',
+        })),
+        topStrengths: ['Readable'],
+        priorityFixes: ['Develop beyond 45 words'],
+      }),
+  });
+  assert.ok((veryShortEval.totalMarks ?? 99) <= 7);
+  assert.equal(veryShortEval.overallBand, 'D');
+
+  const underDevEval = await evaluateWritingWithGemini({
+    submissionId: 'wsub_short_mid',
+    question: makeQuestion('w_sm', 'WRIT', 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE'),
+    planNotes: '',
+    responseText: 'Paragraph one opens the argument.\n\nParagraph two stops early.',
+    metrics: {
+      wordCount: 110,
+      paragraphCount: 2,
+      sentenceCount: 7,
+      avgWordsPerSentence: 15.7,
+      typeTokenRatio: 0.8,
+      matchedMandatoryStarter: true,
+    },
+    generateTextFn: async () =>
+      JSON.stringify({
+        topicAdherencePass: true,
+        criteriaScores: WRITING_CRITERIA.map((id, idx) => ({
+          criterionSkillId: id,
+          score: idx < 2 ? 4 : 3,
+          comment: 'Short.',
+        })),
+        topStrengths: ['Clear structure'],
+        priorityFixes: ['Expand body evidence'],
+      }),
+  });
+  assert.ok((underDevEval.totalMarks ?? 99) <= 12);
+  assert.equal(underDevEval.overallBand, 'C');
+
+  // Strict ceiling: unfilled [Surname] + corporate bullet slop + unsigned closing caps even inflated 20/20 scores <= 11/20
+  const slopEval = await evaluateWritingWithGemini({
+    submissionId: 'wsub_slop',
+    question: makeQuestion('w_slop', 'WRIT', 'WRIT.CRIT.PURPOSE_AUDIENCE_VOICE'),
+    planNotes: '',
+    responseText: [
+      'Dear Mayor [Surname],',
+      'I am writing to present a green-infrastructure strategy regarding substantial procurement costs.',
+      '- Immediate strategic alignment for community hubs',
+      '- Holistic sustainability outcomes across all precincts',
+      'We must leverage synergistic partnerships without delay.',
+      'Yours sincerely,',
+    ].join('\n\n'),
+    metrics: {
+      wordCount: 280,
+      paragraphCount: 4,
+      sentenceCount: 14,
+      avgWordsPerSentence: 20,
+      typeTokenRatio: 0.72,
+      matchedMandatoryStarter: true,
+    },
+    generateTextFn: async () =>
+      JSON.stringify({
+        topicAdherencePass: true,
+        audit: {
+          promptEngagement: 'surface_formulaic',
+          hasUnfilledPlaceholders: true,
+          hasAiSlopOrCorporateCliches: true,
+          formAndParagraphControl: 'weak',
+          substanceAndDepth: 'developing',
+          topBandChecks: {
+            holdsSpecificPromptDetails: false,
+            authenticVoiceNotSlop: false,
+            controlledStructureAndPacing: false,
+            preciseCraftAndMechanics: true,
+          },
+          pullingFaults: ['Unfilled [Surname] placeholder', 'Corporate bullet list inside formal letter'],
+        },
+        overallVerdict: 'Template placeholders and corporate jargon prevent authentic Year 6 persuasive voice.',
+        criteriaScores: WRITING_CRITERIA.map((id, idx) => ({
+          criterionSkillId: id,
+          score: idx < 2 ? 4 : 3,
+          comment: 'Inflated draft score from model.',
+        })),
+        topStrengths: ['Clear stance'],
+        priorityFixes: ['Replace template placeholders and corporate bullet points'],
+      }),
+  });
+  assert.ok((slopEval.totalMarks ?? 99) <= 11);
+  assert.equal(slopEval.overallBand, 'C');
+  assert.equal(
+    slopEval.overallVerdict,
+    'Template placeholders and corporate jargon prevent authentic Year 6 persuasive voice.'
+  );
+  assert.equal(
+    slopEval.criteriaScores.reduce((sum, c) => sum + c.score, 0),
+    slopEval.totalMarks
+  );
+
+  // Strict ceiling: single-paragraph wall (>= 120 words, 1 paragraph) caps STRUCTURE_LAYOUT <= 1 and total <= 15
+  const wallEval = await evaluateWritingWithGemini({
+    submissionId: 'wsub_wall',
+    question: makeQuestion('w_wall', 'WRIT', 'WRIT.CRIT.STRUCTURE_LAYOUT'),
+    planNotes: '',
+    responseText: 'One unbroken wall of prose carrying on without a single paragraph break.',
+    metrics: {
+      wordCount: 260,
+      paragraphCount: 1,
+      sentenceCount: 13,
+      avgWordsPerSentence: 20,
+      typeTokenRatio: 0.74,
+      matchedMandatoryStarter: true,
+    },
+    generateTextFn: async () =>
+      JSON.stringify({
+        topicAdherencePass: true,
+        audit: {
+          promptEngagement: 'strong',
+          hasUnfilledPlaceholders: false,
+          hasAiSlopOrCorporateCliches: false,
+          formAndParagraphControl: 'weak',
+          substanceAndDepth: 'deep',
+          topBandChecks: {
+            holdsSpecificPromptDetails: true,
+            authenticVoiceNotSlop: true,
+            controlledStructureAndPacing: false,
+            preciseCraftAndMechanics: true,
+          },
+          pullingFaults: ['Missing paragraph breaks across 260 words'],
+        },
+        overallVerdict: 'Strong ideas lose control because all 260 words sit in one unbroken block.',
+        criteriaScores: WRITING_CRITERIA.map((id, idx) => ({
+          criterionSkillId: id,
+          score: idx < 2 ? 4 : 3,
+          comment: 'Strong voice.',
+        })),
+        topStrengths: ['Vivid sensory verbs'],
+        priorityFixes: ['Break narrative beats into distinct paragraphs'],
+      }),
+  });
+  const structureCrit = wallEval.criteriaScores.find((c) => c.criterionSkillId === 'WRIT.CRIT.STRUCTURE_LAYOUT');
+  assert.ok((structureCrit?.score ?? 99) <= 1);
+  assert.ok((wallEval.totalMarks ?? 99) <= 15);
+  assert.notEqual(wallEval.overallBand, 'A');
+  assert.equal(
+    wallEval.criteriaScores.reduce((sum, c) => sum + c.score, 0),
+    wallEval.totalMarks
+  );
 
   // Configurable GEMINI_WRITING_MODEL override
   const prevModel = process.env.GEMINI_WRITING_MODEL;
-  process.env.GEMINI_WRITING_MODEL = 'gemini-3.5-flash-lite';
+  process.env.GEMINI_WRITING_MODEL = 'gemini-3.5-flash-lite-custom';
   try {
     const writQ = makeQuestion('w2', 'WRIT', 'WRIT.CRIT.IDEAS_CREATIVITY');
     const evalRec = await evaluateWritingWithGemini({
       submissionId: 'wsub_test_2',
       question: writQ,
       planNotes: '',
-      responseText: 'Unrelated text.',
+      responseText: 'Unrelated text written at length for testing off-topic capping across multiple paragraphs.',
       metrics: {
-        wordCount: 2,
-        paragraphCount: 1,
-        sentenceCount: 1,
-        avgWordsPerSentence: 2,
-        typeTokenRatio: 1,
+        wordCount: 280,
+        paragraphCount: 4,
+        sentenceCount: 15,
+        avgWordsPerSentence: 18.6,
+        typeTokenRatio: 0.7,
         matchedMandatoryStarter: false,
       },
       generateTextFn: async () =>
         JSON.stringify({
           topicAdherencePass: false,
-          criteriaScores: WRITING_CRITERIA.map((id) => ({
+          criteriaScores: WRITING_CRITERIA.map((id, idx) => ({
             criterionSkillId: id,
-            score: 5,
+            score: idx < 2 ? 4 : 3,
             comment: 'Good style but off topic.',
           })),
           topStrengths: ['Clear sentences'],
           priorityFixes: ['Address the prompt'],
         }),
     });
-    assert.equal(evalRec.modelId, 'gemini-3.5-flash-lite');
-    assert.equal(evalRec.totalMarks, 30);
+    assert.equal(evalRec.modelId, 'gemini-3.5-flash-lite-custom');
+    assert.equal(evalRec.totalMarks, 12);
     assert.equal(evalRec.overallBand, 'C');
     assert.equal(evalRec.bandCappedByTopicAdherence, true);
   } finally {
     if (prevModel === undefined) delete process.env.GEMINI_WRITING_MODEL;
     else process.env.GEMINI_WRITING_MODEL = prevModel;
   }
+
+  // Inline annotations & Band A exemplar normalization
+  const writQRich = makeQuestion('w3', 'WRIT', 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE');
+  const richEval = await evaluateWritingWithGemini({
+    submissionId: 'wsub_test_3',
+    question: writQRich,
+    planNotes: '',
+    responseText:
+      'I pushed open the creaking gate. I ran fast to the bench and it was cool.\n\nEverything felt secret.\n\nSunlight slanted across the rusted latch while sparrows fluttered out of the hedge.',
+    metrics: {
+      wordCount: 280,
+      paragraphCount: 4,
+      sentenceCount: 15,
+      avgWordsPerSentence: 18.6,
+      typeTokenRatio: 0.85,
+      matchedMandatoryStarter: false,
+    },
+    generateTextFn: async () =>
+      JSON.stringify({
+        topicAdherencePass: true,
+        audit: {
+          promptEngagement: 'solid',
+          hasUnfilledPlaceholders: false,
+          hasAiSlopOrCorporateCliches: false,
+          formAndParagraphControl: 'controlled',
+          substanceAndDepth: 'sound',
+          topBandChecks: {
+            holdsSpecificPromptDetails: true,
+            authenticVoiceNotSlop: true,
+            controlledStructureAndPacing: true,
+            preciseCraftAndMechanics: true,
+          },
+          pullingFaults: [],
+        },
+        overallVerdict: 'Strong scene grounding with room to sharpen generic verbs.',
+        criteriaScores: WRITING_CRITERIA.map((id) => ({
+          criterionSkillId: id,
+          score: id === 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE' || id === 'WRIT.CRIT.IDEAS_CREATIVITY' ? 3 : 2,
+          comment: 'Solid control with room for sharper verbs.',
+        })),
+        topStrengths: ['Clear opening action'],
+        priorityFixes: ['Replace generic words like fast and cool'],
+        annotations: [
+          {
+            kind: 'strength',
+            quote: '"I pushed open the creaking gate."',
+            tag: 'Sensory opener',
+            comment: 'Sound detail pulls the reader right onto the platform.',
+            criterionSkillId: 'WRIT.CRIT.STYLE_VOCABULARY',
+          },
+          {
+            kind: 'issue',
+            quote: 'I ran fast to the bench and it was cool.',
+            tag: 'Vague verb',
+            comment: '"ran fast" and "cool" tell instead of showing tension.',
+            rewrite: 'I sprinted across the damp sleepers until my fingers brushed the salt-rough bench.',
+            criterionSkillId: 'WRIT.CRIT.STYLE_VOCABULARY',
+          },
+        ],
+        exemplar: {
+          title: 'Key under the Ferns',
+          text: 'Rust flaked onto my knuckles as I parted the blackberry vines.\n\nInside the glasshouse, condensation beaded like silver seeds.',
+          keyTakeaway: 'Notice how concrete verbs replace vague adjectives like cool and fast.',
+          annotations: [
+            {
+              quote: 'Rust flaked onto my knuckles',
+              tag: 'Tactile detail',
+              explanation: 'Physical sensation establishes place in six words.',
+            },
+            {
+              quote: 'condensation beaded like silver seeds.',
+              tag: 'Grounded simile',
+              explanation: 'Links the greenhouse imagery directly to the plant motif.',
+            },
+          ],
+        },
+      }),
+  });
+
+  assert.equal(richEval.annotations?.length, 2);
+  assert.equal(richEval.annotations?.[0].id, 'ann_1');
+  assert.equal(richEval.annotations?.[0].quote, 'I pushed open the creaking gate.');
+  assert.equal(richEval.annotations?.[1].kind, 'issue');
+  assert.match(richEval.annotations?.[1].rewrite || '', /sprinted/);
+  assert.equal(richEval.exemplar?.title, 'Key under the Ferns');
+  assert.equal(richEval.exemplar?.annotations.length, 2);
+  assert.equal(richEval.exemplar?.annotations[0].id, 'ex_1');
 });
 
 test('Auto-Calibrate with gemini-decision-1 dynamically adjusts total question volume and skews toward urgent sections', async () => {

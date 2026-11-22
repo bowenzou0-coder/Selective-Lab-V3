@@ -18,6 +18,8 @@ import type {
   AppRepository,
   BackupRestoreReport,
   CanonicalBackupBundle,
+  ImportBatchSummary,
+  QuestionMeta,
   QuestionQueryParams,
   QuestionQueryResult,
 } from './repository.ts';
@@ -26,8 +28,10 @@ export function sha256Json(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-export function selectLatestByFamily(allQuestions: QuestionItem[]): QuestionItem[] {
-  const latestByFamily = new Map<string, QuestionItem>();
+export function selectLatestByFamily<T extends Pick<QuestionItem, 'questionFamilyId' | 'version'>>(
+  allQuestions: readonly T[]
+): T[] {
+  const latestByFamily = new Map<string, T>();
   for (const q of allQuestions) {
     const prev = latestByFamily.get(q.questionFamilyId);
     if (!prev || q.version > prev.version) {
@@ -37,15 +41,15 @@ export function selectLatestByFamily(allQuestions: QuestionItem[]): QuestionItem
   return Array.from(latestByFamily.values());
 }
 
-function summarizeBatches(
-  questions: QuestionItem[],
-  batches: ImportBatchRecord[],
-  progress: Map<string, QuestionProgressMeta>,
+export function summarizeBatches(
+  questions: readonly QuestionMeta[],
+  batches: readonly ImportBatchSummary[],
+  progress: ReadonlyMap<string, QuestionProgressMeta>,
 ): BatchDirectorySummary[] {
   const labels = {
     PT1: 'Official Practice Test 1',
     PT2: 'Official Practice Test 2',
-    PT3: 'Official Practice Test 3 (Holdout)',
+    PT3: 'Official Practice Test 3',
     SMOKE: 'Built-in Starter Pack',
     CUSTOM: 'Built-in Starter Pack',
   };
@@ -81,11 +85,34 @@ function summarizeBatches(
   );
 }
 
+// Bank-cache objects are frozen and reused across requests, so memoize their lowercase
+// search text instead of rebuilding ~7 MB of strings on every keystroke.
+const haystackCache = new WeakMap<QuestionItem, { stim?: StimulusGroup; text: string }>();
+
+function searchHaystack(q: QuestionItem, stim?: StimulusGroup): string {
+  const cached = haystackCache.get(q);
+  if (cached && cached.stim === stim) return cached.text;
+  const partsHay = q.parts
+    .map(
+      (p) =>
+        `${p.partId} ${p.promptText} ${p.skillId} ${(p.secondarySkillIds || []).join(' ')} ${(p.trapTags || []).join(' ')} ${p.workedExplanation || ''} ${p.options.map((o) => `${o.key} ${o.text}`).join(' ')}`
+    )
+    .join(' ');
+  const stimHay = stim
+    ? `${stim.stimulusId} ${stim.title || ''} ${stim.preamble || ''} ${stim.mainTextMarkdown || ''} ${(stim.extracts || []).map((e) => `${e.label} ${e.title || ''} ${e.bodyMarkdown}`).join(' ')}`
+    : '';
+  const text = `${q.questionId} ${q.questionFamilyId} ${q.stemPrefix || ''} ${q.batchId || ''} ${q.batchLabel || ''} ${q.provenance?.sourceReference || ''} ${partsHay} ${stimHay}`.toLowerCase();
+  haystackCache.set(q, { stim, text });
+  return text;
+}
+
 export function filterAndPaginateQuestions(input: {
-  allQuestions: QuestionItem[];
-  stimuliById: Record<string, StimulusGroup>;
+  allQuestions: readonly QuestionItem[];
+  /** Pre-computed latest versions (the Postgres bank cache keeps these). */
+  latestQuestions?: readonly QuestionItem[];
+  stimuliById: Readonly<Record<string, StimulusGroup>>;
   flags: QuestionFlagRecord[];
-  batches: ImportBatchRecord[];
+  batches: ImportBatchSummary[];
   params?: QuestionQueryParams;
 }): QuestionQueryResult {
   const { allQuestions, stimuliById, flags, batches, params = {} } = input;
@@ -96,7 +123,7 @@ export function filterAndPaginateQuestions(input: {
     }
   }
 
-  const latest = selectLatestByFamily(allQuestions);
+  const latest = input.latestQuestions ?? selectLatestByFamily(allQuestions);
   const base = params.includeHistorical ? allQuestions : latest;
   const { progress } = params;
   const progressByQid = new Map<string, QuestionProgressMeta>();
@@ -146,19 +173,7 @@ export function filterAndPaginateQuestions(input: {
       if (!missingExp) return false;
     }
 
-    if (needle) {
-      const partsHay = q.parts
-        .map(
-          (p) =>
-            `${p.partId} ${p.promptText} ${p.skillId} ${(p.secondarySkillIds || []).join(' ')} ${(p.trapTags || []).join(' ')} ${p.workedExplanation || ''} ${p.options.map((o) => `${o.key} ${o.text}`).join(' ')}`
-        )
-        .join(' ');
-      const stimHay = stim
-        ? `${stim.stimulusId} ${stim.title || ''} ${stim.preamble || ''} ${stim.mainTextMarkdown || ''} ${(stim.extracts || []).map((e) => `${e.label} ${e.title || ''} ${e.bodyMarkdown}`).join(' ')}`
-        : '';
-      const fullHay = `${q.questionId} ${q.questionFamilyId} ${q.stemPrefix || ''} ${q.batchId || ''} ${q.batchLabel || ''} ${q.provenance.sourceReference || ''} ${partsHay} ${stimHay}`.toLowerCase();
-      if (!fullHay.includes(needle)) return false;
-    }
+    if (needle && !searchHaystack(q, stim).includes(needle)) return false;
 
     return true;
   });
@@ -199,6 +214,8 @@ export function filterAndPaginateQuestions(input: {
     batches,
     ...(progress && {
       progressByQuestionId: Object.fromEntries(pagedQuestions.map((q) => [q.questionId, progressByQid.get(q.questionId)!])),
+    }),
+    ...(progress && params.includeSummary !== false && {
       poolHealth: computePoolHealth({
         questions: latest,
         evidenceMap: progress.evidence,

@@ -1,4 +1,5 @@
 import type {
+  AdminLearnerSummary,
   BankImportManifest,
   BankMasterySummary,
   DailyFocusPlan,
@@ -20,6 +21,7 @@ import type {
   WritingDeterministicMetrics,
   WritingEvaluationRecord,
 } from '../shared/contracts';
+export type { AdminLearnerSummary };
 import type {
   BankPoolStatus,
   BatchDirectorySummary,
@@ -93,6 +95,9 @@ export interface SessionDetailResponse {
     questionId: string;
     metrics: WritingDeterministicMetrics;
     evaluations: WritingEvaluationRecord[];
+    responseText?: string;
+    planNotes?: string;
+    evaluatingInProgress?: boolean;
   }[];
 }
 
@@ -146,6 +151,13 @@ import type { RuntimeDiagnostics as RuntimeDiagnosticsResponse } from '../server
 
 export type { BatchDirectorySummary } from '../shared/bankStatus';
 
+export interface AdminLearnersResponse {
+  learners: AdminLearnerSummary[];
+  primaryMonitoredStudentId: string | null;
+  defaultMonitoredStudentId: string | null;
+  totalLiveQuestions: number;
+}
+
 export interface PaginatedQuestionsResponse {
   questions: QuestionItem[];
   stimuliById: Record<string, StimulusGroup>;
@@ -153,11 +165,11 @@ export interface PaginatedQuestionsResponse {
   page: number;
   pageSize: number;
   openFlagsByQuestionId: Record<string, number>;
-  batches: ImportBatchRecord[];
   progressByQuestionId?: Record<string, QuestionProgressMeta>;
   poolHealth?: PoolHealthSummary;
   masteredLiveQuestionIds?: string[];
   batchSummaries?: BatchDirectorySummary[];
+  monitoredStudentId?: string | null;
 }
 
 export interface ProgressCountsResponse {
@@ -386,6 +398,7 @@ export const api = {
   getAdminDiagnostics: () =>
     request<RuntimeDiagnosticsResponse>('/api/admin/diagnostics'),
   getAdminQuestions: (params?: {
+    studentId?: string;
     search?: string;
     section?: string;
     poolType?: string;
@@ -403,8 +416,11 @@ export const api = {
     sort?: 'id_asc' | 'updated_desc' | 'version_desc';
     page?: number;
     pageSize?: number;
-  }) => {
+    /** false skips pool health / batch summaries (they only change with the learner or the bank). */
+    includeSummary?: boolean;
+  }, signal?: AbortSignal) => {
     const qs = new URLSearchParams();
+    if (params?.studentId) qs.set('studentId', params.studentId);
     if (params?.search) qs.set('search', params.search);
     if (params?.section) qs.set('section', params.section);
     if (params?.poolType) qs.set('poolType', params.poolType);
@@ -422,8 +438,20 @@ export const api = {
     if (params?.sort) qs.set('sort', params.sort);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.includeSummary === false) qs.set('summary', '0');
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`);
+    return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`, { signal });
+  },
+  getAdminLearners: () =>
+    request<AdminLearnersResponse>('/api/admin/learners'),
+  setPrimaryMonitoredLearner: (studentId: string | null) =>
+    request<{ ok: boolean; primaryMonitoredStudentId: string | null }>('/api/admin/learners/primary', {
+      method: 'POST',
+      body: JSON.stringify({ studentId }),
+    }),
+  getAdminDailyPlan: (studentId?: string) => {
+    const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
+    return request<{ studentId: string | null; plan: DailyFocusPlan | null }>(`/api/admin/daily-plan${suffix}`);
   },
   getQuestionVersions: (questionId: string) =>
     request<{
@@ -432,6 +460,13 @@ export const api = {
     }>(`/api/admin/questions/${encodeURIComponent(questionId)}/versions`),
   getImportBatches: () =>
     request<{ batches: ImportBatchRecord[] }>('/api/admin/batches'),
+  /** Lightweight batch directory (metadata only) for the monitored learner. */
+  getAdminBatchSummaries: (studentId?: string | null) => {
+    const suffix = studentId === undefined ? '' : `?studentId=${encodeURIComponent(studentId ?? 'none')}`;
+    return request<{ batchSummaries: BatchDirectorySummary[]; monitoredStudentId: string | null }>(
+      `/api/admin/batches/summary${suffix}`
+    );
+  },
   updateQuestionStatus: (questionId: string, qcStatus: QuestionItem['qcStatus']) =>
     request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
       method: 'PATCH',
@@ -451,14 +486,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ questionIds }),
     }),
-  recalibrateDailyPlan: (configOverride?: LearningConfig) =>
-    request<{ plan: DailyFocusPlan; error?: string }>('/api/admin/recalibrate-daily-plan', {
+  recalibrateDailyPlan: (configOverride?: LearningConfig, studentId?: string) =>
+    request<{ plan: DailyFocusPlan; studentId?: string; error?: string }>('/api/admin/recalibrate-daily-plan', {
       method: 'POST',
-      body: JSON.stringify({ config: configOverride }),
+      body: JSON.stringify({ config: configOverride, studentId }),
     }),
-  getProgressCounts: () => request<ProgressCountsResponse>('/api/admin/study-progress'),
-  resetStudentProgress: () =>
-    request<ProgressResetResponse>('/api/admin/study-progress/reset', { method: 'POST' }),
+  getProgressCounts: (studentId?: string) => {
+    const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
+    return request<ProgressCountsResponse & { studentId?: string }>(`/api/admin/study-progress${suffix}`);
+  },
+  resetStudentProgress: (studentId?: string) =>
+    request<ProgressResetResponse & { studentId?: string }>('/api/admin/study-progress/reset', {
+      method: 'POST',
+      body: JSON.stringify({ studentId }),
+    }),
   attachQuestionVisual: (
     questionId: string,
     payload: { altText: string; caption?: string; imageBase64?: string; filename?: string; visual?: VisualSpec }

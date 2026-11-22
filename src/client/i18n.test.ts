@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SKILLS_TAXONOMY } from '../shared/skills.ts';
-import { MESSAGES_EN, MESSAGES_ZH, translateMessage, type MessageKey } from './i18n/messages.ts';
+import { MESSAGES_EN, type MessageKey } from './i18n/en.ts';
+import { loadZhMessages, translateMessage } from './i18n/messages.ts';
+import { MESSAGES_ZH } from './i18n/zh.ts';
 import { SKILL_FAMILY_LABELS_ZH, SKILL_NAMES_ZH } from './i18n/skillsZh.ts';
 
 test('English and Simplified Chinese message dictionaries have 1:1 non-empty key parity', () => {
@@ -34,7 +36,8 @@ test('All 77 canonical skills and 19 skill families have Simplified Chinese tran
   }
 });
 
-test('translateMessage interpolates placeholders cleanly in both locales', () => {
+test('translateMessage interpolates placeholders cleanly in both locales', async () => {
+  await loadZhMessages();
   assert.equal(translateMessage('en', 'bank.selectedCount', { count: 4 }), '4 selected');
   assert.equal(translateMessage('zh-CN', 'bank.selectedCount', { count: 4 }), '已勾选 4 题');
   assert.equal(

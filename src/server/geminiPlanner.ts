@@ -725,7 +725,8 @@ type DailyFocusPlanInput = {
   skillStates: Record<string, SkillState>;
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
-  questions: QuestionItem[];
+  /** Pass a loader to fetch the full bank only when today's plan is not already cached. */
+  questions: QuestionItem[] | (() => Promise<QuestionItem[]>);
   config?: LearningConfig;
   forceRefresh?: boolean;
   nowIso?: string;
@@ -774,12 +775,13 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
     }
   }
 
+  const questions = typeof input.questions === 'function' ? await input.questions() : input.questions;
   const deterministic = buildDeterministicDailyFocusPlan({
     studentId: input.studentId,
     skillStates: input.skillStates,
     evidenceMap: input.evidenceMap,
     questionMemory: input.questionMemory,
-    questions: input.questions,
+    questions,
     config: input.config,
     nowIso,
   });
@@ -793,10 +795,10 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
     skillStates: input.skillStates,
     evidenceMap: input.evidenceMap,
     questionMemory: input.questionMemory,
-    questions: input.questions,
+    questions,
     nowIso,
   });
-  const availableBySection = countAvailableBySection(input.questions);
+  const availableBySection = countAvailableBySection(questions);
 
   try {
     const geminiPlan = await generateGeminiFocusOverride({

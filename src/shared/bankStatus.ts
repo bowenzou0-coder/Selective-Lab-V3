@@ -8,7 +8,7 @@ import type {
 
 /**
  * Simplified 3-state operational pool status for the unified Question Bank.
- * Keeps full compatibility with the underlying 5-state QcStatus stored in Firestore.
+ * Maps onto the underlying 5-state QcStatus stored with each question.
  */
 export type BankPoolStatus = 'live' | 'paused' | 'archived';
 
@@ -78,23 +78,43 @@ export function getCompletionStatusLabel(status: QuestionCompletionStatus): stri
   return 'Done';
 }
 
+/** The question fields progress/pool helpers read; full QuestionItems and metadata rows both fit. */
+export type ProgressQuestionRef = Pick<QuestionItem, 'questionFamilyId' | 'evidenceRevision'>;
+export type PoolQuestionRef = ProgressQuestionRef & Pick<QuestionItem, 'qcStatus' | 'poolType' | 'section'>;
+
+// Evidence keys are `${questionFamilyId}__${evidenceRevision}` and revisions (`er_<digest>`) never
+// contain "__", so the family is everything before the last separator. Indexing once per map turns
+// the per-question prefix scan (O(questions × evidence)) into a lookup.
+const evidenceByFamilyCache = new WeakMap<object, Map<string, QuestionMasteryEvidence>>();
+
+function evidenceByFamily(evidenceMap: Record<string, QuestionMasteryEvidence>): Map<string, QuestionMasteryEvidence> {
+  let index = evidenceByFamilyCache.get(evidenceMap);
+  if (!index) {
+    index = new Map();
+    for (const [key, ev] of Object.entries(evidenceMap)) {
+      const sep = key.lastIndexOf('__');
+      if (sep <= 0) continue;
+      const family = key.slice(0, sep);
+      if (!index.has(family)) index.set(family, ev);
+    }
+    evidenceByFamilyCache.set(evidenceMap, index);
+  }
+  return index;
+}
+
 export function findEvidenceForQuestion(
-  q: QuestionItem,
+  q: ProgressQuestionRef,
   evidenceMap: Record<string, QuestionMasteryEvidence>
 ): QuestionMasteryEvidence | undefined {
   if (q.evidenceRevision) {
     const exact = evidenceMap[`${q.questionFamilyId}__${q.evidenceRevision}`];
     if (exact) return exact;
   }
-  const prefix = `${q.questionFamilyId}__`;
-  for (const [k, ev] of Object.entries(evidenceMap)) {
-    if (k.startsWith(prefix)) return ev;
-  }
-  return undefined;
+  return evidenceByFamily(evidenceMap).get(q.questionFamilyId);
 }
 
 export function deriveQuestionProgressMeta(
-  q: QuestionItem,
+  q: ProgressQuestionRef,
   evidenceMap: Record<string, QuestionMasteryEvidence>,
   questionMemory: Record<string, QuestionMemoryState>
 ): QuestionProgressMeta {
@@ -135,7 +155,7 @@ export function deriveQuestionProgressMeta(
 }
 
 export function computePoolHealth(input: {
-  questions: QuestionItem[];
+  questions: readonly PoolQuestionRef[];
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
   dailyQuestionTarget?: number;

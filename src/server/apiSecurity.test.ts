@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
 import { LoginTicket, OAuth2Client, type TokenPayload } from 'google-auth-library';
 import { createApp } from '../../server.ts';
-import type { BankImportManifest, LearningConfig, SectionCode } from '../shared/contracts.ts';
+import type { BankImportManifest, LearningConfig, QuestionItem, SectionCode } from '../shared/contracts.ts';
 import { V3_STARTER_MANIFEST_EXAMPLE } from '../shared/v3Schema.ts';
 import { AUTH_COOKIE_NAME, GOOGLE_NONCE_COOKIE_NAME, signSessionToken } from './auth.ts';
 import { getQuestionBatchTag } from '../shared/engine.ts';
@@ -23,6 +24,14 @@ function signedCookie(sub: string, role: 'student' | 'admin'): string {
 
 async function startTestServer() {
   const repo = new MemoryRepository();
+  // Mirror the live bank: starter pack plus a small official PT1–PT3 sample (the full official
+  // papers live only in Postgres).
+  await repo.initAndSeedIfEmpty(JSON.parse(await readFile('seed/golden-smoke-pack.json', 'utf8')) as BankImportManifest);
+  const officialSample = JSON.parse(
+    await readFile('src/server/__fixtures__/official-sample.json', 'utf8')
+  ) as Record<'pt12' | 'pt3', BankImportManifest>;
+  await repo.importManifest(officialSample.pt12, 'system_seed');
+  await repo.importManifest(officialSample.pt3, 'system_seed');
   const { app } = await createApp({ repo, skipSeed: false, skipVite: true });
   const server = await new Promise<http.Server>((resolve) => {
     const srv = app.listen(0, '127.0.0.1', () => resolve(srv));
@@ -51,17 +60,10 @@ test('createRepository fails cleanly in production when no durable DB is configu
     delete process.env.SQL_USER;
     delete process.env.SQL_PASSWORD;
     delete process.env.SQL_DB_NAME;
-    delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
     delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    delete process.env.FIRESTORE_EMULATOR_HOST;
-    delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
-    delete process.env.FIREBASE_STORAGE_EMULATOR_HOST;
     delete process.env.K_SERVICE;
     delete process.env.GOOGLE_CLOUD_PROJECT;
     delete process.env.GCLOUD_PROJECT;
-    delete process.env.USE_FIRESTORE;
-    delete process.env.USE_FIRESTORE_DB;
-    delete process.env.FIREBASE_USE_ADC;
     process.env.ALLOW_DEMO_MEMORY_DB = 'true'; // Must NOT silently allow memory DB in production!
     assert.throws(
       () => createRepository(),
@@ -339,8 +341,10 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
 
     // Edit bank question in-place + retire v1 + change correct key to 'B'
     await srv.repo.updateQuestionStatus('q_snap_test_v1', 'retired');
-    const qInMem = (await srv.repo.getQuestionWithStimulus('q_snap_test_v1'))!;
-    qInMem.question.parts[0].correctAnswerKey = 'B';
+    // Edit the stored bank row itself (repository reads hand out frozen copies).
+    const bankStore = (srv.repo as unknown as { questions: Map<string, QuestionItem> }).questions;
+    bankStore.get('q_snap_test_v1')!.parts[0].correctAnswerKey = 'B';
+    assert.equal((await srv.repo.getQuestionWithStimulus('q_snap_test_v1'))!.question.parts[0].correctAnswerKey, 'B');
 
     // Checkpoint concurrency on active sessionId: rev 1 -> 2, stale rev 1 -> 409
     const cp1 = await fetch(`${srv.baseUrl}/api/student/sessions/${sessionId}/checkpoint`, {
@@ -854,7 +858,10 @@ test('Dashboard returns pool counts excluding holdouts, custom batches that laun
     const nonHoldoutMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType !== 'benchmark_holdout');
     const holdoutMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType === 'benchmark_holdout');
     const pt3Math = activeQuestions.filter((q) => q.section === 'MATH' && getQuestionBatchTag(q) === 'PT3');
-    assert.ok(holdoutMath.length > 0 && pt3Math.length > 0, 'Expected holdout and PT3 maths items in seeded bank');
+    assert.ok(
+      pt3Math.length > 0 && pt3Math.every((q) => q.poolType !== 'benchmark_holdout') && holdoutMath.length > 0,
+      'Expected unified PT3 maths items in active pool and smoke holdout item excluded'
+    );
     assert.equal(d1.poolCounts.MATH.live, nonHoldoutMath.length);
     assert.equal(d1.poolCounts.MATH.unseen, nonHoldoutMath.length);
     assert.equal(d1.batchCounts.PT3.MATH, pt3Math.length);
@@ -1082,6 +1089,312 @@ test('Dashboard returns pool counts excluding holdouts, custom batches that laun
     };
     assert.equal(manualSess.session.timeLimitSec, 55 * 60);
     assert.equal(manualSess.session.plannedQuestionIds.length, 3);
+
+    // Explicit benchmark_holdout items remain isolated from live poolCounts
+    const holdoutManifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
+    holdoutManifest.batchLabel = 'Synthetic Holdout Pack';
+    holdoutManifest.defaultPoolType = 'benchmark_holdout';
+    holdoutManifest.stimuli = [];
+    const mathSample = holdoutManifest.questions.find((q) => q.section === 'MATH')!;
+    holdoutManifest.questions = [
+      {
+        ...structuredClone(mathSample),
+        questionId: 'q_synth_holdout_math_v1',
+        questionFamilyId: 'q_synth_holdout_math',
+        poolType: 'benchmark_holdout',
+        parts: mathSample.parts.map((p, idx) => ({ ...p, partId: `q_synth_holdout_math_p${idx + 1}` })),
+      },
+    ];
+    const importHoldoutRes = await fetch(`${srv.baseUrl}/api/admin/import/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ manifest: holdoutManifest }),
+    });
+    assert.equal(importHoldoutRes.status, 200);
+    const dashAfterHoldout = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(dashAfterHoldout.status, 200);
+    const dHoldout = (await dashAfterHoldout.json()) as typeof d1;
+    assert.equal(dHoldout.poolCounts.MATH.live, d4.poolCounts.MATH.live);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('Multi-account student isolation, admin learner monitoring switcher, primary pin, and scoped reset', async () => {
+  const srv = await startTestServer();
+  const sisterId = 'google_sister_acc';
+  const friendId = 'google_friend_acc';
+  const adminId = 'google_bowen_admin';
+  const sisterCookie = signedCookie('sister_acc', 'student');
+  const friendCookie = signedCookie('friend_acc', 'student');
+  const adminCookie = signedCookie('bowen_admin', 'admin');
+
+  try {
+    // 1. Both students and admin generate separate sessions
+    const sisterDash1 = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: sisterCookie },
+    });
+    assert.equal(sisterDash1.status, 200);
+
+    const activeQuestions = await srv.repo.listQuestions({ qcStatus: 'active' });
+    const nonHoldoutMath = activeQuestions.filter(
+      (q) => q.section === 'MATH' && q.poolType !== 'benchmark_holdout',
+    );
+    const sampleQ1 = nonHoldoutMath[0];
+    const sampleQ2 = nonHoldoutMath[1];
+
+    // Record completion evidence on sampleQ1 for sister, and sampleQ2 for admin
+    await srv.repo.upsertQuestionEvidence(
+      [
+        {
+          evidenceKey: `${sampleQ1.questionFamilyId}__${sampleQ1.evidenceRevision || 'rev'}`,
+          questionFamilyId: sampleQ1.questionFamilyId,
+          questionId: sampleQ1.questionId,
+          evidenceRevision: sampleQ1.evidenceRevision || 'rev',
+          section: 'MATH',
+          status: 'retained',
+          cleanPassesCount: 3,
+          passTimestampsIso: ['2026-11-01T00:00:00Z', '2026-11-03T00:00:00Z', '2026-11-12T00:00:00Z'],
+          everCleanPassed: true,
+          firstSubmissionCleanPass: true,
+          attemptsCount: 3,
+          resetCount: 0,
+          lastAttemptAtIso: '2026-11-12T00:00:00Z',
+          lastAllCorrect: true,
+          policyVersion: 'v3_3stage_24h_7d',
+          updatedAtIso: '2026-11-12T00:00:00Z',
+        },
+      ],
+      sisterId,
+    );
+    await srv.repo.upsertQuestionEvidence(
+      [
+        {
+          evidenceKey: `${sampleQ2.questionFamilyId}__${sampleQ2.evidenceRevision || 'rev'}`,
+          questionFamilyId: sampleQ2.questionFamilyId,
+          questionId: sampleQ2.questionId,
+          evidenceRevision: sampleQ2.evidenceRevision || 'rev',
+          section: 'MATH',
+          status: 'retained',
+          cleanPassesCount: 3,
+          passTimestampsIso: ['2026-11-01T00:00:00Z', '2026-11-03T00:00:00Z', '2026-11-12T00:00:00Z'],
+          everCleanPassed: true,
+          firstSubmissionCleanPass: true,
+          attemptsCount: 3,
+          resetCount: 0,
+          lastAttemptAtIso: '2026-11-12T00:00:00Z',
+          lastAllCorrect: true,
+          policyVersion: 'v3_3stage_24h_7d',
+          updatedAtIso: '2026-11-12T00:00:00Z',
+        },
+      ],
+      adminId,
+    );
+
+    const sisterSess = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sisterCookie },
+      body: JSON.stringify({ mode: 'daily_adaptive' }),
+    });
+    assert.equal(sisterSess.status, 201);
+
+    const friendSess = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: friendCookie },
+      body: JSON.stringify({ mode: 'daily_adaptive' }),
+    });
+    assert.equal(friendSess.status, 201);
+
+    // Per-student unseen isolation on dashboard
+    const [sisterDash2, friendDash] = await Promise.all([
+      fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: sisterCookie } }),
+      fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: friendCookie } }),
+    ]);
+    const sd = (await sisterDash2.json()) as {
+      poolCounts: Record<SectionCode, { live: number; unseen: number }>;
+    };
+    const fd = (await friendDash.json()) as {
+      poolCounts: Record<SectionCode, { live: number; unseen: number }>;
+    };
+    assert.equal(sd.poolCounts.MATH.unseen, nonHoldoutMath.length - 1);
+    assert.equal(fd.poolCounts.MATH.unseen, nonHoldoutMath.length);
+
+    // 2. Students cannot call multi-learner admin endpoints
+    const forbiddenLearners = await fetch(`${srv.baseUrl}/api/admin/learners`, {
+      headers: { Cookie: sisterCookie },
+    });
+    assert.equal(forbiddenLearners.status, 403);
+    const forbiddenPin = await fetch(`${srv.baseUrl}/api/admin/learners/primary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sisterCookie },
+      body: JSON.stringify({ studentId: sisterId }),
+    });
+    assert.equal(forbiddenPin.status, 403);
+
+    // 3. Admin /api/admin/learners summarizes each learner independently & never defaults to admin
+    const learnersRes = await fetch(`${srv.baseUrl}/api/admin/learners`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(learnersRes.status, 200);
+    const learnersBody = (await learnersRes.json()) as {
+      learners: Array<{
+        uid: string;
+        role?: string;
+        sessionsCount: number;
+        unseenLiveCount: number;
+        doneLiveCount: number;
+      }>;
+      primaryMonitoredStudentId: string | null;
+      defaultMonitoredStudentId: string | null;
+      totalLiveQuestions: number;
+    };
+    assert.equal(learnersBody.primaryMonitoredStudentId, null);
+    assert.ok(
+      learnersBody.defaultMonitoredStudentId === sisterId ||
+        learnersBody.defaultMonitoredStudentId === friendId,
+    );
+    const sisterRow = learnersBody.learners.find((l) => l.uid === sisterId);
+    const friendRow = learnersBody.learners.find((l) => l.uid === friendId);
+    assert.ok(sisterRow && friendRow);
+    assert.equal(sisterRow.doneLiveCount, 1);
+    assert.equal(sisterRow.unseenLiveCount, learnersBody.totalLiveQuestions - 1);
+    assert.equal(sisterRow.sessionsCount, 1);
+    assert.equal(friendRow.doneLiveCount, 0);
+    assert.equal(friendRow.unseenLiveCount, learnersBody.totalLiveQuestions);
+    assert.equal(friendRow.sessionsCount, 1);
+
+    // 4. Pin sister as primary monitored learner
+    const pinRes = await fetch(`${srv.baseUrl}/api/admin/learners/primary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ studentId: sisterId }),
+    });
+    assert.equal(pinRes.status, 200);
+    const pinBody = (await pinRes.json()) as {
+      ok: boolean;
+      primaryMonitoredStudentId: string | null;
+    };
+    assert.equal(pinBody.ok, true);
+    assert.equal(pinBody.primaryMonitoredStudentId, sisterId);
+
+    // 5. /api/admin/questions defaults to pinned sister, and switches cleanly to friend or none
+    const defaultBankRes = await fetch(
+      `${srv.baseUrl}/api/admin/questions?section=MATH&pageSize=100`,
+      { headers: { Cookie: adminCookie } },
+    );
+    assert.equal(defaultBankRes.status, 200);
+    const defaultBank = (await defaultBankRes.json()) as {
+      monitoredStudentId?: string | null;
+      poolHealth: { unseenLiveCount: number };
+      progressByQuestionId: Record<string, { completionStatus: string }>;
+    };
+    assert.equal(defaultBank.monitoredStudentId, sisterId);
+    assert.equal(
+      defaultBank.poolHealth.unseenLiveCount,
+      learnersBody.totalLiveQuestions - 1,
+    );
+    assert.equal(defaultBank.progressByQuestionId[sampleQ1.questionId]?.completionStatus, 'done');
+
+    const friendBankRes = await fetch(
+      `${srv.baseUrl}/api/admin/questions?section=MATH&pageSize=100&studentId=${encodeURIComponent(friendId)}`,
+      { headers: { Cookie: adminCookie } },
+    );
+    assert.equal(friendBankRes.status, 200);
+    const friendBank = (await friendBankRes.json()) as typeof defaultBank;
+    assert.equal(friendBank.monitoredStudentId, friendId);
+    assert.equal(friendBank.poolHealth.unseenLiveCount, learnersBody.totalLiveQuestions);
+    assert.equal(friendBank.progressByQuestionId[sampleQ1.questionId]?.completionStatus, 'unseen');
+
+    const noneBankRes = await fetch(
+      `${srv.baseUrl}/api/admin/questions?section=MATH&pageSize=100&studentId=none`,
+      { headers: { Cookie: adminCookie } },
+    );
+    assert.equal(noneBankRes.status, 200);
+    const noneBank = (await noneBankRes.json()) as typeof defaultBank;
+    assert.equal(noneBank.monitoredStudentId, null);
+    assert.equal(noneBank.progressByQuestionId[sampleQ1.questionId]?.completionStatus, 'unseen');
+
+    // 6. Scoped daily-plan & study-progress reset affects only the target student
+    const planRes = await fetch(
+      `${srv.baseUrl}/api/admin/daily-plan?studentId=${encodeURIComponent(sisterId)}`,
+      { headers: { Cookie: adminCookie } },
+    );
+    assert.equal(planRes.status, 200);
+    const planBody = (await planRes.json()) as { studentId: string | null };
+    assert.equal(planBody.studentId, sisterId);
+
+    const resetSisterRes = await fetch(`${srv.baseUrl}/api/admin/study-progress/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ studentId: sisterId }),
+    });
+    assert.equal(resetSisterRes.status, 200);
+    const resetSisterBody = (await resetSisterRes.json()) as { clearedSessions: number };
+    assert.equal(resetSisterBody.clearedSessions, 1);
+
+    const friendProgressAfter = await fetch(
+      `${srv.baseUrl}/api/admin/study-progress?studentId=${encodeURIComponent(friendId)}`,
+      { headers: { Cookie: adminCookie } },
+    );
+    assert.equal(friendProgressAfter.status, 200);
+    const fpBody = (await friendProgressAfter.json()) as { sessionsCount: number };
+    assert.equal(fpBody.sessionsCount, 1);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('Admin lightweight endpoints: batch summaries, summary-free paging, and cross-learner holdout isolation', async () => {
+  const srv = await startTestServer();
+  const adminCookie = signedCookie('lite_admin', 'admin');
+  try {
+    const summaryRes = await fetch(`${srv.baseUrl}/api/admin/batches/summary?studentId=none`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(summaryRes.status, 200);
+    const summary = (await summaryRes.json()) as { batchSummaries: { total: number; questionIds: string[] }[] };
+    const bankSize = (await srv.repo.listQuestionMeta()).length;
+    assert.equal(summary.batchSummaries.reduce((n, b) => n + b.total, 0), bankSize);
+
+    const pageRes = await fetch(`${srv.baseUrl}/api/admin/questions?page=1&pageSize=5&summary=0`, {
+      headers: { Cookie: adminCookie },
+    });
+    const page = (await pageRes.json()) as Record<string, unknown>;
+    assert.equal(pageRes.status, 200);
+    assert.equal((page.questions as unknown[]).length, 5);
+    assert.equal(page.poolHealth, undefined);
+    assert.equal(page.batchSummaries, undefined);
+    assert.equal(page.batches, undefined, 'import batch records are not sent to the bank UI');
+
+    // A holdout question planned into another learner's practice session must be reported.
+    const holdout = (await srv.repo.listQuestionMeta()).find((q) => q.poolType === 'benchmark_holdout')!;
+    await srv.repo.createSession({
+      sessionId: 'sess_leak_check',
+      studentId: 'google_other_learner',
+      configVersionId: 'cfg_v1',
+      mode: 'daily_adaptive',
+      title: 'Leak check',
+      isSandbox: false,
+      status: 'in_progress',
+      plannedQuestionIds: [holdout.questionId],
+      checkpointRevision: 1,
+      totalSlots: 1,
+      correctSlots: 0,
+      startedAt: new Date().toISOString(),
+    });
+    const status = (await (await fetch(`${srv.baseUrl}/api/admin/status`, { headers: { Cookie: adminCookie } })).json()) as {
+      holdoutIsolationOk: boolean;
+      leakedCount: number;
+    };
+    assert.equal(status.holdoutIsolationOk, false);
+    assert.equal(status.leakedCount, 1);
+
+    const forbidden = await fetch(`${srv.baseUrl}/api/admin/batches/summary`, {
+      headers: { Cookie: signedCookie('lite_student', 'student') },
+    });
+    assert.equal(forbidden.status, 403);
   } finally {
     await srv.close();
   }

@@ -14,7 +14,6 @@ skills-lock.json
 /docs
 /scripts
 /build
-/firebase-applet-config.json
 **/*.test.ts
 /README.md
 /AGENTS.md

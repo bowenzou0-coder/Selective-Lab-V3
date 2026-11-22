@@ -321,7 +321,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
           }
         : selectedPaper.isOfficial && selectedPaper.officialBatch
           ? {
-              mode: selectedPaper.officialBatch === 'PT3' ? 'benchmark_exam' : 'section_drill',
+              mode: 'section_drill',
               mockSource: 'batch',
               mockBatch: selectedPaper.officialBatch,
               sectionFilter,
@@ -905,11 +905,9 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             <span>
               {mockMode === 'pool'
                 ? t('home.poolHint', { unseen: poolUnseenForScope, live: poolLiveForScope })
-                : selectedPaper.officialBatch === 'PT3'
-                  ? t('home.pt3Hint')
-                  : batchQuestionCount === 1
-                    ? t('home.batchCountHintOne')
-                    : t('home.batchCountHintMany', { count: batchQuestionCount })}
+                : batchQuestionCount === 1
+                  ? t('home.batchCountHintOne')
+                  : t('home.batchCountHintMany', { count: batchQuestionCount })}
             </span>
           </div>
           <button

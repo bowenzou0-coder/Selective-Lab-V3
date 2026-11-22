@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, Maximize2, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -11,6 +11,7 @@ import type {
   VisualSpec,
 } from '../../shared/contracts';
 import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../optionLayout';
+import { FormattedText } from './FormattedText';
 import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
 import { VisualRenderer } from './VisualRenderer';
 import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
@@ -59,9 +60,11 @@ interface QuestionWorkspaceProps {
   footerNav?: ReactNode;
   embedded?: boolean;
   frozen?: boolean;
+  /** Admin inspector shows explanations in its own tab; set false to avoid duplicating them here. */
+  showReviewBlock?: boolean;
 }
 
-export function QuestionWorkspace({
+export const QuestionWorkspace = memo(function QuestionWorkspace({
   mode,
   question,
   stimulus: stimulusProp,
@@ -83,6 +86,7 @@ export function QuestionWorkspace({
   footerNav,
   embedded = false,
   frozen = false,
+  showReviewBlock = true,
 }: QuestionWorkspaceProps) {
   const { t, sectionLabel, formatLabel, skillName } = useI18n();
   const [internalGapIdx, setInternalGapIdx] = useState(0);
@@ -197,9 +201,7 @@ export function QuestionWorkspace({
             )}
 
             {primaryExplanation && (
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
-                {primaryExplanation}
-              </p>
+              <FormattedText text={primaryExplanation} variant="explanation" />
             )}
 
             {mode === 'review' && primaryRes?.distractorRationale && (
@@ -294,7 +296,7 @@ export function QuestionWorkspace({
                       </div>
                     )}
                     {explanation && (
-                      <p className="text-[var(--text-secondary)] whitespace-pre-line">{explanation}</p>
+                      <FormattedText text={explanation} variant="explanation" />
                     )}
                     {res?.distractorRationale && (
                       <p className="text-[var(--status-warn)] whitespace-pre-line">
@@ -391,7 +393,7 @@ export function QuestionWorkspace({
           aria-label={t('ws.passageAndVisual')}
           className={`${mobileTab === 'stimulus' ? 'block' : 'hidden lg:block'} ${
             embedded
-              ? 'xl:col-span-6 p-5 border-b xl:border-b-0 xl:border-r max-h-[540px] xl:overflow-y-auto'
+              ? 'xl:col-span-6 p-5 border-b xl:border-b-0 xl:border-r'
               : `${isReading ? 'lg:col-span-7' : 'lg:col-span-6'} p-6 lg:p-9 border-b lg:border-b-0 lg:border-r lg:h-full lg:overflow-y-auto`
           } border-[#E5DFD5] bg-white`}
         >
@@ -427,14 +429,12 @@ export function QuestionWorkspace({
           {!isReading && !isWriting && (
             <div className="space-y-5 max-w-[65ch]">
               {question.stemPrefix && (
-                <p className="text-[15px] text-[#113C36] leading-relaxed bg-[#FAF8F5] p-4 rounded-[12px] border border-[#E5DFD5]">
-                  {question.stemPrefix}
-                </p>
+                <div className="bg-[#FAF8F5] p-4 rounded-[12px] border border-[#E5DFD5]">
+                  <FormattedText text={question.stemPrefix} variant="boxedRules" />
+                </div>
               )}
               {activePart && (
-                <div className="text-[16px] font-medium text-[#113C36] leading-[1.65]">
-                  {activePart.promptText}
-                </div>
+                <FormattedText text={activePart.promptText} variant="prompt" />
               )}
               <VisualRenderer visual={question.visual} />
             </div>
@@ -446,7 +446,7 @@ export function QuestionWorkspace({
           aria-label="Answer selection panel"
           className={`${mobileTab === 'answer' ? 'flex' : 'hidden lg:flex'} ${
             embedded
-              ? 'xl:col-span-6 p-5 max-h-[540px] xl:overflow-y-auto'
+              ? 'xl:col-span-6 p-5'
               : `${isReading ? 'lg:col-span-5' : 'lg:col-span-6'} p-6 lg:p-8 lg:h-full lg:overflow-y-auto`
           } bg-[#FAF8F5] flex-col justify-between gap-6`}
         >
@@ -686,7 +686,7 @@ export function QuestionWorkspace({
                             <div className="flex-1 min-w-0 space-y-2">
                               {opt.text && (
                                 <div
-                                  className={`text-[14px] font-medium text-[#113C36] ${
+                                  className={`text-[14px] font-medium text-[#113C36] whitespace-pre-line ${
                                     elim ? 'line-through text-[#78756E]' : ''
                                   }`}
                                 >
@@ -729,7 +729,7 @@ export function QuestionWorkspace({
               </div>
             )}
 
-            {renderReviewAndMetadataBlock()}
+            {showReviewBlock && renderReviewAndMetadataBlock()}
           </div>
 
           {footerNav}
@@ -772,4 +772,4 @@ export function QuestionWorkspace({
         )}
     </div>
   );
-}
+});

@@ -9,6 +9,7 @@ import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerAccountRecord,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -87,6 +88,38 @@ export interface SyncHydratePayload {
   flags?: QuestionFlagRecord[];
 }
 
+/** Metadata-only projection of a question (no parts, SVGs or explanations). */
+export type QuestionMeta = Pick<
+  QuestionItem,
+  | 'questionId'
+  | 'questionFamilyId'
+  | 'version'
+  | 'section'
+  | 'formatType'
+  | 'poolType'
+  | 'qcStatus'
+  | 'stimulusId'
+  | 'batchId'
+  | 'batchLabel'
+  | 'createdAtIso'
+  | 'updatedAtIso'
+  | 'evidenceRevision'
+> & { provenance: Partial<Pick<QuestionItem['provenance'], 'sourceType' | 'sourceReference'>> };
+
+/** Import batch record without its (potentially long) question id lists. */
+export type ImportBatchSummary = Omit<ImportBatchRecord, 'newQuestionIds' | 'versionBumpedQuestionIds' | 'skippedQuestionIds'>;
+
+export interface LearnerActivityStats {
+  sessionsCount: number;
+  attemptsCount: number;
+  lastActiveAtIso?: string;
+}
+
+export interface ListSessionsOptions {
+  /** Drop the heavy stored submission summary (review results, attempts) from each row. */
+  omitSubmissionSummary?: boolean;
+}
+
 export interface QuestionQueryParams {
   search?: string;
   section?: string;
@@ -110,6 +143,8 @@ export interface QuestionQueryParams {
   sort?: 'id_asc' | 'updated_desc' | 'version_desc';
   page?: number;
   pageSize?: number;
+  /** Default true. false omits poolHealth, masteredLiveQuestionIds and batchSummaries. */
+  includeSummary?: boolean;
 }
 
 export interface QuestionQueryResult {
@@ -119,11 +154,12 @@ export interface QuestionQueryResult {
   page: number;
   pageSize: number;
   openFlagsByQuestionId: Record<string, number>;
-  batches: ImportBatchRecord[];
+  batches: ImportBatchSummary[];
   progressByQuestionId?: Record<string, QuestionProgressMeta>;
   poolHealth?: PoolHealthSummary;
   masteredLiveQuestionIds?: string[];
   batchSummaries?: BatchDirectorySummary[];
+  monitoredStudentId?: string | null;
 }
 
 export interface QuestionVersionSummary {
@@ -258,7 +294,7 @@ export interface ProgressResetResponse {
 }
 
 export interface AppRepository {
-  readonly backendName: 'postgres' | 'firestore_server' | 'cloudflare_d1' | 'memory_preview';
+  readonly backendName: 'postgres' | 'memory_preview';
   initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void>;
   hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void>;
 
@@ -269,6 +305,7 @@ export interface AppRepository {
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }>;
   isUserAdmin(uid: string): Promise<boolean>;
+  listUsers(): Promise<LearnerAccountRecord[]>;
   getProgressCounts?(studentId: string): Promise<ProgressCountsResponse>;
   resetStudentProgress?(studentId: string): Promise<ProgressResetResponse>;
 
@@ -278,6 +315,8 @@ export interface AppRepository {
     qcStatus?: string;
     includeHistorical?: boolean;
   }): Promise<QuestionItem[]>;
+  /** Latest-version metadata rows; far cheaper than listQuestions for counts and summaries. */
+  listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]>;
   listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult>;
   listQuestionVersions(questionFamilyId: string): Promise<QuestionVersionSummary[]>;
   listStimuliByIds(stimulusIds: string[]): Promise<Record<string, StimulusGroup>>;
@@ -287,6 +326,8 @@ export interface AppRepository {
     importedBy?: string
   ): Promise<{ imported: number; skipped: number; versionBumped: number; batch: ImportBatchRecord }>;
   listImportBatches(): Promise<ImportBatchRecord[]>;
+  /** Batch labels/provenance only (no question id arrays) for summaries and counts. */
+  listImportBatchSummaries(): Promise<ImportBatchSummary[]>;
   getImportBatch(batchId: string): Promise<ImportBatchRecord | null>;
   updateQuestionStatus(questionId: string, qcStatus: QuestionItem['qcStatus']): Promise<void>;
   deleteQuestions?(questionIds: string[]): Promise<number>;
@@ -317,7 +358,18 @@ export interface AppRepository {
     studentId?: string
   ): Promise<void>;
   finalizeSessionAtomically(input: FinalizeSessionInput): Promise<FinalizeSessionResult>;
-  listSessions(limit?: number, studentId?: string, includeSandbox?: boolean): Promise<SessionRecord[]>;
+  listSessions(
+    limit?: number,
+    studentId?: string,
+    includeSandbox?: boolean,
+    options?: ListSessionsOptions
+  ): Promise<SessionRecord[]>;
+  /** In-progress, non-sandbox sessions for one student (newest first). */
+  listActiveSessions(studentId: string): Promise<SessionRecord[]>;
+  /** Session/attempt counts and last activity per learner, computed without loading rows. */
+  getLearnerActivity(studentIds: string[]): Promise<Record<string, LearnerActivityStats>>;
+  /** Planned holdout questions found in non-benchmark sessions across every learner. */
+  countHoldoutLeaks(holdoutQuestionIds: string[]): Promise<number>;
 
   appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void>;
   listPartAttempts(limit?: number, studentId?: string, includeSandbox?: boolean): Promise<PartAttemptRecord[]>;

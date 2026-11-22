@@ -83,7 +83,7 @@ Always pair the design constitution above with Selective Lab's established studi
   - Deep pine ink & primary CTA: `#113C36` (hover `#0B2B26`)
   - Secondary ink: `#4A5955` | Quiet metadata: `#78756E`
   - Hero accents: Warm Apricot `#F9CAA7`, Warm Stone `#ECE8E1` + Coral CTA `#F29A63`, Soft Eucalyptus `#E5F0EA`
-- **Typography** (`/public/fonts/*.otf`, `button, input, select, textarea { font-family: inherit; }`):
+- **Typography** (`/public/fonts/*.woff2`, `button, input, select, textarea { font-family: inherit; }`):
   - `AnthropicSerifDisplay`: wordmark, expressive hero figures, writing headline
   - `AnthropicSerifText`: reading passages (`17px`, `1.74` leading, `max-w-[65ch]`)
   - `AnthropicSansDisplay`: headings, card titles, primary buttons

@@ -3,6 +3,7 @@ import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerAccountRecord,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -22,6 +23,7 @@ import { DEFAULT_LEARNING_CONFIG } from '../../shared/contracts.ts';
 import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { computeCanonicalHash } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
+import { deepFreeze, toQuestionMeta } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -35,6 +37,10 @@ import {
   type MigrationPreflightReport,
   type ProgressCountsResponse,
   type ProgressResetResponse,
+  type ImportBatchSummary,
+  type LearnerActivityStats,
+  type ListSessionsOptions,
+  type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
@@ -55,7 +61,10 @@ const DEFAULT_STUDENT_ID = 'default-student';
 export class MemoryRepository implements AppRepository {
   readonly backendName = 'memory_preview' as const;
 
-  private users = new Map<string, { uid: string; role: 'student' | 'admin'; displayName: string; email?: string }>();
+  private users = new Map<
+    string,
+    { uid: string; role: 'student' | 'admin'; displayName: string; email?: string; updatedAtIso?: string }
+  >();
   private admins = new Set<string>();
   private stimuli = new Map<string, StimulusGroup>();
   private questions = new Map<string, QuestionItem>();
@@ -111,12 +120,40 @@ export class MemoryRepository implements AppRepository {
       role,
       displayName: input.displayName || input.email.split('@')[0] || 'Learner',
       email: input.email,
+      updatedAtIso: new Date().toISOString(),
     });
     return { role };
   }
 
   async isUserAdmin(uid: string): Promise<boolean> {
     return this.admins.has(uid) || this.users.get(uid)?.role === 'admin';
+  }
+
+  async listUsers(): Promise<LearnerAccountRecord[]> {
+    const byUid = new Map<string, LearnerAccountRecord>();
+    for (const u of this.users.values()) {
+      byUid.set(u.uid, {
+        uid: u.uid,
+        role: this.admins.has(u.uid) || u.role === 'admin' ? 'admin' : 'student',
+        displayName: u.displayName || u.email || u.uid,
+        email: u.email,
+        updatedAtIso: u.updatedAtIso,
+      });
+    }
+    const extraIds = new Set<string>();
+    for (const s of this.sessions.values()) extraIds.add(s.studentId || DEFAULT_STUDENT_ID);
+    for (const id of this.questionEvidenceByStudent.keys()) extraIds.add(id);
+    for (const id of this.questionMemoryByStudent.keys()) extraIds.add(id);
+    for (const id of extraIds) {
+      if (id && !byUid.has(id)) {
+        byUid.set(id, {
+          uid: id,
+          role: this.admins.has(id) ? 'admin' : 'student',
+          displayName: id,
+        });
+      }
+    }
+    return Array.from(byUid.values());
   }
 
   async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {
@@ -311,14 +348,21 @@ export class MemoryRepository implements AppRepository {
         if (filter?.qcStatus && q.qcStatus !== filter.qcStatus) return false;
         return true;
       })
-      .map((q) => structuredClone(q));
+      // Frozen like the Postgres bank cache, so tests catch callers that mutate shared bank objects.
+      .map((q) => deepFreeze(structuredClone(q)));
+  }
+
+  async listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]> {
+    return selectLatestByFamily(Array.from(this.questions.values()))
+      .filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus)
+      .map((q) => toQuestionMeta(structuredClone(q)));
   }
 
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
-    const allQuestions = Array.from(this.questions.values()).map((q) => structuredClone(q));
+    const allQuestions = Array.from(this.questions.values()).map((q) => deepFreeze(structuredClone(q)));
     const stimuliById: Record<string, StimulusGroup> = {};
     for (const [id, s] of this.stimuli.entries()) {
-      stimuliById[id] = structuredClone(s);
+      stimuliById[id] = deepFreeze(structuredClone(s));
     }
     return filterAndPaginateQuestions({
       allQuestions,
@@ -343,7 +387,7 @@ export class MemoryRepository implements AppRepository {
     const out: Record<string, StimulusGroup> = {};
     for (const id of stimulusIds) {
       const s = this.stimuli.get(id);
-      if (s) out[id] = structuredClone(s);
+      if (s) out[id] = deepFreeze(structuredClone(s));
     }
     return out;
   }
@@ -355,8 +399,8 @@ export class MemoryRepository implements AppRepository {
     if (!q) return null;
     const stimulus = q.stimulusId ? this.stimuli.get(q.stimulusId) : undefined;
     return {
-      question: structuredClone(q),
-      stimulus: stimulus ? structuredClone(stimulus) : undefined,
+      question: deepFreeze(structuredClone(q)),
+      stimulus: stimulus ? deepFreeze(structuredClone(stimulus)) : undefined,
     };
   }
 
@@ -468,6 +512,12 @@ export class MemoryRepository implements AppRepository {
     this.batches.unshift(batch);
 
     return { imported, skipped, versionBumped, batch };
+  }
+
+  async listImportBatchSummaries(): Promise<ImportBatchSummary[]> {
+    return (await this.listImportBatches()).map(
+      ({ newQuestionIds: _n, versionBumpedQuestionIds: _v, skippedQuestionIds: _s, ...summary }) => summary
+    );
   }
 
   async listImportBatches(): Promise<ImportBatchRecord[]> {
@@ -703,13 +753,60 @@ export class MemoryRepository implements AppRepository {
   async listSessions(
     limit = 50,
     studentId = DEFAULT_STUDENT_ID,
-    includeSandbox = true
+    includeSandbox = true,
+    options: ListSessionsOptions = {}
   ): Promise<SessionRecord[]> {
     return Array.from(this.sessions.values())
       .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && (includeSandbox || !s.isSandbox))
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
       .slice(0, limit)
+      .map((s) => {
+        const copy = structuredClone(s);
+        if (options.omitSubmissionSummary) delete copy.submissionSummary;
+        return copy;
+      });
+  }
+
+  async listActiveSessions(studentId: string): Promise<SessionRecord[]> {
+    return Array.from(this.sessions.values())
+      .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && s.status === 'in_progress' && !s.isSandbox)
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
       .map((s) => structuredClone(s));
+  }
+
+  async getLearnerActivity(studentIds: string[]): Promise<Record<string, LearnerActivityStats>> {
+    const out: Record<string, LearnerActivityStats> = {};
+    for (const uid of studentIds) {
+      let latestMs = 0;
+      let sessionsCount = 0;
+      let attemptsCount = 0;
+      for (const s of this.sessions.values()) {
+        if ((s.studentId || DEFAULT_STUDENT_ID) !== uid || s.isSandbox) continue;
+        sessionsCount++;
+        latestMs = Math.max(latestMs, Date.parse(s.completedAt || s.startedAt) || 0);
+      }
+      for (const a of this.attempts) {
+        if ((a.studentId || DEFAULT_STUDENT_ID) !== uid || a.isSandbox) continue;
+        attemptsCount++;
+        latestMs = Math.max(latestMs, Date.parse(a.createdAt) || 0);
+      }
+      out[uid] = {
+        sessionsCount,
+        attemptsCount,
+        lastActiveAtIso: latestMs > 0 ? new Date(latestMs).toISOString() : undefined,
+      };
+    }
+    return out;
+  }
+
+  async countHoldoutLeaks(holdoutQuestionIds: string[]): Promise<number> {
+    const holdout = new Set(holdoutQuestionIds);
+    let leaked = 0;
+    for (const s of this.sessions.values()) {
+      if (s.mode === 'benchmark_exam' || s.mode === 'admin_calibration') continue;
+      for (const qid of s.plannedQuestionIds) if (holdout.has(qid)) leaked++;
+    }
+    return leaked;
   }
 
   async appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void> {

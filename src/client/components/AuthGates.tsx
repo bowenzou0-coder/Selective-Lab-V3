@@ -129,13 +129,15 @@ export function StudentPinGate({
 
         <div className="mt-6 pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-2 text-xs text-[#78756E]">
           <span>{t('auth.savedAuto')}</span>
-          <button
-            type="button"
-            onClick={onGoAdmin}
-            className="text-[#4A5955] hover:text-[#113C36] font-medium underline underline-offset-2 cursor-pointer whitespace-nowrap"
-          >
-            {t('auth.parentAdmin')}
-          </button>
+          {localDevPinEnabled && (
+            <button
+              type="button"
+              onClick={onGoAdmin}
+              className="text-[#4A5955] hover:text-[#113C36] font-medium underline underline-offset-2 cursor-pointer whitespace-nowrap"
+            >
+              {t('auth.parentAdmin')}
+            </button>
+          )}
         </div>
       </div>
     </main>

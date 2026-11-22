@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "selective-lab",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +12,6 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/shared/*.test.ts src/client/*.test.ts src/server/*.test.ts src/server/storage/*.test.ts",
-    "migrate:preflight": "tsx scripts/migrate-preflight.ts",
     "deploy": "vercel --prod",
     "db:push": "tsx scripts/push-manifest.ts"
   },
@@ -22,6 +21,7 @@
     "@types/pg": "^8.23.1",
     "@vercel/speed-insights": "^2.1.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "compression": "^1.8.2",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "google-auth-library": "^11.3.4",
@@ -32,11 +32,11 @@
     "vite": "^8.3.0"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "firebase-admin": "^14.5.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",

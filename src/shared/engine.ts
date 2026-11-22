@@ -537,7 +537,7 @@ export function detectPlateauStatus(input: {
 }
 
 export function getQuestionBatchTag(
-  q: QuestionItem
+  q: Pick<QuestionItem, 'questionId'> & { provenance: Pick<QuestionItem['provenance'], 'sourceReference'> }
 ): 'PT1' | 'PT2' | 'PT3' | 'SMOKE' | 'CUSTOM' {
   const ref = q.provenance.sourceReference ?? '';
   if (q.questionId.includes('_pt1_') || ref.includes('PT1')) return 'PT1';
@@ -565,7 +565,6 @@ export function selectMockTestQuestions(input: {
     .filter((q) => {
       if (q.qcStatus !== 'active') return false;
       if (getQuestionBatchTag(q) !== batch) return false;
-      if (batch === 'PT3' && q.poolType !== 'benchmark_holdout') return false;
       if (sectionFilter && q.section !== sectionFilter) return false;
       return true;
     })

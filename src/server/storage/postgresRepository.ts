@@ -4,6 +4,7 @@ import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerAccountRecord,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -24,6 +25,8 @@ import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { computeCanonicalHash, validateAndDryRunManifest } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
 import { getPostgresPoolConfig } from './postgresConfig.ts';
+import { exportPostgresBackup, restorePostgresBackup } from './postgresBackup.ts';
+import { QuestionBankCache } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -34,9 +37,13 @@ import {
   type CheckpointSaveResult,
   type FinalizeSessionInput,
   type FinalizeSessionResult,
+  type ImportBatchSummary,
+  type LearnerActivityStats,
+  type ListSessionsOptions,
   type MigrationPreflightReport,
   type ProgressCountsResponse,
   type ProgressResetResponse,
+  type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
@@ -75,6 +82,9 @@ export function getOrCreatePgPool(): Pool {
 
 type ManifestImportResult = Awaited<ReturnType<AppRepository['importManifest']>> & { replayed: boolean };
 const schemaReadyByPool = new WeakMap<Pool, Promise<void>>();
+const bankCacheByPool = new WeakMap<Pool, QuestionBankCache>();
+// Bump with the newest object created by runSchemaInit so cold starts skip the DDL transaction.
+const SCHEMA_MARKER = 'sessions_student_status_idx';
 
 function manifestBatchId(manifest: object): string {
   const canonical = JSON.stringify(manifest, (key, value: unknown) => {
@@ -98,7 +108,21 @@ function manifestImportResult(batch: ImportBatchRecord, replayed: boolean): Mani
 export class PostgresRepository implements AppRepository {
   readonly backendName = 'postgres' as const;
 
-  constructor(private readonly pool: Pool = getOrCreatePgPool()) {}
+  private readonly bank: QuestionBankCache;
+
+  constructor(private readonly pool: Pool = getOrCreatePgPool()) {
+    let bank = bankCacheByPool.get(pool);
+    if (!bank) {
+      bank = new QuestionBankCache(pool);
+      bankCacheByPool.set(pool, bank);
+    }
+    this.bank = bank;
+  }
+
+  /** Drop the process-local bank copy after a local write (other writers are caught by the fingerprint). */
+  private invalidateBank(): void {
+    this.bank.invalidate();
+  }
 
   async ensureSchema(): Promise<void> {
     let schemaReady = schemaReadyByPool.get(this.pool);
@@ -262,8 +286,15 @@ export class PostgresRepository implements AppRepository {
       CREATE INDEX IF NOT EXISTS part_attempts_student_created_idx ON part_attempts (student_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS writing_submissions_student_idx ON writing_submissions (student_id);
       CREATE INDEX IF NOT EXISTS writing_evaluations_submission_idx ON writing_evaluations (submission_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS questions_status_pool_section_idx ON questions (qc_status, pool_type, section);
+      CREATE INDEX IF NOT EXISTS questions_stimulus_idx ON questions (stimulus_id);
+      CREATE INDEX IF NOT EXISTS questions_batch_idx ON questions ((data->>'batchId'));
+      CREATE INDEX IF NOT EXISTS question_flags_status_idx ON question_flags (status);
+      CREATE INDEX IF NOT EXISTS sessions_student_status_idx ON sessions (student_id, status, is_sandbox, started_at DESC);
     `;
     try {
+      const ready = await this.pool.query<{ ready: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ready', [SCHEMA_MARKER]);
+      if (ready.rows[0]?.ready) return;
       await this.transaction(async (client) => {
         // IF NOT EXISTS alone can race with DDL from another cold function instance.
         await client.query("SELECT pg_advisory_xact_lock(hashtext('selective_lab_schema'), hashtext(current_schema()))");
@@ -283,6 +314,9 @@ export class PostgresRepository implements AppRepository {
 
   async initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void> {
     await this.ensureSchema();
+    const seeded = await this.pool.query<{ seeded: boolean }>('SELECT EXISTS (SELECT 1 FROM questions) AS seeded');
+    if (seeded.rows[0]?.seeded) return;
+    this.invalidateBank();
     await this.transaction(async (client) => {
       await this.lockQuestionBank(client);
       const existing = await client.query('SELECT 1 FROM questions LIMIT 1');
@@ -317,6 +351,48 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     const { rows } = await this.pool.query('SELECT role FROM users WHERE uid = $1', [uid]);
     return rows[0]?.role === 'admin';
+  }
+
+  async listUsers(): Promise<LearnerAccountRecord[]> {
+    await this.ensureSchema();
+    const [usersRes, orphanRes] = await Promise.all([
+      this.pool.query<{
+        uid: string;
+        role: 'student' | 'admin';
+        display_name: string;
+        email: string | null;
+        updated_at: Date | string | null;
+      }>('SELECT uid, role, display_name, email, updated_at FROM users ORDER BY updated_at DESC NULLS LAST'),
+      this.pool.query<{ student_id: string }>(`
+        SELECT DISTINCT student_id FROM (
+          SELECT student_id FROM sessions
+          UNION
+          SELECT student_id FROM question_evidence
+          UNION
+          SELECT student_id FROM question_memory
+        ) AS active_ids
+      `),
+    ]);
+    const byUid = new Map<string, LearnerAccountRecord>();
+    for (const r of usersRes.rows) {
+      byUid.set(r.uid, {
+        uid: r.uid,
+        role: r.role === 'admin' ? 'admin' : 'student',
+        displayName: r.display_name || r.email || r.uid,
+        email: r.email || undefined,
+        updatedAtIso: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+      });
+    }
+    for (const r of orphanRes.rows) {
+      if (r.student_id && !byUid.has(r.student_id)) {
+        byUid.set(r.student_id, {
+          uid: r.student_id,
+          role: 'student',
+          displayName: r.student_id,
+        });
+      }
+    }
+    return Array.from(byUid.values());
   }
 
   async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {
@@ -363,6 +439,14 @@ export class PostgresRepository implements AppRepository {
   }
 
   async hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void> {
+    try {
+      await this.hydrateSyncDataImpl(studentId, payload);
+    } finally {
+      this.invalidateBank();
+    }
+  }
+
+  private async hydrateSyncDataImpl(studentId: string, payload: SyncHydratePayload): Promise<void> {
     await this.ensureSchema();
     const uid = studentId || DEFAULT_STUDENT_ID;
     for (const s of payload.stimuli || []) {
@@ -474,9 +558,8 @@ export class PostgresRepository implements AppRepository {
     includeHistorical?: boolean;
   }): Promise<QuestionItem[]> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT data FROM questions');
-    const all = rows.map((r) => r.data as QuestionItem);
-    const base = filter?.includeHistorical ? all : selectLatestByFamily(all);
+    const bank = await this.bank.get();
+    const base = filter?.includeHistorical ? bank.all : bank.latest;
     return base.filter((q) => {
       if (filter?.section && q.section !== filter.section) return false;
       if (filter?.poolType && q.poolType !== filter.poolType) return false;
@@ -485,21 +568,23 @@ export class PostgresRepository implements AppRepository {
     });
   }
 
+  async listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]> {
+    await this.ensureSchema();
+    const latest = await this.bank.getLatestMeta();
+    return latest.filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus);
+  }
+
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
     await this.ensureSchema();
-    const [qRes, sRes, flags, batches] = await Promise.all([
-      this.pool.query('SELECT data FROM questions'),
-      this.pool.query('SELECT stimulus_id, data FROM stimuli'),
+    const [bank, flags, batches] = await Promise.all([
+      this.bank.get(),
       this.listQuestionFlags(),
-      this.listImportBatches(),
+      this.listImportBatchSummaries(),
     ]);
-    const stimuliById: Record<string, StimulusGroup> = {};
-    for (const r of sRes.rows) {
-      stimuliById[r.stimulus_id] = r.data as StimulusGroup;
-    }
     return filterAndPaginateQuestions({
-      allQuestions: qRes.rows.map((r) => r.data as QuestionItem),
-      stimuliById,
+      allQuestions: bank.all,
+      latestQuestions: bank.latest,
+      stimuliById: bank.stimuliById,
       flags,
       batches,
       params,
@@ -521,6 +606,12 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     const unique = Array.from(new Set(stimulusIds.filter(Boolean)));
     if (unique.length === 0) return {};
+    const warm = await this.bank.peek();
+    if (warm) {
+      const out: Record<string, StimulusGroup> = {};
+      for (const id of unique) if (warm.stimuliById[id]) out[id] = warm.stimuliById[id];
+      return out;
+    }
     const { rows } = await this.pool.query('SELECT stimulus_id, data FROM stimuli WHERE stimulus_id = ANY($1)', [
       unique,
     ]);
@@ -533,6 +624,12 @@ export class PostgresRepository implements AppRepository {
     questionId: string
   ): Promise<{ question: QuestionItem; stimulus?: StimulusGroup } | null> {
     await this.ensureSchema();
+    const warm = await this.bank.peek();
+    if (warm) {
+      const question = warm.byId.get(questionId);
+      if (!question) return null;
+      return { question, stimulus: question.stimulusId ? warm.stimuliById[question.stimulusId] : undefined };
+    }
     const { rows: [row] } = await this.pool.query<{ question: QuestionItem; stimulus: StimulusGroup | null }>(
       `SELECT q.data AS question, s.data AS stimulus FROM questions q
        LEFT JOIN stimuli s ON s.stimulus_id = q.stimulus_id WHERE q.question_id = $1`,
@@ -547,11 +644,15 @@ export class PostgresRepository implements AppRepository {
   ): Promise<ManifestImportResult> {
     await this.ensureSchema();
     const batchId = manifestBatchId(manifest);
-    return this.transaction(async (client) => {
-      await this.lockQuestionBank(client);
-      return (await this.findManifestImport(client, batchId)) ??
-        this.writeManifest(client, manifest, importedBy, batchId);
-    });
+    try {
+      return await this.transaction(async (client) => {
+        await this.lockQuestionBank(client);
+        return (await this.findManifestImport(client, batchId)) ??
+          this.writeManifest(client, manifest, importedBy, batchId);
+      });
+    } finally {
+      this.invalidateBank();
+    }
   }
 
   async validateAndImportManifest(raw: unknown, importedBy: string, options: { dryRun: boolean }) {
@@ -588,7 +689,9 @@ export class PostgresRepository implements AppRepository {
         ? await this.writeManifest(client, manifest, importedBy, batchId, { questions, stimuliById })
         : null;
       return { report, result, replayed: false };
-    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined);
+    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined).finally(() => {
+      if (!options.dryRun) this.invalidateBank();
+    });
   }
 
   private async lockQuestionBank(client: PoolClient): Promise<void> {
@@ -740,6 +843,15 @@ export class PostgresRepository implements AppRepository {
     return rows.map((r) => r.data as ImportBatchRecord);
   }
 
+  async listImportBatchSummaries(): Promise<ImportBatchSummary[]> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query(
+      `SELECT data - 'newQuestionIds' - 'versionBumpedQuestionIds' - 'skippedQuestionIds' AS data
+       FROM import_batches ORDER BY created_at DESC`
+    );
+    return rows.map((r) => r.data as ImportBatchSummary);
+  }
+
   async getImportBatch(batchId: string): Promise<ImportBatchRecord | null> {
     await this.ensureSchema();
     const { rows } = await this.pool.query('SELECT data FROM import_batches WHERE batch_id = $1', [batchId]);
@@ -752,12 +864,14 @@ export class PostgresRepository implements AppRepository {
       `UPDATE questions SET qc_status = $2, data = data || $3::jsonb WHERE question_id = $1`,
       [questionId, qcStatus, JSON.stringify({ qcStatus, updatedAtIso: new Date().toISOString() })]
     );
+    this.invalidateBank();
     if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
   }
 
   async deleteQuestions(questionIds: string[]): Promise<number> {
     await this.ensureSchema();
     const { rowCount } = await this.pool.query('DELETE FROM questions WHERE question_id = ANY($1::text[])', [questionIds]);
+    this.invalidateBank();
     return rowCount ?? 0;
   }
 
@@ -773,6 +887,7 @@ export class PostgresRepository implements AppRepository {
         evidenceRevision: computeEvidenceRevision({ ...question, visual }, stimulus),
       })]
     );
+    this.invalidateBank();
     if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
   }
 
@@ -1083,14 +1198,74 @@ export class PostgresRepository implements AppRepository {
     }
   }
 
-  async listSessions(limit = 50, studentId = DEFAULT_STUDENT_ID, includeSandbox = true): Promise<SessionRecord[]> {
+  async listSessions(
+    limit = 50,
+    studentId = DEFAULT_STUDENT_ID,
+    includeSandbox = true,
+    options: ListSessionsOptions = {}
+  ): Promise<SessionRecord[]> {
     await this.ensureSchema();
+    const column = options.omitSubmissionSummary ? "data - 'submissionSummary'" : 'data';
     const { rows } = await this.pool.query(
-      `SELECT data FROM sessions WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
+      `SELECT ${column} AS data FROM sessions WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
        ORDER BY started_at DESC LIMIT $3`,
       [studentId, includeSandbox, limit]
     );
     return rows.map((r) => r.data as SessionRecord);
+  }
+
+  async listActiveSessions(studentId: string): Promise<SessionRecord[]> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query(
+      `SELECT data FROM sessions WHERE student_id = $1 AND status = 'in_progress' AND NOT is_sandbox
+       ORDER BY started_at DESC`,
+      [studentId]
+    );
+    return rows.map((r) => r.data as SessionRecord);
+  }
+
+  async getLearnerActivity(studentIds: string[]): Promise<Record<string, LearnerActivityStats>> {
+    await this.ensureSchema();
+    const out: Record<string, LearnerActivityStats> = {};
+    if (studentIds.length === 0) return out;
+    const { rows } = await this.pool.query<{
+      student_id: string; sessions_count: number; attempts_count: number; last_active: Date | null;
+    }>(
+      `SELECT ids.student_id,
+              coalesce(s.n, 0)::int AS sessions_count,
+              coalesce(a.n, 0)::int AS attempts_count,
+              greatest(s.last_at, a.last_at) AS last_active
+       FROM unnest($1::text[]) AS ids(student_id)
+       LEFT JOIN (
+         SELECT student_id, count(*) AS n, max(coalesce(completed_at, started_at)) AS last_at
+         FROM sessions WHERE NOT is_sandbox AND student_id = ANY($1) GROUP BY student_id
+       ) s USING (student_id)
+       LEFT JOIN (
+         SELECT student_id, count(*) AS n, max(created_at) AS last_at
+         FROM part_attempts WHERE NOT is_sandbox AND student_id = ANY($1) GROUP BY student_id
+       ) a USING (student_id)`,
+      [studentIds]
+    );
+    for (const r of rows) {
+      out[r.student_id] = {
+        sessionsCount: r.sessions_count,
+        attemptsCount: r.attempts_count,
+        lastActiveAtIso: r.last_active ? new Date(r.last_active).toISOString() : undefined,
+      };
+    }
+    return out;
+  }
+
+  async countHoldoutLeaks(holdoutQuestionIds: string[]): Promise<number> {
+    await this.ensureSchema();
+    if (holdoutQuestionIds.length === 0) return 0;
+    const { rows } = await this.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM sessions s CROSS JOIN LATERAL jsonb_array_elements_text(s.data->'plannedQuestionIds') AS planned(qid)
+       WHERE s.mode NOT IN ('benchmark_exam', 'admin_calibration') AND planned.qid = ANY($1::text[])`,
+      [holdoutQuestionIds]
+    );
+    return rows[0]?.n ?? 0;
   }
 
   async appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void> {
@@ -1302,522 +1477,20 @@ export class PostgresRepository implements AppRepository {
 
   async exportFullBackup(): Promise<CanonicalBackupBundle> {
     await this.ensureSchema();
-    return this.transaction(async (client) => {
-      const stimuliRes = await client.query<{ data: StimulusGroup }>(
-        'SELECT data FROM stimuli ORDER BY stimulus_id ASC'
-      );
-      const questionsRes = await client.query<{ data: QuestionItem }>(
-        'SELECT data FROM questions ORDER BY question_id ASC'
-      );
-      const batchesRes = await client.query<{ data: ImportBatchRecord }>(
-        'SELECT data FROM import_batches ORDER BY created_at DESC, batch_id ASC'
-      );
-      const configsRes = await client.query<{
-        config_version_id: string;
-        version_number: number;
-        notes: string | null;
-        created_at: Date | string;
-        config: LearningConfig;
-      }>(
-        'SELECT config_version_id, version_number, notes, created_at, config FROM admin_config_versions ORDER BY version_number DESC'
-      );
-      const mediaRes = await client.query<{ data: MediaAssetRecord }>(
-        'SELECT data FROM media_assets ORDER BY created_at DESC, asset_id ASC'
-      );
-      const flagsRes = await client.query<{ data: QuestionFlagRecord }>(
-        'SELECT data FROM question_flags ORDER BY created_at DESC, flag_id ASC'
-      );
-      const usersRes = await client.query<{
-        uid: string;
-        role: string;
-        display_name: string;
-        email: string | null;
-      }>('SELECT uid, role, display_name, email FROM users ORDER BY uid ASC');
-      const sessionsRes = await client.query<{ student_id: string; data: SessionRecord }>(
-        'SELECT student_id, data FROM sessions ORDER BY started_at DESC, session_id ASC'
-      );
-      const snapsRes = await client.query<{
-        session_id: string;
-        student_id: string;
-        snapshots: SessionQuestionSnapshot[];
-      }>('SELECT session_id, student_id, snapshots FROM session_snapshots ORDER BY session_id ASC');
-      const attemptsRes = await client.query<{ student_id: string; data: PartAttemptRecord }>(
-        'SELECT student_id, data FROM part_attempts ORDER BY created_at DESC, attempt_id ASC'
-      );
-      const subsRes = await client.query<{ student_id: string; data: WritingSubmissionRecord }>(
-        'SELECT student_id, data FROM writing_submissions ORDER BY submitted_at DESC, submission_id ASC'
-      );
-      const evalsRes = await client.query<{ submission_id: string; data: WritingEvaluationRecord }>(
-        'SELECT submission_id, data FROM writing_evaluations ORDER BY created_at DESC, evaluation_id ASC'
-      );
-      const skillsRes = await client.query<{ student_id: string; data: SkillState }>(
-        'SELECT student_id, data FROM skill_states ORDER BY student_id ASC, skill_id ASC'
-      );
-      const memRes = await client.query<{ student_id: string; data: QuestionMemoryState }>(
-        'SELECT student_id, data FROM question_memory ORDER BY student_id ASC, question_family_id ASC'
-      );
-      const evRes = await client.query<{ student_id: string; data: QuestionMasteryEvidence }>(
-        'SELECT student_id, data FROM question_evidence ORDER BY student_id ASC, evidence_key ASC'
-      );
-      const plansRes = await client.query<{ student_id: string; plan_date: string; data: DailyFocusPlan }>(
-        'SELECT student_id, plan_date, data FROM daily_focus_plans ORDER BY student_id ASC, plan_date ASC'
-      );
-
-      const uids = new Set<string>();
-      for (const r of usersRes.rows) uids.add(r.uid);
-      for (const r of sessionsRes.rows) uids.add(r.student_id);
-      for (const r of snapsRes.rows) uids.add(r.student_id);
-      for (const r of attemptsRes.rows) uids.add(r.student_id);
-      for (const r of subsRes.rows) uids.add(r.student_id);
-      for (const r of skillsRes.rows) uids.add(r.student_id);
-      for (const r of memRes.rows) uids.add(r.student_id);
-      for (const r of evRes.rows) uids.add(r.student_id);
-      for (const r of plansRes.rows) uids.add(r.student_id);
-
-      const sessionsByUid = new Map<string, SessionRecord[]>();
-      for (const r of sessionsRes.rows) {
-        const list = sessionsByUid.get(r.student_id) || [];
-        list.push(r.data);
-        sessionsByUid.set(r.student_id, list);
-      }
-      const snapsBySessionId = new Map<string, SessionQuestionSnapshot[]>();
-      const snapIdsByUid = new Map<string, string[]>();
-      for (const r of snapsRes.rows) {
-        snapsBySessionId.set(r.session_id, r.snapshots);
-        const list = snapIdsByUid.get(r.student_id) || [];
-        list.push(r.session_id);
-        snapIdsByUid.set(r.student_id, list);
-      }
-      const attemptsByUid = new Map<string, PartAttemptRecord[]>();
-      for (const r of attemptsRes.rows) {
-        const list = attemptsByUid.get(r.student_id) || [];
-        list.push(r.data);
-        attemptsByUid.set(r.student_id, list);
-      }
-      const evalsBySub = new Map<string, WritingEvaluationRecord[]>();
-      for (const r of evalsRes.rows) {
-        const list = evalsBySub.get(r.submission_id) || [];
-        list.push(r.data);
-        evalsBySub.set(r.submission_id, list);
-      }
-      const subsByUid = new Map<string, (WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] })[]>();
-      for (const r of subsRes.rows) {
-        const list = subsByUid.get(r.student_id) || [];
-        list.push({ ...r.data, evaluations: evalsBySub.get(r.data.submissionId) || [] });
-        subsByUid.set(r.student_id, list);
-      }
-      const skillsByUid = new Map<string, SkillState[]>();
-      for (const r of skillsRes.rows) {
-        const list = skillsByUid.get(r.student_id) || [];
-        list.push(r.data);
-        skillsByUid.set(r.student_id, list);
-      }
-      const memByUid = new Map<string, QuestionMemoryState[]>();
-      for (const r of memRes.rows) {
-        const list = memByUid.get(r.student_id) || [];
-        list.push(r.data);
-        memByUid.set(r.student_id, list);
-      }
-      const evByUid = new Map<string, QuestionMasteryEvidence[]>();
-      for (const r of evRes.rows) {
-        const list = evByUid.get(r.student_id) || [];
-        list.push(r.data);
-        evByUid.set(r.student_id, list);
-      }
-      const plansByUid = new Map<string, DailyFocusPlan[]>();
-      for (const r of plansRes.rows) {
-        const list = plansByUid.get(r.student_id) || [];
-        list.push(r.data);
-        plansByUid.set(r.student_id, list);
-      }
-
-      const usersMeta = new Map(usersRes.rows.map((r) => [r.uid, r]));
-      const users = Array.from(uids)
-        .sort()
-        .map((uid) => {
-          const meta = usersMeta.get(uid);
-          const sessions = sessionsByUid.get(uid) || [];
-          const snapsObj: Record<string, SessionQuestionSnapshot[]> = {};
-          for (const s of sessions) {
-            snapsObj[s.sessionId] = snapsBySessionId.get(s.sessionId) || [];
-          }
-          for (const sid of snapIdsByUid.get(uid) || []) {
-            if (!(sid in snapsObj)) {
-              snapsObj[sid] = snapsBySessionId.get(sid) || [];
-            }
-          }
-          return {
-            uid,
-            role: (meta?.role === 'admin' ? 'admin' : 'student') as 'student' | 'admin',
-            displayName: String(meta?.display_name || uid),
-            email: meta?.email ? String(meta.email) : undefined,
-            sessions,
-            sessionSnapshotsBySessionId: snapsObj,
-            partAttempts: attemptsByUid.get(uid) || [],
-            skillStates: skillsByUid.get(uid) || [],
-            questionMemory: memByUid.get(uid) || [],
-            questionEvidence: evByUid.get(uid) || [],
-            writingSubmissions: subsByUid.get(uid) || [],
-            dailyFocusPlans: plansByUid.get(uid) || [],
-          };
-        });
-
-      const configs = configsRes.rows.map((r) => ({
-        configVersionId: r.config_version_id,
-        versionNumber: r.version_number,
-        notes: r.notes || undefined,
-        createdAt: new Date(r.created_at).toISOString(),
-        config: r.config,
-      }));
-
-      return finalizeBackupBundle({
-        exportedAtIso: new Date().toISOString(),
-        backendName: this.backendName,
-        stimuli: stimuliRes.rows.map((r) => r.data),
-        questions: questionsRes.rows.map((r) => r.data),
-        importBatches: batchesRes.rows.map((r) => r.data),
-        configVersions: configs,
-        mediaAssets: mediaRes.rows.map((r) => r.data),
-        questionFlags: flagsRes.rows.map((r) => r.data),
-        users,
-      });
-    }, 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    return exportPostgresBackup((work, begin) => this.transaction(work, begin));
   }
 
   async restoreFullBackup(rawBundle: unknown, options: { dryRun: boolean }): Promise<BackupRestoreReport> {
-    await this.ensureSchema();
-    const validated = validateIncomingBackupBundle(rawBundle);
-    if (!validated.valid || !validated.bundle) {
-      return emptyRestoreReport(false, options.dryRun, validated.checksumVerified, validated.errors, validated.warnings);
+    try {
+      return await this.restoreFullBackupImpl(rawBundle, options);
+    } finally {
+      if (!options.dryRun) this.invalidateBank();
     }
-    const bundle = validated.bundle;
+  }
 
-    return this.transaction(async (client) => {
-      if (!options.dryRun) {
-        await client.query(
-          `LOCK TABLE stimuli, questions, import_batches, admin_config_versions, media_assets, question_flags,
-                      users, sessions, session_snapshots, part_attempts, skill_states, question_memory,
-                      question_evidence, writing_submissions, writing_evaluations, daily_focus_plans
-           IN SHARE ROW EXCLUSIVE MODE`
-        );
-      }
-
-      const stimSet = new Set(
-        (await client.query<{ stimulus_id: string }>('SELECT stimulus_id FROM stimuli')).rows.map((r) => r.stimulus_id)
-      );
-      const qSet = new Set(
-        (await client.query<{ question_id: string }>('SELECT question_id FROM questions')).rows.map((r) => r.question_id)
-      );
-      const batchSet = new Set(
-        (await client.query<{ batch_id: string }>('SELECT batch_id FROM import_batches')).rows.map((r) => r.batch_id)
-      );
-      const cfgSet = new Set(
-        (await client.query<{ config_version_id: string }>('SELECT config_version_id FROM admin_config_versions')).rows.map(
-          (r) => r.config_version_id
-        )
-      );
-      const mediaSet = new Set(
-        (await client.query<{ asset_id: string }>('SELECT asset_id FROM media_assets')).rows.map((r) => r.asset_id)
-      );
-      const flagSet = new Set(
-        (await client.query<{ flag_id: string }>('SELECT flag_id FROM question_flags')).rows.map((r) => r.flag_id)
-      );
-      const userSet = new Set(
-        (await client.query<{ uid: string }>('SELECT uid FROM users')).rows.map((r) => r.uid)
-      );
-      const sessSet = new Set(
-        (await client.query<{ session_id: string }>('SELECT session_id FROM sessions')).rows.map((r) => r.session_id)
-      );
-      const attemptSet = new Set(
-        (await client.query<{ attempt_id: string }>('SELECT attempt_id FROM part_attempts')).rows.map((r) => r.attempt_id)
-      );
-      const subSet = new Set(
-        (await client.query<{ submission_id: string }>('SELECT submission_id FROM writing_submissions')).rows.map(
-          (r) => r.submission_id
-        )
-      );
-      const planSet = new Set(
-        (await client.query<{ student_id: string; plan_date: string }>('SELECT student_id, plan_date FROM daily_focus_plans')).rows.map(
-          (r) => `${r.student_id}::${r.plan_date}`
-        )
-      );
-
-      const totalSessions = bundle.users.reduce((n, u) => n + u.sessions.length, 0);
-      const totalAttempts = bundle.users.reduce((n, u) => n + u.partAttempts.length, 0);
-      const totalSubs = bundle.users.reduce((n, u) => n + u.writingSubmissions.length, 0);
-      const totalPlans = bundle.users.reduce((n, u) => n + (u.dailyFocusPlans?.length ?? 0), 0);
-
-      const wouldCreate = {
-        stimuli: bundle.stimuli.filter((s) => !stimSet.has(s.stimulusId)).length,
-        questions: bundle.questions.filter((q) => !qSet.has(q.questionId)).length,
-        importBatches: (bundle.importBatches || []).filter((b) => !batchSet.has(b.batchId)).length,
-        configVersions: bundle.configVersions.filter((c) => !cfgSet.has(c.configVersionId)).length,
-        mediaAssets: (bundle.mediaAssets || []).filter((m) => !mediaSet.has(m.assetId)).length,
-        questionFlags: (bundle.questionFlags || []).filter((f) => !flagSet.has(f.flagId)).length,
-        users: bundle.users.filter((u) => !userSet.has(u.uid)).length,
-        sessions: bundle.users.reduce((n, u) => n + u.sessions.filter((s) => !sessSet.has(s.sessionId)).length, 0),
-        attempts: bundle.users.reduce((n, u) => n + u.partAttempts.filter((a) => !attemptSet.has(a.attemptId)).length, 0),
-        writingSubmissions: bundle.users.reduce(
-          (n, u) => n + u.writingSubmissions.filter((ws) => !subSet.has(ws.submissionId)).length,
-          0
-        ),
-        dailyFocusPlans: bundle.users.reduce(
-          (n, u) => n + (u.dailyFocusPlans || []).filter((p) => !planSet.has(`${u.uid}::${p.planDate}`)).length,
-          0
-        ),
-      };
-      const wouldSkipExisting = {
-        stimuli: bundle.stimuli.length - wouldCreate.stimuli,
-        questions: bundle.questions.length - wouldCreate.questions,
-        importBatches: (bundle.importBatches || []).length - wouldCreate.importBatches,
-        configVersions: bundle.configVersions.length - wouldCreate.configVersions,
-        mediaAssets: (bundle.mediaAssets || []).length - wouldCreate.mediaAssets,
-        questionFlags: (bundle.questionFlags || []).length - wouldCreate.questionFlags,
-        users: bundle.users.length - wouldCreate.users,
-        sessions: totalSessions - wouldCreate.sessions,
-        attempts: totalAttempts - wouldCreate.attempts,
-        writingSubmissions: totalSubs - wouldCreate.writingSubmissions,
-        dailyFocusPlans: totalPlans - wouldCreate.dailyFocusPlans,
-      };
-
-      if (options.dryRun) {
-        return {
-          valid: true,
-          dryRun: true,
-          checksumVerified: true,
-          errors: [],
-          warnings: validated.warnings,
-          wouldCreate,
-          wouldSkipExisting,
-          applied: {},
-        };
-      }
-
-      const applied = {
-        stimuli: 0,
-        questions: 0,
-        importBatches: 0,
-        configVersions: 0,
-        mediaAssets: 0,
-        questionFlags: 0,
-        users: 0,
-        sessions: 0,
-        attempts: 0,
-        skillStates: 0,
-        questionMemory: 0,
-        evidence: 0,
-        writingSubmissions: 0,
-        writingEvaluations: 0,
-        dailyFocusPlans: 0,
-      };
-
-      for (const s of bundle.stimuli) {
-        const res = await client.query(
-          `INSERT INTO stimuli (stimulus_id, stimulus_family_id, version, content_hash, section, data, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()))
-           ON CONFLICT (stimulus_id) DO NOTHING`,
-          [s.stimulusId, s.stimulusFamilyId, s.version, s.contentHash || null, s.section, JSON.stringify(s), s.createdAtIso || null]
-        );
-        applied.stimuli += res.rowCount ?? 0;
-      }
-      for (const q of bundle.questions) {
-        const res = await client.query(
-          `INSERT INTO questions (question_id, question_family_id, version, content_hash, section, format_type, pool_type, qc_status, stimulus_id, data, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11::timestamptz, NOW()))
-           ON CONFLICT (question_id) DO NOTHING`,
-          [
-            q.questionId,
-            q.questionFamilyId,
-            q.version,
-            q.contentHash || null,
-            q.section,
-            q.formatType,
-            q.poolType,
-            q.qcStatus,
-            q.stimulusId || null,
-            JSON.stringify(q),
-            q.createdAtIso || null,
-          ]
-        );
-        applied.questions += res.rowCount ?? 0;
-      }
-      for (const c of bundle.configVersions) {
-        const res = await client.query(
-          `INSERT INTO admin_config_versions (config_version_id, version_number, notes, config, created_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (config_version_id) DO NOTHING`,
-          [c.configVersionId, c.versionNumber, c.notes || null, JSON.stringify(c.config), c.createdAt]
-        );
-        applied.configVersions += res.rowCount ?? 0;
-      }
-      for (const b of bundle.importBatches || []) {
-        const res = await client.query(
-          `INSERT INTO import_batches (batch_id, batch_label, data, created_at)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (batch_id) DO NOTHING`,
-          [b.batchId, b.batchLabel || null, JSON.stringify(b), b.createdAtIso]
-        );
-        applied.importBatches += res.rowCount ?? 0;
-      }
-      for (const m of bundle.mediaAssets || []) {
-        const res = await client.query(
-          `INSERT INTO media_assets (asset_id, data, created_at)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (asset_id) DO NOTHING`,
-          [m.assetId, JSON.stringify(m), m.createdAtIso]
-        );
-        applied.mediaAssets += res.rowCount ?? 0;
-      }
-      for (const f of bundle.questionFlags || []) {
-        const res = await client.query(
-          `INSERT INTO question_flags (flag_id, question_id, status, data, created_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (flag_id) DO NOTHING`,
-          [f.flagId, f.questionId, f.status, JSON.stringify(f), f.createdAt]
-        );
-        applied.questionFlags += res.rowCount ?? 0;
-      }
-      for (const u of bundle.users) {
-        // The backup cannot grant privileges. A verified login will set the current role.
-        const userRes = await client.query(
-          `INSERT INTO users (uid, display_name, email) VALUES ($1, $2, $3) ON CONFLICT (uid) DO NOTHING`,
-          [u.uid, u.displayName, u.email ?? null]
-        );
-        applied.users += userRes.rowCount ?? 0;
-
-        const restoredSnapshotIds = new Set<string>();
-        for (const s of u.sessions) {
-          const stored: SessionRecord = {
-            ...s,
-            studentId: u.uid,
-            checkpointRevision: s.checkpointRevision ?? 1,
-          };
-          const sRes = await client.query(
-            `INSERT INTO sessions (session_id, student_id, mode, status, is_sandbox, data, started_at, completed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (session_id) DO NOTHING`,
-            [
-              stored.sessionId,
-              u.uid,
-              stored.mode,
-              stored.status,
-              Boolean(stored.isSandbox),
-              JSON.stringify(stored),
-              stored.startedAt,
-              stored.completedAt ?? null,
-            ]
-          );
-          applied.sessions += sRes.rowCount ?? 0;
-
-          const snapshots = u.sessionSnapshotsBySessionId?.[s.sessionId] || [];
-          if (snapshots.length > 0) {
-            await client.query(
-              `INSERT INTO session_snapshots (session_id, student_id, snapshots)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (session_id) DO NOTHING`,
-              [stored.sessionId, u.uid, JSON.stringify(snapshots)]
-            );
-            restoredSnapshotIds.add(s.sessionId);
-          }
-        }
-        for (const [sid, snapshots] of Object.entries(u.sessionSnapshotsBySessionId || {})) {
-          if (!restoredSnapshotIds.has(sid) && Array.isArray(snapshots) && snapshots.length > 0) {
-            await client.query(
-              `INSERT INTO session_snapshots (session_id, student_id, snapshots)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (session_id) DO NOTHING`,
-              [sid, u.uid, JSON.stringify(snapshots)]
-            );
-          }
-        }
-        for (const a of u.partAttempts) {
-          const res = await client.query(
-            `INSERT INTO part_attempts (attempt_id, student_id, session_id, question_id, part_id, skill_id, is_correct, is_sandbox, data, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-             ON CONFLICT (attempt_id) DO NOTHING`,
-            [
-              a.attemptId,
-              u.uid,
-              a.sessionId,
-              a.questionId,
-              a.partId,
-              a.skillId,
-              a.isCorrect,
-              Boolean(a.isSandbox),
-              JSON.stringify({ ...a, studentId: u.uid }),
-              a.createdAt,
-            ]
-          );
-          applied.attempts += res.rowCount ?? 0;
-        }
-        for (const sk of u.skillStates) {
-          const res = await client.query(
-            `INSERT INTO skill_states (student_id, skill_id, data)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (student_id, skill_id) DO NOTHING`,
-            [u.uid, sk.skillId, JSON.stringify(sk)]
-          );
-          applied.skillStates += res.rowCount ?? 0;
-        }
-        for (const mem of u.questionMemory) {
-          const res = await client.query(
-            `INSERT INTO question_memory (student_id, question_family_id, data)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (student_id, question_family_id) DO NOTHING`,
-            [u.uid, mem.questionFamilyId, JSON.stringify(mem)]
-          );
-          applied.questionMemory += res.rowCount ?? 0;
-        }
-        for (const ev of u.questionEvidence) {
-          const res = await client.query(
-            `INSERT INTO question_evidence (student_id, evidence_key, data)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (student_id, evidence_key) DO NOTHING`,
-            [u.uid, ev.evidenceKey, JSON.stringify(ev)]
-          );
-          applied.evidence += res.rowCount ?? 0;
-        }
-        for (const ws of u.writingSubmissions) {
-          const { evaluations: evs, ...rest } = ws;
-          const wsRes = await client.query(
-            `INSERT INTO writing_submissions (submission_id, student_id, session_id, question_id, data, submitted_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (submission_id) DO NOTHING`,
-            [rest.submissionId, u.uid, rest.sessionId, rest.questionId, JSON.stringify({ ...rest, studentId: u.uid }), rest.submittedAt]
-          );
-          applied.writingSubmissions += wsRes.rowCount ?? 0;
-          for (const ev of evs || []) {
-            const evRes = await client.query(
-              `INSERT INTO writing_evaluations (evaluation_id, submission_id, data, created_at)
-               VALUES ($1, $2, $3, $4)
-               ON CONFLICT (evaluation_id) DO NOTHING`,
-              [ev.evaluationId, ev.submissionId, JSON.stringify(ev), ev.createdAt]
-            );
-            applied.writingEvaluations += evRes.rowCount ?? 0;
-          }
-        }
-        for (const plan of u.dailyFocusPlans || []) {
-          const pRes = await client.query(
-            `INSERT INTO daily_focus_plans (student_id, plan_date, data)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (student_id, plan_date) DO NOTHING`,
-            [u.uid, plan.planDate, JSON.stringify({ ...plan, studentId: u.uid })]
-          );
-          applied.dailyFocusPlans += pRes.rowCount ?? 0;
-        }
-      }
-
-      return {
-        valid: true,
-        dryRun: false,
-        checksumVerified: true,
-        errors: [],
-        warnings: validated.warnings,
-        wouldCreate,
-        wouldSkipExisting,
-        applied,
-      };
-    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined);
+  private async restoreFullBackupImpl(rawBundle: unknown, options: { dryRun: boolean }): Promise<BackupRestoreReport> {
+    await this.ensureSchema();
+    return restorePostgresBackup((work, begin) => this.transaction(work, begin), rawBundle, options);
   }
 
   async runMigrationPreflight(uploadsDir = 'public/assets/uploads'): Promise<MigrationPreflightReport> {

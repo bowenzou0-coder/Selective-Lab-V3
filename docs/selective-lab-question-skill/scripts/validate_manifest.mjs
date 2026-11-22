@@ -111,6 +111,15 @@ function checkVisual(visual, location, isOptionTile, errors, warnings) {
     if (openSvg !== closeSvg) {
       errors.push(`${location}: unbalanced <svg> tags (${openSvg} open vs ${closeSvg} close).`);
     }
+    for (const tag of ['g', 'text', 'tspan']) {
+      const opens = (trimmed.match(new RegExp(`<${tag}[\\s>]`, 'g')) || []).length;
+      const selfClosing = (trimmed.match(new RegExp(`<${tag}\\b[^>]*/>`, 'g')) || []).length;
+      const closes = (trimmed.match(new RegExp(`</${tag}>`, 'g')) || []).length;
+      if (opens - selfClosing !== closes) {
+        errors.push(`${location}: unbalanced <${tag}> tags (${opens - selfClosing} open vs ${closes} close).`);
+      }
+    }
+    if (vbMatch) checkSvgTextGeometry(trimmed, vbMatch, location, warnings);
     if (/width\s*=\s*["']\s*(\d{4,})/.test(trimmed) || /height\s*=\s*["']\s*(\d{4,})/.test(trimmed)) {
       warnings.push(`${location}: svgMarkup has a huge explicit pixel width/height attribute; rely on viewBox instead.`);
     }
@@ -131,7 +140,132 @@ function checkVisual(visual, location, isOptionTile, errors, warnings) {
     if (!visual.imageUrl || typeof visual.imageUrl !== 'string') {
       errors.push(`${location}: image_asset missing imageUrl.`);
     } else if (visual.imageUrl.startsWith('data:') && visual.imageUrl.length > 100_000) {
-      warnings.push(`${location}: large data URI (${Math.round(visual.imageUrl.length / 1024)} KB) risks Firestore 1 MiB ceiling; prefer inline_svg.`);
+      warnings.push(`${location}: large data URI (${Math.round(visual.imageUrl.length / 1024)} KB) exceeds 95 KB target; compress WebP < 95 KB or prefer inline_svg.`);
+    }
+  }
+}
+
+/**
+ * Flags <text> labels anchored outside the viewBox (clipped on screen) and labels drawn on
+ * top of each other. Only literal numeric x/y on <text> (no transforms) are checked.
+ */
+function checkSvgTextGeometry(svg, vbMatch, location, warnings) {
+  const [minX, minY, w, h] = vbMatch.slice(1, 5).map(Number);
+  const anchors = [];
+  // Labels inside transformed groups are positioned relative to the group; skip them.
+  const untransformed = svg.replace(/<g\b[^>]*\btransform\s*=[^>]*>[\s\S]*?<\/g>/g, '');
+  for (const m of untransformed.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)) {
+    const attrs = m[1];
+    if (/transform\s*=/.test(attrs)) continue;
+    const x = Number((attrs.match(/\sx\s*=\s*["']\s*(-?[\d.]+)/) || [])[1]);
+    const y = Number((attrs.match(/\sy\s*=\s*["']\s*(-?[\d.]+)/) || [])[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const label = m[2].replace(/<[^>]+>/g, '').trim().slice(0, 24);
+    const margin = 2;
+    if (x < minX - margin || x > minX + w + margin || y < minY - margin || y > minY + h + margin) {
+      warnings.push(`${location}: SVG label "${label}" at (${x}, ${y}) sits outside the viewBox and will be clipped.`);
+    }
+    anchors.push({ x, y, label });
+  }
+  for (let i = 0; i < anchors.length; i++) {
+    for (let j = i + 1; j < anchors.length; j++) {
+      const a = anchors[i];
+      const b = anchors[j];
+      if (Math.abs(a.x - b.x) < 3 && Math.abs(a.y - b.y) < 3 && a.label !== b.label) {
+        warnings.push(`${location}: SVG labels "${a.label}" and "${b.label}" are drawn on top of each other.`);
+      }
+    }
+  }
+}
+
+const normalizeOptionText = (text) => String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+}
+
+/** Answer-quality heuristics for one objectively scored part with options. */
+function checkOptionQuality(q, p, options, pLoc, errors, warnings) {
+  const texts = options.filter((o) => typeof o?.text === 'string' && o.text.trim() && !(o.visual && o.visual.visualType !== 'none'));
+  const seen = new Map();
+  for (const opt of texts) {
+    const key = normalizeOptionText(opt.text);
+    if (seen.has(key)) errors.push(`${pLoc}: options ${seen.get(key)} and ${opt.key} have identical text "${opt.text.trim()}" (two correct answers).`);
+    else seen.set(key, opt.key);
+    if (/^(all|none|both|neither) of (the|these) (above|options)/i.test(opt.text.trim())) {
+      warnings.push(`${pLoc}: option ${opt.key} uses "${opt.text.trim()}"; NSW papers avoid all/none-of-the-above options.`);
+    }
+  }
+  const correct = texts.find((o) => o.key === p.correctAnswerKey);
+  const distractorLengths = texts.filter((o) => o.key !== p.correctAnswerKey).map((o) => o.text.trim().length);
+  if (correct && distractorLengths.length >= 2) {
+    const len = correct.text.trim().length;
+    const med = median(distractorLengths);
+    if (len >= 40 && len > med * 1.9) {
+      warnings.push(`${pLoc}: correct option ${correct.key} is ${len} chars vs ~${med} for distractors; balance lengths so it is not a giveaway.`);
+    }
+  }
+  if (p.distractorRationales && typeof p.distractorRationales === 'object') {
+    for (const [key, note] of Object.entries(p.distractorRationales)) {
+      if (typeof note === 'string' && note.trim().length < 20) {
+        warnings.push(`${pLoc}: distractorRationales.${key} is too thin ("${note.trim()}"); name the specific mistake.`);
+      }
+    }
+  }
+  const explanation = typeof p.workedExplanation === 'string' ? p.workedExplanation : '';
+  // The skill requires Maths working to end on the final option; Reading/Thinking may not.
+  if (q.section === 'MATH' && explanation && p.correctAnswerKey && correct) {
+    const keyMentioned = new RegExp(`(^|[^A-Za-z])\\(?${p.correctAnswerKey}\\)?([^A-Za-z]|$)`).test(explanation);
+    const valueMentioned = correct.text.trim().length <= 40 && explanation.toLowerCase().includes(normalizeOptionText(correct.text));
+    if (!keyMentioned && !valueMentioned) {
+      warnings.push(`${pLoc}: workedExplanation never states the answer (${p.correctAnswerKey}); end with the final option.`);
+    }
+  }
+  if (q.section === 'MATH' && explanation && !/(^|\n)\s*(1\)|1\.|Step 1)/.test(explanation)) {
+    warnings.push(`${pLoc}: Maths workedExplanation should use numbered steps (1), 2), 3)).`);
+  }
+}
+
+/** Batch-level balance: answer-letter spread and Reading inference depth. */
+function checkBatchBalance(questions, warnings, stats) {
+  const byFormat = new Map();
+  for (const q of questions) {
+    if (!['MATH_MCQ_5', 'THINK_MCQ_4', 'READ_FICTION_MCQ', 'READ_POETRY_MCQ'].includes(q?.formatType)) continue;
+    for (const p of q.parts || []) {
+      if (typeof p?.correctAnswerKey !== 'string' || !p.correctAnswerKey) continue;
+      if (!byFormat.has(q.formatType)) byFormat.set(q.formatType, []);
+      byFormat.get(q.formatType).push(p.correctAnswerKey);
+    }
+  }
+  for (const [format, keys] of byFormat) {
+    if (keys.length < 8) continue;
+    const letters = format === 'MATH_MCQ_5' ? ['A', 'B', 'C', 'D', 'E'] : ['A', 'B', 'C', 'D'];
+    const counts = Object.fromEntries(letters.map((l) => [l, keys.filter((k) => k === l).length]));
+    stats.answerKeySpread[format] = counts;
+    const maxShare = Math.max(...Object.values(counts)) / keys.length;
+    if (maxShare > 0.4) {
+      warnings.push(`batch: ${format} answer keys are skewed (${JSON.stringify(counts)}); spread correct letters evenly.`);
+    }
+    if (keys.length >= 2 * letters.length) {
+      const unused = letters.filter((l) => counts[l] === 0);
+      if (unused.length) warnings.push(`batch: ${format} never uses answer letter(s) ${unused.join(', ')} across ${keys.length} items.`);
+    }
+    let run = 1;
+    for (let i = 1; i < keys.length; i++) {
+      run = keys[i] === keys[i - 1] ? run + 1 : 1;
+      if (run === 4) warnings.push(`batch: ${format} has 4+ consecutive items with answer ${keys[i]}; reorder or rebalance.`);
+    }
+  }
+  const readParts = questions
+    .filter((q) => q?.formatType === 'READ_FICTION_MCQ' || q?.formatType === 'READ_POETRY_MCQ')
+    .flatMap((q) => q.parts || []);
+  if (readParts.length >= 6) {
+    const recall = readParts.filter(
+      (p) => p.cognitiveDemand === 'recall_locate' || p.skillId === 'READ.FIC.LITERAL_DETAIL' || p.skillId === 'READ.POEM.LITERAL_SENSE'
+    ).length;
+    if (recall / readParts.length > 0.35) {
+      warnings.push(`batch: ${recall}/${readParts.length} Reading MCQs test literal recall; shift most to inference, tone, technique and structure.`);
     }
   }
 }
@@ -140,6 +274,7 @@ export function validateManifestObject(raw) {
   const errors = [];
   const warnings = [];
   const stats = {
+    answerKeySpread: {},
     stimuliCount: 0,
     questionsCount: 0,
     partsCount: 0,
@@ -190,7 +325,7 @@ export function validateManifestObject(raw) {
       continue;
     }
     const byteSize = Buffer.byteLength(JSON.stringify(s), 'utf8');
-    if (byteSize > 950_000) errors.push(`${loc}: serialized size (${byteSize} B) approaches Firestore 1 MiB ceiling.`);
+    if (byteSize > 950_000) errors.push(`${loc}: serialized size (${byteSize} B) approaches the 1 MB per-item storage budget 1 MiB ceiling.`);
     else if (byteSize > 250_000) warnings.push(`${loc}: serialized size (${Math.round(byteSize / 1024)} KB) is large.`);
 
     if (!s.stimulusId || !ID_RE.test(s.stimulusId)) {
@@ -246,7 +381,7 @@ export function validateManifestObject(raw) {
     }
 
     const byteSize = Buffer.byteLength(JSON.stringify(q), 'utf8');
-    if (byteSize > 950_000) errors.push(`${qLoc}: serialized size (${byteSize} B) approaches Firestore 1 MiB ceiling.`);
+    if (byteSize > 950_000) errors.push(`${qLoc}: serialized size (${byteSize} B) approaches the 1 MB per-item storage budget 1 MiB ceiling.`);
     else if (byteSize > 250_000) warnings.push(`${qLoc}: serialized size (${Math.round(byteSize / 1024)} KB) is large.`);
 
     if (!q.questionId || !ID_RE.test(q.questionId)) {
@@ -296,7 +431,7 @@ export function validateManifestObject(raw) {
       errors.push(`${qLoc}: stimulusId "${q.stimulusId}" does not resolve inside manifest.stimuli.`);
     }
     if (
-      ['READ_FICTION_MCQ', 'READ_POETRY_MCQ', 'READ_VOCAB_CLOZE', 'READ_GAPPED_TEXT', 'READ_MULTIPLE_MATCH'].includes(
+      ['READ_FICTION_MCQ', 'READ_POETRY_MCQ', 'READ_VOCAB_CLOZE', 'READ_GAPPED_TEXT', 'READ_MULTIPLE_MATCH', 'WRIT_TYPED_TASK'].includes(
         q.formatType
       ) &&
       !q.stimulusId
@@ -316,6 +451,24 @@ export function validateManifestObject(raw) {
 
     // Format-level checks
     if (q.formatType === 'WRIT_TYPED_TASK') {
+      if (stim) {
+        const titleTrim = typeof stim.title === 'string' ? stim.title.trim() : '';
+        if (!titleTrim || titleTrim.toLowerCase() === 'writing task') {
+          errors.push(`${qLoc}: WRIT_TYPED_TASK stimulus "${stim.stimulusId}" requires a non-empty, descriptive title.`);
+        }
+        if (typeof stim.mainTextMarkdown !== 'string' || !stim.mainTextMarkdown.trim()) {
+          errors.push(`${qLoc}: WRIT_TYPED_TASK stimulus "${stim.stimulusId}" requires non-empty mainTextMarkdown.`);
+        }
+        const attachedVisual =
+          stim.visual && stim.visual.visualType !== 'none'
+            ? stim.visual
+            : q.visual && q.visual.visualType !== 'none'
+              ? q.visual
+              : null;
+        if (attachedVisual && (typeof attachedVisual.caption !== 'string' || !attachedVisual.caption.trim())) {
+          errors.push(`${qLoc}: WRIT_TYPED_TASK visual requires a non-empty caption.`);
+        }
+      }
       if (!q.writingSpec) {
         errors.push(`${qLoc}: WRIT_TYPED_TASK requires writingSpec.`);
       } else {
@@ -371,6 +524,61 @@ export function validateManifestObject(raw) {
       }
       if (typeof p.promptText !== 'string' || !p.promptText.trim()) {
         errors.push(`${pLoc}: missing non-empty promptText.`);
+      } else {
+        if (p.promptText.includes('\\n')) {
+          errors.push(`${pLoc}: promptText contains literal "\\\\n" (double-escaped newline); use real line breaks.`);
+        }
+        if (/[^\s\n][ \t]+•\s/.test(p.promptText)) {
+          errors.push(`${pLoc}: promptText contains an inline bullet mid-line; put each bullet on its own line.`);
+        }
+        if (/(?:^|\n)[^\n]*?[ \t]1\.\s+[^\n]*?[ \t]2\.\s+/.test(p.promptText)) {
+          errors.push(`${pLoc}: promptText contains an inline numbered list on one line; put each item on its own line.`);
+        }
+        if (/\*\*[^*\n]+\*\*/.test(p.promptText)) {
+          warnings.push(`${pLoc}: promptText contains raw "**bold**" Markdown; use plain text or ALL-CAPS emphasis.`);
+        }
+        const ptLines = p.promptText.split('\n');
+        const isBul = (l) => /^\s*•\s/.test(l);
+        const isNum = (l) => /^\s*\d+\.\s/.test(l);
+        const isLbl = (l) => /^\s*(?:Statement|Rule|Clue|Condition|Step)\s+\d+:\s/.test(l);
+        let warnedListSpacing = false;
+        for (let li = 0; li < ptLines.length - 1; li++) {
+          const cur = ptLines[li];
+          const nxt = ptLines[li + 1];
+          if (!cur.trim() || !nxt.trim()) continue;
+          if (!warnedListSpacing && (isBul(cur) !== isBul(nxt) || isNum(cur) !== isNum(nxt) || isLbl(cur) !== isLbl(nxt))) {
+            warnings.push(`${pLoc}: list or labelled statement block in promptText should be separated from prose by blank lines (\\n\\n).`);
+            warnedListSpacing = true;
+          }
+        }
+        if ((q.section === 'MATH' || q.section === 'THINK') && !p.promptText.includes('\n') && p.promptText.length > 260) {
+          const sentCount = p.promptText.split(/(?<=[.!?])\s+(?=[A-Z"“])/).filter(Boolean).length;
+          if (sentCount >= 3) {
+            warnings.push(`${pLoc}: MATH/THINK promptText is a single unbroken paragraph (${p.promptText.length} chars); add \\n\\n breaks for readability.`);
+          }
+        }
+        if (
+          q.section === 'THINK' &&
+          pIdx === 0 &&
+          (/information in the box/i.test(p.promptText) || /whose reasoning is correct/i.test(p.promptText)) &&
+          (!q.stemPrefix || !String(q.stemPrefix).trim())
+        ) {
+          warnings.push(`${qLoc}: Thinking Skills boxed-reasoning question should place boxed rules in stemPrefix.`);
+        }
+      }
+      if (pIdx === 0 && typeof q.stemPrefix === 'string' && q.stemPrefix.trim()) {
+        if (q.stemPrefix.includes('\\n')) {
+          errors.push(`${qLoc}: stemPrefix contains literal "\\\\n" (double-escaped newline); use real line breaks.`);
+        }
+        if (/[^\s\n][ \t]+•\s/.test(q.stemPrefix)) {
+          errors.push(`${qLoc}: stemPrefix contains an inline bullet mid-line; put each bullet on its own line.`);
+        }
+        if (/(?:^|\n)[^\n]*?[ \t]1\.\s+[^\n]*?[ \t]2\.\s+/.test(q.stemPrefix)) {
+          errors.push(`${qLoc}: stemPrefix contains an inline numbered list on one line; put each item on its own line.`);
+        }
+        if (/\*\*[^*\n]+\*\*/.test(q.stemPrefix)) {
+          warnings.push(`${qLoc}: stemPrefix contains raw "**bold**" Markdown; use plain text or ALL-CAPS emphasis.`);
+        }
       }
       if (!p.skillId || !VALID_SKILLS.has(p.skillId)) {
         errors.push(`${pLoc}: unknown canonical skillId "${String(p.skillId)}".`);
@@ -443,6 +651,7 @@ export function validateManifestObject(raw) {
       if (['READ_GAPPED_TEXT', 'READ_MULTIPLE_MATCH', 'WRIT_TYPED_TASK'].includes(q.formatType) && options.length !== 0) {
         errors.push(`${pLoc}: ${q.formatType} must have options: [] (got ${options.length}).`);
       }
+      if (options.length > 0) checkOptionQuality(q, p, options, pLoc, errors, warnings);
 
       // SlotRef & placeholder alignment
       if (q.formatType === 'READ_VOCAB_CLOZE' || q.formatType === 'READ_GAPPED_TEXT') {
@@ -522,6 +731,12 @@ export function validateManifestObject(raw) {
         if (p.workedExplanation.includes('\\n')) {
           errors.push(`${pLoc}: workedExplanation contains literal "\\\\n" (double-escaped newline); use real line breaks in the string.`);
         }
+        if (/[^\s\n][ \t]+•\s/.test(p.workedExplanation)) {
+          errors.push(`${pLoc}: workedExplanation contains an inline bullet mid-line; put each bullet on its own line.`);
+        }
+        if (/\*\*[^*\n]+\*\*/.test(p.workedExplanation)) {
+          warnings.push(`${pLoc}: workedExplanation contains raw "**bold**" Markdown; use plain text or ALL-CAPS emphasis.`);
+        }
         if (q.formatType !== 'WRIT_TYPED_TASK' && p.workedExplanation.trim().length < 60) {
           warnings.push(`${pLoc}: workedExplanation is very short (${p.workedExplanation.trim().length} chars); ensure full Year 6 reasoning.`);
         }
@@ -592,6 +807,7 @@ export function validateManifestObject(raw) {
     }
   }
 
+  if (Array.isArray(raw.questions)) checkBatchBalance(raw.questions, warnings, stats);
   return { valid: errors.length === 0, errors, warnings, stats };
 }
 

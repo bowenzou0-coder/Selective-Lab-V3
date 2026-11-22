@@ -10,15 +10,22 @@ import {
 import type { BankPoolStatus, QuestionCompletionStatus } from '../../shared/bankStatus';
 import type { SectionCode } from '../../shared/contracts';
 import { SKILLS_TAXONOMY } from '../../shared/skills';
-import { MESSAGES_EN, translateMessage, type AppLocale, type MessageKey } from './messages';
-import { SKILL_FAMILY_LABELS_ZH, SKILL_NAMES_ZH } from './skillsZh';
+import {
+  MESSAGES_EN,
+  getZhSkillLabels,
+  isZhMessagesLoaded,
+  loadZhMessages,
+  translateMessage,
+  type AppLocale,
+  type MessageKey,
+} from './messages';
 
 export { type AppLocale, type MessageKey } from './messages';
 
 const LOCALE_STORAGE_KEY = 'selective_lab_locale';
 const SKILL_EN_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayName]));
 
-function readStoredLocale(): AppLocale {
+export function readStoredLocale(): AppLocale {
   if (typeof window === 'undefined') return 'en';
   try {
     const raw = window.localStorage.getItem(LOCALE_STORAGE_KEY);
@@ -49,6 +56,22 @@ const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<AppLocale>(readStoredLocale);
+  // Bumps once the lazily loaded Chinese dictionary arrives so `t` re-renders in Chinese.
+  const [zhReady, setZhReady] = useState(isZhMessagesLoaded);
+
+  useEffect(() => {
+    if (locale !== 'zh-CN' || zhReady) return;
+    let active = true;
+    loadZhMessages()
+      .then(() => {
+        if (active) setZhReady(true);
+      })
+      .catch(() => undefined); // stay on the English fallback if the chunk fails to load
+    return () => {
+      active = false;
+    };
+  }, [locale, zhReady]);
+  const dictLocale: AppLocale = locale === 'zh-CN' && zhReady ? 'zh-CN' : 'en';
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
@@ -70,63 +93,61 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback(
-    (key: MessageKey, vars?: Record<string, string | number>) => translateMessage(locale, key, vars),
-    [locale]
+    (key: MessageKey, vars?: Record<string, string | number>) => translateMessage(dictLocale, key, vars),
+    [dictLocale]
   );
 
   const sectionLabel = useCallback(
     (section: string) => {
       const k = `section.${section}` as MessageKey;
-      return k in MESSAGES_EN ? translateMessage(locale, k) : section;
+      return k in MESSAGES_EN ? translateMessage(dictLocale, k) : section;
     },
-    [locale]
+    [dictLocale]
   );
 
   const sectionShortLabel = useCallback(
     (section: string) => {
       const k = `sectionShort.${section}` as MessageKey;
-      return k in MESSAGES_EN ? translateMessage(locale, k) : section;
+      return k in MESSAGES_EN ? translateMessage(dictLocale, k) : section;
     },
-    [locale]
+    [dictLocale]
   );
 
   const formatLabel = useCallback(
     (formatType: string) => {
       const k = `format.${formatType}` as MessageKey;
-      return k in MESSAGES_EN ? translateMessage(locale, k) : formatType.replace(/_/g, ' ');
+      return k in MESSAGES_EN ? translateMessage(dictLocale, k) : formatType.replace(/_/g, ' ');
     },
-    [locale]
+    [dictLocale]
   );
 
   const poolStatusLabel = useCallback(
-    (status: BankPoolStatus) => translateMessage(locale, `poolStatus.${status}` as MessageKey),
-    [locale]
+    (status: BankPoolStatus) => translateMessage(dictLocale, `poolStatus.${status}` as MessageKey),
+    [dictLocale]
   );
 
   const completionStatusLabel = useCallback(
     (status: QuestionCompletionStatus) =>
-      translateMessage(locale, `completion.${status}` as MessageKey),
-    [locale]
+      translateMessage(dictLocale, `completion.${status}` as MessageKey),
+    [dictLocale]
   );
 
   const skillName = useCallback(
     (skillId: string) => {
-      if (locale === 'zh-CN' && SKILL_NAMES_ZH[skillId]) {
-        return SKILL_NAMES_ZH[skillId];
-      }
+      const zhName = dictLocale === 'zh-CN' ? getZhSkillLabels().names[skillId] : undefined;
+      if (zhName) return zhName;
       return SKILL_EN_MAP.get(skillId) || skillId;
     },
-    [locale]
+    [dictLocale]
   );
 
   const familyLabel = useCallback(
     (familyCode: string) => {
-      if (locale === 'zh-CN' && SKILL_FAMILY_LABELS_ZH[familyCode]) {
-        return SKILL_FAMILY_LABELS_ZH[familyCode];
-      }
+      const zhFamily = dictLocale === 'zh-CN' ? getZhSkillLabels().families[familyCode] : undefined;
+      if (zhFamily) return zhFamily;
       return familyCode;
     },
-    [locale]
+    [dictLocale]
   );
 
   const formatDate = useCallback(
@@ -236,7 +257,7 @@ export function LanguageToggle({
             type="button"
             aria-pressed={active}
             onClick={() => setLocale(code)}
-            className={`px-2.5 py-1 rounded-[8px] text-[11px] font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-all ${
+            className={`px-2.5 py-1 rounded-[8px] text-[11px] font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-colors ${
               active
                 ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                 : 'text-[#4A5955] hover:text-[#113C36]'
