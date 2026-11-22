@@ -190,7 +190,7 @@ export function validateManifestObject(raw) {
       continue;
     }
     const byteSize = Buffer.byteLength(JSON.stringify(s), 'utf8');
-    if (byteSize > 950_000) errors.push(`${loc}: serialized size (${byteSize} B) approaches Firestore 1 MiB ceiling.`);
+    if (byteSize > 950_000) errors.push(`${loc}: serialized size (${byteSize} B) approaches the 1 MB per-item storage budget 1 MiB ceiling.`);
     else if (byteSize > 250_000) warnings.push(`${loc}: serialized size (${Math.round(byteSize / 1024)} KB) is large.`);
 
     if (!s.stimulusId || !ID_RE.test(s.stimulusId)) {
@@ -246,7 +246,7 @@ export function validateManifestObject(raw) {
     }
 
     const byteSize = Buffer.byteLength(JSON.stringify(q), 'utf8');
-    if (byteSize > 950_000) errors.push(`${qLoc}: serialized size (${byteSize} B) approaches Firestore 1 MiB ceiling.`);
+    if (byteSize > 950_000) errors.push(`${qLoc}: serialized size (${byteSize} B) approaches the 1 MB per-item storage budget 1 MiB ceiling.`);
     else if (byteSize > 250_000) warnings.push(`${qLoc}: serialized size (${Math.round(byteSize / 1024)} KB) is large.`);
 
     if (!q.questionId || !ID_RE.test(q.questionId)) {

@@ -8,7 +8,7 @@ import type {
 
 /**
  * Simplified 3-state operational pool status for the unified Question Bank.
- * Keeps full compatibility with the underlying 5-state QcStatus stored in Firestore.
+ * Maps onto the underlying 5-state QcStatus stored with each question.
  */
 export type BankPoolStatus = 'live' | 'paused' | 'archived';
 

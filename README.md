@@ -12,7 +12,7 @@ Use Node.js 24 and install dependencies with `npm ci`. The configured checkout r
 | `GOOGLE_CLIENT_ID` | Web application client ID from Google Auth Platform. Add `http://localhost:3000` and the exact production origin to its authorized JavaScript origins. |
 | `SESSION_SECRET` | Generate a private signing secret with `openssl rand -hex 48`. All production instances share it. |
 | `ADMIN_EMAILS` | Comma-separated verified addresses. Defaults to `bowenzou0@gmail.com,yolandayue0319@gmail.com`. |
-| `GOOGLE_LEGACY_STUDENT_IDS` | Optional mapping produced during Firestore cutover. It links existing progress to a returning Google account. |
+| `GOOGLE_LEGACY_STUDENT_IDS` | Optional mapping from legacy student IDs. It links existing progress to a returning Google account. |
 | `GEMINI_API_KEY` | Optional server-side key for AI features. Its quota and billing belong to the Google project. |
 
 Start the app with `npm run dev` and open `http://localhost:3000`. Pointing `DATABASE_URL` at production gives the local app access to live data. Use a separate database for experiments.
@@ -43,4 +43,6 @@ npm test
 npm run build
 ```
 
-The [cutover guide](docs/firestore-postgres-cutover.md) documents exports, identity links and restore checks, and `src/shared/firestoreCodec.test.ts` keeps the cutover decoder covered.
+Set `TEST_POSTGRES_URL` to a disposable local database (for example `postgres://postgres@127.0.0.1:5432/labtest`) to also run the Postgres integration tests; they are skipped otherwise.
+
+[docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md) lists where each route, repository method, view and test lives.

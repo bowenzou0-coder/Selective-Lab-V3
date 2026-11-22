@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "selective-lab",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +12,6 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/shared/*.test.ts src/client/*.test.ts src/server/*.test.ts src/server/storage/*.test.ts",
-    "migrate:preflight": "tsx scripts/migrate-preflight.ts",
     "deploy": "vercel --prod",
     "db:push": "tsx scripts/push-manifest.ts"
   },
@@ -38,7 +37,6 @@
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "firebase-admin": "^14.5.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",

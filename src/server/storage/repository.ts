@@ -294,7 +294,7 @@ export interface ProgressResetResponse {
 }
 
 export interface AppRepository {
-  readonly backendName: 'postgres' | 'firestore_server' | 'cloudflare_d1' | 'memory_preview';
+  readonly backendName: 'postgres' | 'memory_preview';
   initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void>;
   hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void>;
 

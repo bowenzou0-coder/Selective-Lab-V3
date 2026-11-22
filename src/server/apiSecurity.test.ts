@@ -60,17 +60,10 @@ test('createRepository fails cleanly in production when no durable DB is configu
     delete process.env.SQL_USER;
     delete process.env.SQL_PASSWORD;
     delete process.env.SQL_DB_NAME;
-    delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
     delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    delete process.env.FIRESTORE_EMULATOR_HOST;
-    delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
-    delete process.env.FIREBASE_STORAGE_EMULATOR_HOST;
     delete process.env.K_SERVICE;
     delete process.env.GOOGLE_CLOUD_PROJECT;
     delete process.env.GCLOUD_PROJECT;
-    delete process.env.USE_FIRESTORE;
-    delete process.env.USE_FIRESTORE_DB;
-    delete process.env.FIREBASE_USE_ADC;
     process.env.ALLOW_DEMO_MEMORY_DB = 'true'; // Must NOT silently allow memory DB in production!
     assert.throws(
       () => createRepository(),
