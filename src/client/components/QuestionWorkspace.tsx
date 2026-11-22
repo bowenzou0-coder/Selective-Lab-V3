@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, Maximize2, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -60,9 +60,11 @@ interface QuestionWorkspaceProps {
   footerNav?: ReactNode;
   embedded?: boolean;
   frozen?: boolean;
+  /** Admin inspector shows explanations in its own tab; set false to avoid duplicating them here. */
+  showReviewBlock?: boolean;
 }
 
-export function QuestionWorkspace({
+export const QuestionWorkspace = memo(function QuestionWorkspace({
   mode,
   question,
   stimulus: stimulusProp,
@@ -84,6 +86,7 @@ export function QuestionWorkspace({
   footerNav,
   embedded = false,
   frozen = false,
+  showReviewBlock = true,
 }: QuestionWorkspaceProps) {
   const { t, sectionLabel, formatLabel, skillName } = useI18n();
   const [internalGapIdx, setInternalGapIdx] = useState(0);
@@ -390,7 +393,7 @@ export function QuestionWorkspace({
           aria-label={t('ws.passageAndVisual')}
           className={`${mobileTab === 'stimulus' ? 'block' : 'hidden lg:block'} ${
             embedded
-              ? 'xl:col-span-6 p-5 border-b xl:border-b-0 xl:border-r max-h-[540px] xl:overflow-y-auto'
+              ? 'xl:col-span-6 p-5 border-b xl:border-b-0 xl:border-r'
               : `${isReading ? 'lg:col-span-7' : 'lg:col-span-6'} p-6 lg:p-9 border-b lg:border-b-0 lg:border-r lg:h-full lg:overflow-y-auto`
           } border-[#E5DFD5] bg-white`}
         >
@@ -443,7 +446,7 @@ export function QuestionWorkspace({
           aria-label="Answer selection panel"
           className={`${mobileTab === 'answer' ? 'flex' : 'hidden lg:flex'} ${
             embedded
-              ? 'xl:col-span-6 p-5 max-h-[540px] xl:overflow-y-auto'
+              ? 'xl:col-span-6 p-5'
               : `${isReading ? 'lg:col-span-5' : 'lg:col-span-6'} p-6 lg:p-8 lg:h-full lg:overflow-y-auto`
           } bg-[#FAF8F5] flex-col justify-between gap-6`}
         >
@@ -726,7 +729,7 @@ export function QuestionWorkspace({
               </div>
             )}
 
-            {renderReviewAndMetadataBlock()}
+            {showReviewBlock && renderReviewAndMetadataBlock()}
           </div>
 
           {footerNav}
@@ -769,4 +772,4 @@ export function QuestionWorkspace({
         )}
     </div>
   );
-}
+});

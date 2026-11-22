@@ -7,8 +7,6 @@ import {
   ChevronDown,
   CloudCheck,
   CloudOff,
-  Eye,
-  EyeOff,
   Flag,
   Grid,
   RefreshCw,
@@ -26,18 +24,9 @@ import type {
 import { LanguageToggle, useI18n } from '../i18n';
 import { PostSubmissionReview } from './PostSubmissionReview';
 import { QuestionWorkspace } from './QuestionWorkspace';
-import { FormattedText } from './FormattedText';
-
-function formatTimer(totalSec: number): string {
-  const s = Math.max(0, Math.floor(totalSec));
-  const hrs = Math.floor(s / 3600);
-  const mins = Math.floor((s % 3600) / 60);
-  const rem = s % 60;
-  if (hrs > 0) {
-    return `${hrs}:${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
-  }
-  return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
-}
+import { createSessionClock, useClockValue } from '../sessionClock';
+import { AdminInspectorDrawer } from './session/AdminInspectorDrawer';
+import { ExamTimer } from './session/ExamTimer';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
 
@@ -104,7 +93,8 @@ export function SessionPlayerView({
 
   // Draft checkpoint state
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [elapsedSec, setElapsedSec] = useState(0);
+  // Ticking time lives outside React state; see sessionClock.ts.
+  const [clock] = useState(createSessionClock);
   const [answersByPartId, setAnswersByPartId] = useState<Record<string, string | null>>({});
   const [flaggedQuestionIds, setFlaggedQuestionIds] = useState<string[]>([]);
   const [eliminatedByPartId, setEliminatedByPartId] = useState<Record<string, string[]>>({});
@@ -143,8 +133,8 @@ export function SessionPlayerView({
   useEffect(() => {
     submittingRef.current = submitting;
   }, [submitting]);
-  const serverAnchorRef = useRef<{ serverMs: number; perfMs: number } | null>(null);
-  const [, setClockTick] = useState(0);
+  // Bumped to retry a failed auto-submit at 00:00.
+  const [autoSubmitRetry, setAutoSubmitRetry] = useState(0);
 
   // Submission Review
   const [reviewResults, setReviewResults] = useState<Record<string, MarkingResult[]> | undefined>();
@@ -153,6 +143,7 @@ export function SessionPlayerView({
   // Admin Calibration Inspector (strictly admin-only)
   const [inspectorMap, setInspectorMap] = useState<Record<string, QuestionItem>>({});
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorBusy, setInspectorBusy] = useState(false);
 
   const dirtyRef = useRef(false);
   const draftStorageKey = getDraftStorageKey(studentId, sessionId);
@@ -170,7 +161,7 @@ export function SessionPlayerView({
   const applyCheckpointToState = useCallback(
     (cp: SessionCheckpoint, maxLen: number) => {
       setCurrentIndex(Math.min(cp.currentIndex || 0, Math.max(0, maxLen - 1)));
-      setElapsedSec(cp.elapsedSec || 0);
+      clock.setElapsed(cp.elapsedSec || 0);
       setAnswersByPartId(cp.answersByPartId || {});
       setFlaggedQuestionIds(cp.flaggedQuestionIds || []);
       setEliminatedByPartId(cp.eliminatedOptionsByPartId || {});
@@ -178,13 +169,13 @@ export function SessionPlayerView({
       setWritingDraft(cp.writingDraft || { planNotes: '', responseText: '' });
       checkpointRef.current = cp;
     },
-    []
+    [clock]
   );
 
   useEffect(() => {
     checkpointRef.current = {
       currentIndex,
-      elapsedSec,
+      elapsedSec: clock.getElapsedSec(),
       answersByPartId,
       flaggedQuestionIds,
       eliminatedOptionsByPartId: eliminatedByPartId,
@@ -193,7 +184,7 @@ export function SessionPlayerView({
     };
   }, [
     currentIndex,
-    elapsedSec,
+    clock,
     answersByPartId,
     flaggedQuestionIds,
     eliminatedByPartId,
@@ -216,10 +207,8 @@ export function SessionPlayerView({
       .then(async (res) => {
         if (!active) return;
         const parsedServerMs = res.serverNowIso ? Date.parse(res.serverNowIso) : Date.now();
-        serverAnchorRef.current = {
-          serverMs: Number.isNaN(parsedServerMs) ? Date.now() : parsedServerMs,
-          perfMs: performance.now(),
-        };
+        clock.setServerNow(Number.isNaN(parsedServerMs) ? undefined : res.serverNowIso);
+        clock.setDeadline(res.session.deadlineAt, res.session.timeLimitSec);
         sessionRef.current = res.session;
         setSession(res.session);
         setQuestions(res.questions);
@@ -228,7 +217,7 @@ export function SessionPlayerView({
 
         const queue = new CheckpointSaveQueue<SessionCheckpoint>({
           initialRevision: initialRev,
-          getPayload: () => checkpointRef.current,
+          getPayload: () => ({ ...checkpointRef.current, elapsedSec: clock.getElapsedSec() }),
           canSave: () =>
             Boolean(
               sessionRef.current &&
@@ -243,11 +232,8 @@ export function SessionPlayerView({
           },
           onSaved: (saveRes, stillDirty) => {
             checkpointRevisionRef.current = queue.getRevision();
-            if (saveRes.serverNowIso) {
-              const ms = Date.parse(saveRes.serverNowIso);
-              if (!Number.isNaN(ms)) {
-                serverAnchorRef.current = { serverMs: ms, perfMs: performance.now() };
-              }
+            if (saveRes.serverNowIso && !Number.isNaN(Date.parse(saveRes.serverNowIso))) {
+              clock.setServerNow(saveRes.serverNowIso);
             }
             setConflictState(null);
             if (!stillDirty) {
@@ -320,10 +306,8 @@ export function SessionPlayerView({
         if (res.session.mode === 'admin_calibration' && isAdmin) {
           try {
             const insp = await api.getCalibrationInspector(sessionId);
-            if (active) {
-              setInspectorMap(insp.inspectorByQuestionId);
-              setInspectorOpen(true);
-            }
+            // Closed by default: the admin opens the slide-over with the toggle or the I key.
+            if (active) setInspectorMap(insp.inspectorByQuestionId);
           } catch {
             // ignore
           }
@@ -340,7 +324,7 @@ export function SessionPlayerView({
       saveQueueRef.current?.dispose();
       saveQueueRef.current = null;
     };
-  }, [sessionId, isAdmin, draftStorageKey, applyCheckpointToState]);
+  }, [sessionId, isAdmin, draftStorageKey, applyCheckpointToState, clock]);
 
   const flushCheckpoint = useCallback(async (overrideExpectedRevision?: number) => {
     const queue = saveQueueRef.current;
@@ -348,26 +332,21 @@ export function SessionPlayerView({
     await queue.flush(overrideExpectedRevision);
   }, []);
 
-  // Elapsed timer, 500ms monotonic deadline clock tick, and 30s periodic autosave
+  // Run the exam clock while in progress, plus a 30s periodic autosave.
+  const inProgress = session?.status === 'in_progress';
   useEffect(() => {
-    if (!session || session.status !== 'in_progress') return;
-    const secTimer = window.setInterval(() => {
-      setElapsedSec((prev) => prev + 1);
-    }, 1000);
-    const clockTimer = window.setInterval(() => {
-      setClockTick((t) => (t + 1) % 100_000);
-    }, 500);
+    clock.setRunning(Boolean(inProgress));
+    if (!inProgress) return;
     const saveTimer = window.setInterval(() => {
       if (!saveQueueRef.current?.hasActiveConflict()) {
         void flushCheckpoint();
       }
     }, 30_000);
     return () => {
-      window.clearInterval(secTimer);
-      window.clearInterval(clockTimer);
       window.clearInterval(saveTimer);
+      clock.setRunning(false);
     };
-  }, [session, flushCheckpoint]);
+  }, [inProgress, clock, flushCheckpoint]);
 
   // Debounced checkpoint save on state change
   useEffect(() => {
@@ -393,8 +372,8 @@ export function SessionPlayerView({
     dirtyRef.current = true;
     saveQueueRef.current?.markDirty();
     setSaveStatus('unsent');
-    writeLocalDraft(draftStorageKey, checkpointRef.current);
-  }, [draftStorageKey]);
+    writeLocalDraft(draftStorageKey, { ...checkpointRef.current, elapsedSec: clock.getElapsedSec() });
+  }, [draftStorageKey, clock]);
 
   const handleSelectAnswer = useCallback(
     (partId: string, key: string | null) => {
@@ -449,18 +428,13 @@ export function SessionPlayerView({
       !session.isSandbox
   );
 
-  const deadlineMs = session?.deadlineAt ? Date.parse(session.deadlineAt) : null;
-  let remainingSec: number | null = null;
-  if (deadlineMs !== null && !Number.isNaN(deadlineMs)) {
-    const anchor = serverAnchorRef.current;
-    const nowApproxMs = anchor
-      ? anchor.serverMs + (performance.now() - anchor.perfMs)
-      : Date.now();
-    remainingSec = Math.max(0, Math.ceil((deadlineMs - nowApproxMs) / 1000));
-  } else if (session?.timeLimitSec) {
-    remainingSec = Math.max(0, session.timeLimitSec - elapsedSec);
-  }
-  const isTimeUp = Boolean(isLockedStudentSession && remainingSec !== null && remainingSec <= 0);
+  // Boolean subscription: the root re-renders once when time runs out, not on every tick.
+  const clockSaysTimeUp = useClockValue(clock, (c) => {
+    const remaining = c.getRemainingSec();
+    return remaining !== null && remaining <= 0;
+  });
+  const isTimeUp = isLockedStudentSession && clockSaysTimeUp;
+  const isAdminRun = Boolean(session && session.mode === 'admin_calibration' && isAdmin);
 
   // Keyboard shortcuts (1-8 / A-H, N / P, F) — blocked once time is up, submitting, or confirm dialog open
   useEffect(() => {
@@ -493,6 +467,11 @@ export function SessionPlayerView({
       if (k === 'F') {
         e.preventDefault();
         handleToggleFlag(currentQuestion.questionId);
+        return;
+      }
+      if (k === 'I' && isAdminRun) {
+        e.preventDefault();
+        setInspectorOpen((open) => !open);
         return;
       }
 
@@ -529,6 +508,7 @@ export function SessionPlayerView({
     handleGoIndex,
     handleToggleFlag,
     handleSelectAnswer,
+    isAdminRun,
   ]);
 
   // Re-sync clock anchor and check remote submit/expiry after tab wake / OS sleep
@@ -539,11 +519,8 @@ export function SessionPlayerView({
       api
         .getSession(session.sessionId)
         .then((refreshed) => {
-          if (refreshed.serverNowIso) {
-            const parsedServerMs = Date.parse(refreshed.serverNowIso);
-            if (!Number.isNaN(parsedServerMs)) {
-              serverAnchorRef.current = { serverMs: parsedServerMs, perfMs: performance.now() };
-            }
+          if (refreshed.serverNowIso && !Number.isNaN(Date.parse(refreshed.serverNowIso))) {
+            clock.setServerNow(refreshed.serverNowIso);
           }
           if (refreshed.session.status === 'submitted') {
             clearLocalDraft(draftStorageKey);
@@ -558,7 +535,7 @@ export function SessionPlayerView({
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [session, draftStorageKey]);
+  }, [session, draftStorageKey, clock]);
 
   // Warn on tab close/refresh when unsent draft exists or while locked in timed test
   useEffect(() => {
@@ -578,7 +555,10 @@ export function SessionPlayerView({
     setSubmitting(true);
     setError('');
     try {
-      const res = await api.submitSession(session.sessionId, checkpointRef.current);
+      const res = await api.submitSession(session.sessionId, {
+        ...checkpointRef.current,
+        elapsedSec: clock.getElapsedSec(),
+      });
       clearLocalDraft(draftStorageKey);
       setSession((prev) =>
         prev
@@ -599,33 +579,40 @@ export function SessionPlayerView({
       if (isTimeUp) {
         window.setTimeout(() => {
           autoSubmittedRef.current = false;
-          setClockTick((t) => (t + 1) % 100_000);
+          setAutoSubmitRetry((n) => n + 1);
         }, 2500);
       }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [session, draftStorageKey, isTimeUp]);
+  }, [session, draftStorageKey, isTimeUp, clock]);
 
   // Auto-submit when timed locked student session hits 00:00 on server clock
   useEffect(() => {
     if (!isTimeUp || autoSubmittedRef.current || submitting) return;
     autoSubmittedRef.current = true;
     handleSubmit();
-  }, [isTimeUp, submitting, handleSubmit]);
+  }, [isTimeUp, submitting, handleSubmit, autoSubmitRetry]);
 
-  const handleInspectorQcChange = async (questionId: string, nextStatus: QuestionItem['qcStatus']) => {
+  const handleInspectorQcChange = useCallback(async (questionId: string, nextStatus: QuestionItem['qcStatus']) => {
+    setInspectorBusy(true);
+    setError('');
     try {
       await api.updateQuestionStatus(questionId, nextStatus);
       setInspectorMap((prev) => ({
         ...prev,
         [questionId]: { ...prev[questionId], qcStatus: nextStatus },
       }));
-    } catch {
-      // ignore
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('session.unableQc'));
+    } finally {
+      setInspectorBusy(false);
     }
-  };
+  }, [t]);
+
+  const toggleTimerHidden = useCallback(() => setTimerHidden((v) => !v), []);
+  const closeInspector = useCallback(() => setInspectorOpen(false), []);
 
   const answeredSlotsCount = useMemo(() => {
     let cnt = 0;
@@ -679,7 +666,7 @@ export function SessionPlayerView({
         sessionId={session.sessionId}
         correctSlots={session.correctSlots}
         totalSlots={session.totalSlots}
-        elapsedSec={elapsedSec}
+        elapsedSec={clock.getElapsedSec()}
         questions={questions}
         reviewResults={reviewResults}
         writingReview={writingReview}
@@ -692,10 +679,6 @@ export function SessionPlayerView({
   const isFlagged = flaggedQuestionIds.includes(currentQuestion.questionId);
   const currentStimId = currentQuestion.stimulus?.stimulusId || currentQuestion.questionId;
   const activeInspectorQ = inspectorMap[currentQuestion.questionId];
-  const safeInspectorPartIdx = activeInspectorQ
-    ? Math.min(Math.max(0, activeGapIndex), Math.max(0, activeInspectorQ.parts.length - 1))
-    : 0;
-  const activeInspectorPart = activeInspectorQ?.parts[safeInspectorPartIdx];
 
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[#FAF8F5] text-[#113C36]">
@@ -711,10 +694,11 @@ export function SessionPlayerView({
                   await flushCheckpoint();
                   onNavigate(session.mode === 'admin_calibration' ? '/admin' : '/');
                 }}
-                aria-label={t('session.exitAria')}
-                className="p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-colors"
+                aria-label={isAdminRun ? t('session.backToBank') : t('session.exitAria')}
+                className="inline-flex items-center gap-1.5 p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
+                {isAdminRun && <span className="hidden sm:inline pr-1 text-xs font-sans-display font-semibold">{t('session.backToBank')}</span>}
               </button>
             )}
 
@@ -722,6 +706,16 @@ export function SessionPlayerView({
               <span className="font-sans-display font-semibold text-sm text-[#113C36] truncate">
                 {session.title || session.mode.replace(/_/g, ' ')}
               </span>
+
+              {isAdminRun && (
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${
+                    session.isSandbox ? 'bg-[#E9E4F5] text-[#4B3B7A]' : 'bg-[#FDF0E2] text-[#A35116]'
+                  }`}
+                >
+                  {session.isSandbox ? t('session.sandboxBadge') : t('session.liveRunBadge')}
+                </span>
+              )}
 
               {saveStatus === 'saving' && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white/80 border border-[#E5DFD5] text-[11px] font-medium text-[#4A5955] whitespace-nowrap">
@@ -771,35 +765,7 @@ export function SessionPlayerView({
 
           {/* Center: Prominent AnthropicMono Countdown Clock (click to hide) */}
           <div className="flex items-center justify-center">
-            <button
-              type="button"
-              onClick={() => setTimerHidden((v) => !v)}
-              aria-label={timerHidden ? t('session.showTimer') : t('session.hideTimer')}
-              title={timerHidden ? t('session.showTimer') : t('session.hideTimer')}
-              className={`inline-flex items-center gap-2 px-4 py-1 rounded-[10px] border cursor-pointer transition-colors ${
-                remainingSec !== null && remainingSec <= 30 && !timerHidden
-                  ? 'border-[#B42318]/50 bg-[#FDECEB] text-[#B42318]'
-                  : remainingSec !== null && remainingSec <= 120 && !timerHidden
-                    ? 'border-[#A35116]/40 bg-[#FDF0E2] text-[#A35116]'
-                    : 'border-[#E5DFD5] bg-white text-[#113C36] hover:border-[#CFC6B9]'
-              }`}
-            >
-              {timerHidden ? (
-                <Eye className="w-3.5 h-3.5 opacity-60" />
-              ) : (
-                <EyeOff className="w-3.5 h-3.5 opacity-55" />
-              )}
-              <span
-                data-testid="exam-timer-display"
-                className="font-exam-clock text-xl sm:text-[22px] tracking-tight leading-none"
-              >
-                {timerHidden
-                  ? '--:--'
-                  : remainingSec !== null
-                    ? formatTimer(remainingSec)
-                    : formatTimer(elapsedSec)}
-              </span>
-            </button>
+            <ExamTimer clock={clock} hidden={timerHidden} onToggleHidden={toggleTimerHidden} />
           </div>
 
           {/* Right: Question X of Y, Flag, Navigator, Language, Finish test */}
@@ -841,11 +807,14 @@ export function SessionPlayerView({
               />
             </button>
 
-            {session.mode === 'admin_calibration' && isAdmin && activeInspectorQ && (
+            {isAdminRun && (
               <button
                 type="button"
                 onClick={() => setInspectorOpen((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap ${
+                aria-pressed={inspectorOpen}
+                aria-keyshortcuts="I"
+                title={t('session.inspectorToggleAria')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
                   inspectorOpen
                     ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
                     : 'border-[#CFC6B9] bg-white text-[#113C36]'
@@ -853,6 +822,7 @@ export function SessionPlayerView({
               >
                 <ShieldAlert className="w-3.5 h-3.5" />
                 <span>{t('session.inspector')}</span>
+                <kbd className="hidden sm:inline rounded border border-current/30 px-1 font-mono-code text-[10px] leading-4 opacity-70">I</kbd>
               </button>
             )}
 
@@ -1025,71 +995,16 @@ export function SessionPlayerView({
         </div>
       )}
 
-      {/* Admin Inspector Panel (strictly in admin_calibration mode) */}
-      {session.mode === 'admin_calibration' && isAdmin && inspectorOpen && activeInspectorQ && (
-        <div className="border-b border-[#E5DFD5] bg-[#F3EFE8] px-6 py-4">
-          <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-start justify-between gap-4 text-xs">
-            <div className="space-y-1.5 flex-1 min-w-0">
-              <div className="font-mono-code font-semibold text-[#113C36] break-all">
-                Admin Inspector | {activeInspectorQ.questionId} | Pool: {activeInspectorQ.poolType} | QC:{' '}
-                {activeInspectorQ.qcStatus}
-                {activeInspectorQ.provenance.sourceReference
-                  ? ` | ${activeInspectorQ.provenance.sourceReference}`
-                  : ''}
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-[#4A5955]">
-                {activeInspectorQ.parts.map((p, idx) => (
-                  <button
-                    key={p.partId}
-                    type="button"
-                    onClick={() => setActiveGapIndex(idx)}
-                    className={`px-2 py-0.5 rounded-[6px] border text-left cursor-pointer ${
-                      idx === safeInspectorPartIdx
-                        ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
-                        : 'border-[#E5DFD5] bg-white hover:bg-[#FAF8F5]'
-                    }`}
-                  >
-                    {activeInspectorQ.parts.length > 1 ? `P${idx + 1}: ` : ''}
-                    <strong>Key: {p.correctAnswerKey || 'Writing'}</strong> (Diff {p.difficultyInitial},{' '}
-                    {skillName(p.skillId)})
-                  </button>
-                ))}
-              </div>
-              {activeInspectorPart?.workedExplanation && (
-                <div className="text-[#4A5955] pt-1 space-y-1">
-                  <strong className="text-[#113C36] block">
-                    Explanation{activeInspectorQ.parts.length > 1 ? ` (Part ${safeInspectorPartIdx + 1})` : ''}:
-                  </strong>
-                  <FormattedText text={activeInspectorPart.workedExplanation} variant="explanation" />
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => handleInspectorQcChange(activeInspectorQ.questionId, 'active')}
-                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap ${
-                  activeInspectorQ.qcStatus === 'active'
-                    ? 'border-[#1D6346] bg-[#E5F3EC] text-[#1D6346]'
-                    : 'border-[#CFC6B9] bg-white'
-                }`}
-              >
-                {t('session.markActive')}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleInspectorQcChange(activeInspectorQ.questionId, 'quarantined')}
-                className={`px-3 py-1.5 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap ${
-                  activeInspectorQ.qcStatus === 'quarantined'
-                    ? 'border-[#B42318] bg-[#FDECEB] text-[#B42318]'
-                    : 'border-[#CFC6B9] bg-white'
-                }`}
-              >
-                {t('session.quarantine')}
-              </button>
-            </div>
-          </div>
-        </div>
+      {isAdminRun && (
+        <AdminInspectorDrawer
+          open={inspectorOpen}
+          onClose={closeInspector}
+          question={activeInspectorQ}
+          activePartIndex={activeGapIndex}
+          onSelectPart={setActiveGapIndex}
+          onSetQcStatus={handleInspectorQcChange}
+          statusBusy={inspectorBusy}
+        />
       )}
 
       {/* Open-Book Split Spread QuestionWorkspace */}

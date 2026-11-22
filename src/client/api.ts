@@ -416,7 +416,9 @@ export const api = {
     sort?: 'id_asc' | 'updated_desc' | 'version_desc';
     page?: number;
     pageSize?: number;
-  }) => {
+    /** false skips pool health / batch summaries (they only change with the learner or the bank). */
+    includeSummary?: boolean;
+  }, signal?: AbortSignal) => {
     const qs = new URLSearchParams();
     if (params?.studentId) qs.set('studentId', params.studentId);
     if (params?.search) qs.set('search', params.search);
@@ -436,8 +438,9 @@ export const api = {
     if (params?.sort) qs.set('sort', params.sort);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.includeSummary === false) qs.set('summary', '0');
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`);
+    return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`, { signal });
   },
   getAdminLearners: () =>
     request<AdminLearnersResponse>('/api/admin/learners'),
@@ -457,6 +460,13 @@ export const api = {
     }>(`/api/admin/questions/${encodeURIComponent(questionId)}/versions`),
   getImportBatches: () =>
     request<{ batches: ImportBatchRecord[] }>('/api/admin/batches'),
+  /** Lightweight batch directory (metadata only) for the monitored learner. */
+  getAdminBatchSummaries: (studentId?: string | null) => {
+    const suffix = studentId === undefined ? '' : `?studentId=${encodeURIComponent(studentId ?? 'none')}`;
+    return request<{ batchSummaries: BatchDirectorySummary[]; monitoredStudentId: string | null }>(
+      `/api/admin/batches/summary${suffix}`
+    );
+  },
   updateQuestionStatus: (questionId: string, qcStatus: QuestionItem['qcStatus']) =>
     request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
       method: 'PATCH',

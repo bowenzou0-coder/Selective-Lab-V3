@@ -96,6 +96,7 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
         sort: (req.query.sort as 'id_asc' | 'updated_desc' | 'version_desc') || 'id_asc',
         page: req.query.page ? Number(req.query.page) : 1,
         pageSize: req.query.pageSize ? Number(req.query.pageSize) : 50,
+        includeSummary: req.query.summary !== '0',
       });
       // Import batch records are not used by the bank UI and carry every question id; omit them.
       const { batches: _batches, ...payload } = result;

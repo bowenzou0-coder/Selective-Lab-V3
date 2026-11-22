@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Check, Highlighter, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import type {
@@ -135,7 +135,7 @@ interface ReadingStimulusPaneProps {
   activeEvidenceRef?: EvidenceCitationRef | null;
 }
 
-export function ReadingStimulusPane({
+export const ReadingStimulusPane = memo(function ReadingStimulusPane({
   question,
   stimulus: stimulusProp,
   answersByPartId,
@@ -540,7 +540,7 @@ export function ReadingStimulusPane({
       )}
     </div>
   );
-}
+});
 
 interface ReadingRightAnswerPaneProps {
   question: WorkspaceQuestion;
@@ -556,7 +556,7 @@ interface ReadingRightAnswerPaneProps {
   reviewByPartId?: Record<string, MarkingResult>;
 }
 
-export function ReadingRightAnswerPane({
+export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
   question,
   stimulus: stimulusProp,
   answersByPartId,
@@ -1044,4 +1044,4 @@ export function ReadingRightAnswerPane({
       )}
     </div>
   );
-}
+});

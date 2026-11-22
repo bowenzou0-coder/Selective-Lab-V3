@@ -422,7 +422,7 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
                       </div>
                       <div className="h-2 w-full rounded-full bg-[#E5DFD5]/80 overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-[#113C36] transition-all"
+                          className="h-full rounded-full bg-[#113C36] transition-[width] duration-500 ease-out"
                           style={{ width: `${pct ?? 0}%` }}
                         />
                       </div>

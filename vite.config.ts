@@ -11,6 +11,21 @@ export default defineConfig(() => {
         '@': path.resolve(import.meta.dirname, '.'),
       },
     },
+    build: {
+      rolldownOptions: {
+        output: {
+          // Routes (Admin, Session, Progress, admin tabs) and the zh dictionary are split with
+          // dynamic import(); these groups keep rarely-changing vendor code in its own long-cached
+          // chunk and fold the many tiny per-icon chunks into one.
+          codeSplitting: {
+            groups: [
+              { name: 'react-vendor', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 20 },
+              { name: 'icons', test: /node_modules[\\/]lucide-react[\\/]/, priority: 10 },
+            ],
+          },
+        },
+      },
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.

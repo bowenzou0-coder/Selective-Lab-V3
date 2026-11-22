@@ -42,7 +42,8 @@ export function DataAndDesignPanel({
 
   // Frontend Design Spec (frontend.md)
   const [specText, setSpecText] = useState('');
-  const [loadingSpec, setLoadingSpec] = useState(true);
+  // null = not requested yet; the ~10 KB spec is fetched only when an admin opens it.
+  const [loadingSpec, setLoadingSpec] = useState<boolean | null>(null);
   const [specExpanded, setSpecExpanded] = useState(false);
 
   // Flags & Diagnostics
@@ -68,14 +69,21 @@ export function DataAndDesignPanel({
     }
   };
 
-  useEffect(() => {
-    fetch('/docs/frontend-design.md')
-      .then((res) => (res.ok ? res.text() : Promise.reject(new Error('Spec not found'))))
-      .then((txt) => setSpecText(txt))
-      .catch(() => setSpecText(''))
-      .finally(() => setLoadingSpec(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const ensureSpec = async (): Promise<string> => {
+    if (loadingSpec === false) return specText;
+    setLoadingSpec(true);
+    try {
+      const res = await fetch('/docs/frontend-design.md');
+      const txt = res.ok ? await res.text() : '';
+      setSpecText(txt);
+      return txt;
+    } catch {
+      setSpecText('');
+      return '';
+    } finally {
+      setLoadingSpec(false);
+    }
+  };
 
   useEffect(() => {
     void loadData(monitoredStudentId);
@@ -102,9 +110,10 @@ export function DataAndDesignPanel({
   };
 
   const handleCopySpec = async () => {
-    if (!specText) return;
+    const text = specText || (await ensureSpec());
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(specText);
+      await navigator.clipboard.writeText(text);
       onNotice('Copied frontend.md design constitution to clipboard.');
     } catch {
       onError('Unable to copy frontend.md to clipboard.');
@@ -295,7 +304,7 @@ export function DataAndDesignPanel({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              disabled={!specText}
+              disabled={loadingSpec === true}
               onClick={handleCopySpec}
               className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
             >
@@ -314,7 +323,18 @@ export function DataAndDesignPanel({
         </div>
 
         <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] p-4 space-y-2">
-          {loadingSpec ? (
+          {loadingSpec === null ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSpecExpanded(true);
+                void ensureSpec();
+              }}
+              className="text-xs font-sans-display font-semibold text-[#113C36] underline underline-offset-4 cursor-pointer"
+            >
+              {t('data.expandSpec')}
+            </button>
+          ) : loadingSpec ? (
             <div className="text-xs text-[#78756E]">{t('data.loadingSpec')}</div>
           ) : !specText ? (
             <div className="text-xs text-[#78756E]">{t('data.specUnavailable')}</div>

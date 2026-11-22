@@ -143,6 +143,8 @@ export interface QuestionQueryParams {
   sort?: 'id_asc' | 'updated_desc' | 'version_desc';
   page?: number;
   pageSize?: number;
+  /** Default true. false omits poolHealth, masteredLiveQuestionIds and batchSummaries. */
+  includeSummary?: boolean;
 }
 
 export interface QuestionQueryResult {

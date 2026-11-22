@@ -1,4 +1,5 @@
 import path from 'node:path';
+import compression from 'compression';
 import express, { type Express } from 'express';
 import { assertAuthRuntimeConfig, attachAuth, requireSameOriginMutation } from './auth.ts';
 import { createAppContext } from './context.ts';
@@ -29,6 +30,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  // Admin bank pages are ~200 KB of JSON; gzip/brotli them (no-op if a proxy already compressed).
+  app.use(compression({ threshold: 1024 }));
   app.use('/api', requireSameOriginMutation);
   app.use(['/api/auth', '/api/student', '/api/admin'], (_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');

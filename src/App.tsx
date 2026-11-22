@@ -1,15 +1,40 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import { api, type AuthState } from './client/api';
-import { AdminView } from './client/components/AdminView';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
 import { HomeView } from './client/components/HomeView';
-import { ProgressView } from './client/components/ProgressView';
-import { SessionPlayerView } from './client/components/SessionPlayerView';
 import { StudioShell } from './client/components/TopNav';
 import { useI18n } from './client/i18n';
 
+// Route-level chunks: the dashboard ships in the entry bundle; everything else loads on demand.
+const loadAdminView = () => import('./client/components/AdminView');
+const loadProgressView = () => import('./client/components/ProgressView');
+const loadSessionPlayer = () => import('./client/components/SessionPlayerView');
+const AdminView = lazy(() => loadAdminView().then((m) => ({ default: m.AdminView })));
+const ProgressView = lazy(() => loadProgressView().then((m) => ({ default: m.ProgressView })));
+const SessionPlayerView = lazy(() => loadSessionPlayer().then((m) => ({ default: m.SessionPlayerView })));
+
 const signedOut: AuthState = { authenticated: false, role: null, studentId: null };
+
+function whenIdle(work: () => void): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(work, { timeout: 4000 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(work, 1500);
+  return () => window.clearTimeout(id);
+}
+
+function RouteFallback({ label }: { label: string }) {
+  return (
+    <div role="status" aria-live="polite" className="w-full py-24 flex items-center justify-center">
+      <span className="sr-only">{label}</span>
+      <span aria-hidden="true" className="h-1 w-24 overflow-hidden rounded-full bg-[#E5DFD5]">
+        <span className="block h-full w-1/3 rounded-full bg-[#113C36]/60 animate-[route-progress_1s_ease-in-out_infinite]" />
+      </span>
+    </div>
+  );
+}
 
 export default function App() {
   const { t } = useI18n();
@@ -85,6 +110,15 @@ export default function App() {
     },
     [auth]
   );
+
+  // Warm the chunk this account is most likely to open next while the browser is idle.
+  useEffect(() => {
+    if (!auth?.authenticated) return;
+    return whenIdle(() => {
+      void loadSessionPlayer();
+      if (auth.role === 'admin') void loadAdminView();
+    });
+  }, [auth?.authenticated, auth?.role]);
 
   const handleActiveSessionCleared = useCallback(() => {
     setAuth((prev) => (prev && prev.activeSessionId !== null ? { ...prev, activeSessionId: null } : prev));
@@ -204,14 +238,16 @@ export default function App() {
     content = (
       <>
         {demoBanner}
-        <SessionPlayerView
-          key={auth.studentId}
-          sessionId={decodeURIComponent(sessionMatch[1])}
-          studentId={auth.studentId}
-          isAdmin={auth.role === 'admin'}
-          onNavigate={navigate}
-          onActiveSessionCleared={handleActiveSessionCleared}
-        />
+        <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+          <SessionPlayerView
+            key={auth.studentId}
+            sessionId={decodeURIComponent(sessionMatch[1])}
+            studentId={auth.studentId}
+            isAdmin={auth.role === 'admin'}
+            onNavigate={navigate}
+            onActiveSessionCleared={handleActiveSessionCleared}
+          />
+        </Suspense>
       </>
     );
   } else {
@@ -226,9 +262,13 @@ export default function App() {
         banner={banner}
       >
         {isAdminRoute && auth.role === 'admin' ? (
-          <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
+          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+            <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
+          </Suspense>
         ) : effectivePath.startsWith('/progress') ? (
-          <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
+          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+            <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
+          </Suspense>
         ) : (
           <HomeView
             key={auth.studentId}

@@ -541,7 +541,7 @@ export function PostSubmissionReview({
                           handleSelectFromEssay(ann.id);
                         }
                       }}
-                      className={`rounded-[4px] px-0.5 cursor-pointer transition-all ${markStyle} ${
+                      className={`rounded-[4px] px-0.5 cursor-pointer transition-colors ${markStyle} ${
                         isSelected ? 'ring-2 ring-[#113C36] ring-offset-1' : 'hover:brightness-95'
                       }`}
                     >
@@ -827,7 +827,7 @@ export function PostSubmissionReview({
                           handleSelectFromCard(ann.id);
                         }
                       }}
-                      className={`p-3 rounded-[12px] bg-white border space-y-1.5 cursor-pointer transition-all ${
+                      className={`p-3 rounded-[12px] bg-white border space-y-1.5 cursor-pointer transition-[background-color,border-color,box-shadow] duration-150 ${
                         isSelected
                           ? 'border-[#113C36] ring-2 ring-[#113C36]/20'
                           : 'border-[#E5DFD5] hover:border-[#CFC6B9]'
@@ -990,7 +990,7 @@ export function PostSubmissionReview({
                             handleSelectExemplar(ann.id, 'card');
                           }
                         }}
-                        className={`rounded-[4px] px-0.5 bg-[#E5F0EA] border-b-2 border-[#113C36] cursor-pointer transition-all ${
+                        className={`rounded-[4px] px-0.5 bg-[#E5F0EA] border-b-2 border-[#113C36] cursor-pointer transition-colors ${
                           isSelected ? 'ring-2 ring-[#113C36] ring-offset-1' : 'hover:brightness-95'
                         }`}
                       >
@@ -1041,7 +1041,7 @@ export function PostSubmissionReview({
                         handleSelectExemplar(ann.id, 'essay');
                       }
                     }}
-                    className={`p-3 rounded-[12px] bg-white border space-y-1.5 cursor-pointer transition-all ${
+                    className={`p-3 rounded-[12px] bg-white border space-y-1.5 cursor-pointer transition-[background-color,border-color,box-shadow] duration-150 ${
                       isSelected
                         ? 'border-[#113C36] ring-2 ring-[#113C36]/20'
                         : 'border-[#E5DFD5] hover:border-[#CFC6B9]'

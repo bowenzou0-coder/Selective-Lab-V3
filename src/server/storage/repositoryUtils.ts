@@ -85,6 +85,27 @@ export function summarizeBatches(
   );
 }
 
+// Bank-cache objects are frozen and reused across requests, so memoize their lowercase
+// search text instead of rebuilding ~7 MB of strings on every keystroke.
+const haystackCache = new WeakMap<QuestionItem, { stim?: StimulusGroup; text: string }>();
+
+function searchHaystack(q: QuestionItem, stim?: StimulusGroup): string {
+  const cached = haystackCache.get(q);
+  if (cached && cached.stim === stim) return cached.text;
+  const partsHay = q.parts
+    .map(
+      (p) =>
+        `${p.partId} ${p.promptText} ${p.skillId} ${(p.secondarySkillIds || []).join(' ')} ${(p.trapTags || []).join(' ')} ${p.workedExplanation || ''} ${p.options.map((o) => `${o.key} ${o.text}`).join(' ')}`
+    )
+    .join(' ');
+  const stimHay = stim
+    ? `${stim.stimulusId} ${stim.title || ''} ${stim.preamble || ''} ${stim.mainTextMarkdown || ''} ${(stim.extracts || []).map((e) => `${e.label} ${e.title || ''} ${e.bodyMarkdown}`).join(' ')}`
+    : '';
+  const text = `${q.questionId} ${q.questionFamilyId} ${q.stemPrefix || ''} ${q.batchId || ''} ${q.batchLabel || ''} ${q.provenance?.sourceReference || ''} ${partsHay} ${stimHay}`.toLowerCase();
+  haystackCache.set(q, { stim, text });
+  return text;
+}
+
 export function filterAndPaginateQuestions(input: {
   allQuestions: readonly QuestionItem[];
   /** Pre-computed latest versions (the Postgres bank cache keeps these). */
@@ -152,19 +173,7 @@ export function filterAndPaginateQuestions(input: {
       if (!missingExp) return false;
     }
 
-    if (needle) {
-      const partsHay = q.parts
-        .map(
-          (p) =>
-            `${p.partId} ${p.promptText} ${p.skillId} ${(p.secondarySkillIds || []).join(' ')} ${(p.trapTags || []).join(' ')} ${p.workedExplanation || ''} ${p.options.map((o) => `${o.key} ${o.text}`).join(' ')}`
-        )
-        .join(' ');
-      const stimHay = stim
-        ? `${stim.stimulusId} ${stim.title || ''} ${stim.preamble || ''} ${stim.mainTextMarkdown || ''} ${(stim.extracts || []).map((e) => `${e.label} ${e.title || ''} ${e.bodyMarkdown}`).join(' ')}`
-        : '';
-      const fullHay = `${q.questionId} ${q.questionFamilyId} ${q.stemPrefix || ''} ${q.batchId || ''} ${q.batchLabel || ''} ${q.provenance.sourceReference || ''} ${partsHay} ${stimHay}`.toLowerCase();
-      if (!fullHay.includes(needle)) return false;
-    }
+    if (needle && !searchHaystack(q, stim).includes(needle)) return false;
 
     return true;
   });
@@ -205,6 +214,8 @@ export function filterAndPaginateQuestions(input: {
     batches,
     ...(progress && {
       progressByQuestionId: Object.fromEntries(pagedQuestions.map((q) => [q.questionId, progressByQid.get(q.questionId)!])),
+    }),
+    ...(progress && params.includeSummary !== false && {
       poolHealth: computePoolHealth({
         questions: latest,
         evidenceMap: progress.evidence,

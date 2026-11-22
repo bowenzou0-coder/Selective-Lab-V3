@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Standalone Sunlit Editorial Studio HTML preview generator for BankImportManifest JSON.
- * Zero external dependencies. Uses bundled ../fonts/*.otf automatically.
+ * Zero external dependencies. Uses the app's public/fonts/*.woff2 when run inside the repo
+ * (falls back to system fonts elsewhere).
  *
  * Usage:
  *   node scripts/preview_manifest.mjs <manifest.json> [output.html] [--embed-fonts]
@@ -14,7 +15,7 @@ import { validateManifestObject } from './validate_manifest.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const FONTS_DIR = path.resolve(__dirname, '../fonts');
+const FONTS_DIR = path.resolve(__dirname, '../../../public/fonts');
 
 const args = process.argv.slice(2);
 const embedFonts = args.includes('--embed-fonts');
@@ -33,16 +34,16 @@ const manifest = JSON.parse(fs.readFileSync(absIn, 'utf8'));
 const validation = validateManifestObject(manifest);
 
 const FONT_SPECS = [
-  ['AnthropicSerifDisplay', 'AnthropicSerif-Display-Regular-Static.otf', 400, 'normal'],
-  ['AnthropicSerifDisplay', 'AnthropicSerif-Display-Bold-Static.otf', 700, 'normal'],
-  ['AnthropicSerifText', 'AnthropicSerif-Text-Regular-Static.otf', 400, 'normal'],
-  ['AnthropicSerifText', 'AnthropicSerif-Text-RegularItalic-Static.otf', 400, 'italic'],
-  ['AnthropicSerifText', 'AnthropicSerif-Text-Medium-Static.otf', 500, 'normal'],
-  ['AnthropicSansDisplay', 'AnthropicSans-Display-Semibold-Static.otf', 600, 'normal'],
-  ['AnthropicSansText', 'AnthropicSans-Text-Regular-Static.otf', 400, 'normal'],
-  ['AnthropicSansText', 'AnthropicSans-Text-Medium-Static.otf', 500, 'normal'],
-  ['AnthropicSansText', 'AnthropicSans-Text-Semibold-Static.otf', 600, 'normal'],
-  ['AnthropicMono', 'Anthropic Mono Web.otf', 400, 'normal'],
+  ['AnthropicSerifDisplay', 'AnthropicSerif-Display-Regular-Static.woff2', 400, 'normal'],
+  ['AnthropicSerifDisplay', 'AnthropicSerif-Display-Bold-Static.woff2', 700, 'normal'],
+  ['AnthropicSerifText', 'AnthropicSerif-Text-Regular-Static.woff2', 400, 'normal'],
+  ['AnthropicSerifText', 'AnthropicSerif-Text-RegularItalic-Static.woff2', 400, 'italic'],
+  ['AnthropicSerifText', 'AnthropicSerif-Text-Medium-Static.woff2', 500, 'normal'],
+  ['AnthropicSansDisplay', 'AnthropicSans-Display-Semibold-Static.woff2', 600, 'normal'],
+  ['AnthropicSansText', 'AnthropicSans-Text-Regular-Static.woff2', 400, 'normal'],
+  ['AnthropicSansText', 'AnthropicSans-Text-Medium-Static.woff2', 500, 'normal'],
+  ['AnthropicSansText', 'AnthropicSans-Text-Semibold-Static.woff2', 600, 'normal'],
+  ['AnthropicMono', 'AnthropicMono-Web.woff2', 400, 'normal'],
 ];
 
 function buildFontCss() {
@@ -53,11 +54,11 @@ function buildFontCss() {
     let srcUrl;
     if (embedFonts) {
       const b64 = fs.readFileSync(absFont).toString('base64');
-      srcUrl = `data:font/otf;base64,${b64}`;
+      srcUrl = `data:font/woff2;base64,${b64}`;
     } else {
       srcUrl = `${relFontDir ? relFontDir + '/' : ''}${encodeURIComponent(file)}`;
     }
-    return `@font-face { font-family: '${family}'; src: url('${srcUrl}') format('opentype'); font-weight: ${weight}; font-style: ${style}; font-display: swap; }`;
+    return `@font-face { font-family: '${family}'; src: url('${srcUrl}') format('woff2'); font-weight: ${weight}; font-style: ${style}; font-display: swap; }`;
   })
     .filter(Boolean)
     .join('\n');

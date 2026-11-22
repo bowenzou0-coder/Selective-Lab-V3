@@ -138,7 +138,7 @@ export function StudioShell({
                       handleNav(item.key);
                     }}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-all whitespace-nowrap ${
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-colors whitespace-nowrap ${
                       isActive
                         ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5] shadow-[0_1px_2px_rgba(17,60,54,0.05)]'
                         : 'text-[#4A5955] font-sans-text font-medium hover:text-[#113C36] hover:bg-white/55 border border-transparent'
@@ -184,7 +184,7 @@ export function StudioShell({
 
       {/* Collapsible Mobile Bottom Navigation Strip */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#F3EFE8]/95 backdrop-blur-sm border-t border-[#E5DFD5] px-2 py-2 flex items-center justify-around gap-1"
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#F3EFE8] border-t border-[#E5DFD5] px-2 py-2 flex items-center justify-around gap-1"
         aria-label={t('nav.mobileAria')}
       >
         {navItems.map((item) => {

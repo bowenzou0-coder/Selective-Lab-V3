@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { createPortal } from 'react-dom';
 import { ImageOff, Maximize2, X } from 'lucide-react';
 import type { VisualSpec } from '../../shared/contracts';
 
+// Admin-authored SVG only; still strip anything executable or able to embed other documents.
 function sanitizeSvg(markup: string): string {
   return markup
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<(foreignObject|iframe|object|embed)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(iframe|object|embed)\b[^>]*\/?>/gi, '')
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/javascript:/gi, '');
 }
@@ -17,7 +20,7 @@ interface VisualRendererProps {
   variant?: 'default' | 'optionTile';
 }
 
-export function VisualRenderer({
+export const VisualRenderer = memo(function VisualRenderer({
   visual,
   compact = false,
   variant = 'default',
@@ -25,10 +28,16 @@ export function VisualRenderer({
   const { t } = useI18n();
   const [zoomOpen, setZoomOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
-
-  useEffect(() => {
+  const [errorForUrl, setErrorForUrl] = useState(visual?.imageUrl);
+  if (errorForUrl !== visual?.imageUrl) {
+    // New image: clear the previous error during render (no effect flash).
+    setErrorForUrl(visual?.imageUrl);
     setImgError(false);
-  }, [visual?.imageUrl]);
+  }
+  const safeSvg = useMemo(
+    () => (visual?.visualType === 'inline_svg' && visual.svgMarkup ? { __html: sanitizeSvg(visual.svgMarkup) } : undefined),
+    [visual?.visualType, visual?.svgMarkup]
+  );
 
   if (!visual || visual.visualType === 'none') return null;
 
@@ -49,7 +58,7 @@ export function VisualRenderer({
             }
             role="img"
             aria-label={visual.altText}
-            dangerouslySetInnerHTML={{ __html: sanitizeSvg(visual.svgMarkup) }}
+            dangerouslySetInnerHTML={safeSvg}
           />
           {!isCompact && (
             <button
@@ -74,6 +83,8 @@ export function VisualRenderer({
                   src={visual.imageUrl}
                   alt={visual.altText}
                   referrerPolicy="no-referrer"
+                  loading="lazy"
+                  decoding="async"
                   onError={() => setImgError(true)}
                   className={
                     isOptionTile
@@ -93,6 +104,8 @@ export function VisualRenderer({
                   src={visual.imageUrl}
                   alt={visual.altText}
                   referrerPolicy="no-referrer"
+                  loading="lazy"
+                  decoding="async"
                   onError={() => setImgError(true)}
                   className="mx-auto object-contain rounded-[var(--radius-sm)] max-h-72 max-w-full w-auto"
                 />
@@ -202,7 +215,7 @@ export function VisualRenderer({
               {visual.visualType === 'inline_svg' && visual.svgMarkup && (
                 <div
                   className="flex justify-center [&_svg]:w-full [&_svg]:max-h-[70vh]"
-                  dangerouslySetInnerHTML={{ __html: sanitizeSvg(visual.svgMarkup) }}
+                  dangerouslySetInnerHTML={safeSvg}
                 />
               )}
               {visual.visualType === 'image_asset' && visual.imageUrl && (
@@ -210,6 +223,7 @@ export function VisualRenderer({
                   src={visual.imageUrl}
                   alt={visual.altText}
                   referrerPolicy="no-referrer"
+                  decoding="async"
                   className="mx-auto max-h-[72vh] w-auto object-contain"
                 />
               )}
@@ -219,4 +233,4 @@ export function VisualRenderer({
         )}
     </>
   );
-}
+});

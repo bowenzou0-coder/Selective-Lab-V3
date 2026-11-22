@@ -21,6 +21,7 @@ interface BatchImporterPanelProps {
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
   onDataMutated?: () => void;
+  monitoredStudentId?: string | null;
 }
 
 const PAGE_SIZE = 10;
@@ -31,6 +32,7 @@ export function BatchImporterPanel({
   onNotice,
   onError,
   onDataMutated,
+  monitoredStudentId,
 }: BatchImporterPanelProps) {
   const { t, formatDate } = useI18n();
   const [batches, setBatches] = useState<BatchDirectorySummary[]>([]);
@@ -59,14 +61,14 @@ export function BatchImporterPanel({
   const loadBatches = useCallback(async () => {
     setLoadingBatches(true);
     try {
-      const res = await api.getAdminQuestions({ page: 1, pageSize: 1 });
+      const res = await api.getAdminBatchSummaries(monitoredStudentId);
       setBatches(res.batchSummaries || []);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Unable to load batches.');
     } finally {
       setLoadingBatches(false);
     }
-  }, [onError]);
+  }, [onError, monitoredStudentId]);
 
   useEffect(() => {
     void loadBatches();

@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { memo, Fragment } from 'react';
 import {
   parseFormattedBlocks,
   parseInlineSpans,
@@ -45,7 +45,7 @@ const VARIANT_CONTAINER_CLASS: Record<FormattedTextVariant, string> = {
   prose: 'reading-prose space-y-3 text-[#113C36]',
 };
 
-export function FormattedText({
+export const FormattedText = memo(function FormattedText({
   text,
   variant = 'prompt',
   className = '',
@@ -135,4 +135,4 @@ export function FormattedText({
       })}
     </div>
   );
-}
+});
