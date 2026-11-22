@@ -15,7 +15,9 @@ import { validateManifestObject } from './validate_manifest.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const FONTS_DIR = path.resolve(__dirname, '../../../public/fonts');
+const BUNDLED_FONTS_DIR = path.resolve(__dirname, '../fonts');
+const REPO_FONTS_DIR = path.resolve(__dirname, '../../../public/fonts');
+const FONTS_DIR = fs.existsSync(BUNDLED_FONTS_DIR) ? BUNDLED_FONTS_DIR : REPO_FONTS_DIR;
 
 const args = process.argv.slice(2);
 const embedFonts = args.includes('--embed-fonts');

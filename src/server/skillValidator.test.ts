@@ -51,6 +51,22 @@ test('skill validator: SVG labels outside the viewBox and unbalanced tags are ca
   assert.ok(r.errors.some((e) => e.includes('unbalanced <g>')));
 });
 
+test('skill validator: SVG text must exclusively use Anthropic fonts', () => {
+  const m = structuredClone(pilot);
+  const q = mathQuestion();
+  q.visual = {
+    visualType: 'inline_svg',
+    altText: 'Diagram with fallback font',
+    svgMarkup:
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><text x="20" y="50" font-family="\'AnthropicSansText\', system-ui, sans-serif">A</text></svg>',
+  };
+  m.questions = [q];
+  assert.ok(validate(m).errors.some((e) => e.includes('exclusively use Anthropic fonts')));
+
+  q.visual.svgMarkup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><text x="20" y="50">A</text></svg>';
+  assert.ok(validate(m).errors.some((e) => e.includes('must specify an Anthropic font-family')));
+});
+
 test('skill validator: batch answer-key skew and long runs are flagged', () => {
   const m = structuredClone(pilot);
   const base = mathQuestion();

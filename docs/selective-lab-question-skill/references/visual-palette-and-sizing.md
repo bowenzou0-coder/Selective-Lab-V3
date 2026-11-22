@@ -35,20 +35,22 @@ Reference for creating inline SVGs, structured tables, raster assets, and standa
 
 ---
 
-## 2. Typography
+## 2. Typography (Anthropic Fonts Exclusively)
 
-Selective Lab renders with its Anthropic Serif, Sans and Mono WOFF2 faces (served from the app's `public/fonts/`). Inside the repo, `scripts/preview_manifest.mjs` picks them up automatically; elsewhere previews fall back to system fonts, which is fine for review.
+Selective Lab renders with its Anthropic Serif, Sans and Mono WOFF2 faces (`public/fonts/` in the repo, and `fonts/` inside the exported skill `.zip`). Inside the repo, `scripts/preview_manifest.mjs` picks them up automatically (checking `../fonts` first, then `../../../public/fonts`).
 
-- **Reading prose & display headings:** Anthropic Serif Text / Display.
-- **UI, Maths, Thinking Skills & SVG labels:** Anthropic Sans Text / Display.
-- **Timers, IDs & JSON:** Anthropic Mono.
+Only these exact `@font-face` family names are registered in Selective Lab:
+- **Reading prose & display headings:** `AnthropicSerifText`, `AnthropicSerifDisplay`
+- **UI, Maths, Thinking Skills & SVG diagram labels:** `AnthropicSansText`, `AnthropicSansDisplay`
+- **Timers, IDs, codes & JSON:** `AnthropicMono`
 
-### SVG Font Stack
-Inside `svgMarkup`, always include web-safe fallbacks so SVGs remain crisp even outside the app:
+### SVG Font Stack (Strict — No Fallback Fonts)
+Every `svgMarkup` that contains `<text>` or `<tspan>` MUST declare **exclusively** Anthropic font family names — never include `system-ui`, `-apple-system`, `sans-serif`, `serif`, `monospace`, `Arial`, `Helvetica`, or `'Anthropic Sans'` (with a space):
 ```xml
-font-family="'AnthropicSansText', 'Anthropic Sans', system-ui, -apple-system, sans-serif"
+font-family="'AnthropicSansText'"
 ```
-Use `font-variant-numeric="tabular-nums"` on numeric labels, axis ticks, and tables, and leave **12–15% breathing margin** around text so fallback metrics never clip.
+(Use `'AnthropicMono'` for monospaced codes/IDs or `'AnthropicSerifText'` / `'AnthropicSansDisplay'` / `'AnthropicSerifDisplay'` when appropriate.)
+Use `font-variant-numeric="tabular-nums"` on numeric labels, axis ticks, and tables, and leave **12–15% breathing margin** around text so labels never clip.
 
 ---
 

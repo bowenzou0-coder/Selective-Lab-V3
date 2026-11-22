@@ -84,6 +84,7 @@ Silently re-solve every item before returning it. `scripts/validate_manifest.mjs
 - **Real inference:** at most ~35% of Reading MCQs may be literal recall (`recall_locate`, `LITERAL_DETAIL`, `LITERAL_SENSE`).
 - **Maths working:** numbered steps `1)`, `2)`, … ending on the final option letter or value.
 - **SVG geometry:** balanced `<g>/<text>` tags, every label anchored inside the `viewBox`, no two labels drawn at the same point.
+- **SVG typography:** any `inline_svg` containing `<text>` or `<tspan>` must use **exclusively** Anthropic fonts (`'AnthropicSansText'`, `'AnthropicSansDisplay'`, `'AnthropicSerifText'`, `'AnthropicSerifDisplay'`, or `'AnthropicMono'`) — no `system-ui`, `-apple-system`, `sans-serif`, `Arial`, `'Anthropic Sans'`, or other non-Anthropic fallback fonts.
 
 # Visuals & Sunlit Editorial Studio Sizing
 
@@ -93,6 +94,7 @@ Full palette and sizing rules in `references/visual-palette-and-sizing.md`:
 - **2×2 visual option grid rule:** Whenever `options[].visual` is used, keep every `option.text` `<= 48` chars (ideally `""` or a 1–3 word label) and use compact `viewBox="0 0 180 140"`, `220 140`, or `160 160` (no huge pixel `width`/`height`) so Selective Lab renders all 4 visual answers in a compact 2×2 grid on screen at once.
 - **Question/stimulus diagrams:** `viewBox="0 0 560 320"` to `640 360` (height `<= 420`).
 - **SVG hygiene:** Valid XML with `xmlns="http://www.w3.org/2000/svg"` and explicit `viewBox`. No `<script>`, event handlers, `foreignObject`, external URLs, or answer leakage in `altText`/captions.
+- **SVG typography (Anthropic-only):** Every `<svg>` containing `<text>` or `<tspan>` MUST declare `font-family="'AnthropicSansText'"` (or `'AnthropicSansDisplay'` / `'AnthropicSerifText'` / `'AnthropicSerifDisplay'` / `'AnthropicMono'`). Never include `system-ui`, `-apple-system`, `sans-serif`, `'Anthropic Sans'`, or any non-Anthropic fallback font.
 - **Sunlit Editorial Studio palette:** Surfaces `#FFFFFF` / `#FAF8F5` / `#F3EFE8`; ink `#113C36` (primary), `#4A5955` (secondary), `#78756E` (muted), `#E5DFD5`/`#CFC6B9` (borders); accents `#F29A63` (terracotta), `#1F7A4C` (emerald), `#3B5B6D` (slate blue), `#B83A28` (crimson).
 
 # BankImportManifest JSON Contract

@@ -48,6 +48,38 @@ const VALID_COGNITIVE = new Set(['recall_locate', 'apply_procedural', 'analyze_i
 const VALID_VISUAL_TYPES = new Set(['none', 'inline_svg', 'image_asset', 'structured_table']);
 const FORBIDDEN_GENERATED_FIELDS = ['contentHash', 'evidenceRevision', 'batchId', 'createdAtIso', 'updatedAtIso'];
 
+const ALLOWED_SVG_FONTS = new Set([
+  'AnthropicSansText',
+  'AnthropicSansDisplay',
+  'AnthropicSerifText',
+  'AnthropicSerifDisplay',
+  'AnthropicMono',
+]);
+
+function checkSvgAnthropicFonts(svg, location, errors) {
+  if (!/<(?:text|tspan)\b/i.test(svg)) return;
+  const families = [];
+  for (const m of svg.matchAll(/font-family\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+    families.push(m[1] ?? m[2] ?? '');
+  }
+  for (const m of svg.matchAll(/font-family\s*:\s*([^;"'}]+)/gi)) {
+    families.push(m[1] ?? '');
+  }
+  if (families.length === 0) {
+    errors.push(`${location}: svgMarkup with text must specify an Anthropic font-family (e.g. font-family="'AnthropicSansText'").`);
+    return;
+  }
+  for (const rawList of families) {
+    for (const part of rawList.split(',')) {
+      const fam = part.trim().replace(/^['"]|['"]$/g, '');
+      if (!fam) continue;
+      if (!ALLOWED_SVG_FONTS.has(fam)) {
+        errors.push(`${location}: svgMarkup must exclusively use Anthropic fonts (AnthropicSansText/Display, AnthropicSerifText/Display, AnthropicMono); found "${fam}".`);
+      }
+    }
+  }
+}
+
 function checkVisual(visual, location, isOptionTile, errors, warnings) {
   if (!visual) return;
   if (typeof visual !== 'object') {
@@ -119,6 +151,7 @@ function checkVisual(visual, location, isOptionTile, errors, warnings) {
         errors.push(`${location}: unbalanced <${tag}> tags (${opens - selfClosing} open vs ${closes} close).`);
       }
     }
+    checkSvgAnthropicFonts(trimmed, location, errors);
     if (vbMatch) checkSvgTextGeometry(trimmed, vbMatch, location, warnings);
     if (/width\s*=\s*["']\s*(\d{4,})/.test(trimmed) || /height\s*=\s*["']\s*(\d{4,})/.test(trimmed)) {
       warnings.push(`${location}: svgMarkup has a huge explicit pixel width/height attribute; rely on viewBox instead.`);
