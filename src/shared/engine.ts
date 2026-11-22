@@ -254,8 +254,34 @@ function seededNoise(seed: number, key: string): number {
   return (h % 1000) / 10000;
 }
 
+/** Structural minimum needed by selection, scheduling, and batch tagging. */
+export type SelectionQuestion = Pick<
+  QuestionItem,
+  | 'questionId'
+  | 'questionFamilyId'
+  | 'version'
+  | 'section'
+  | 'formatType'
+  | 'poolType'
+  | 'qcStatus'
+  | 'stimulusId'
+  | 'batchId'
+  | 'batchLabel'
+  | 'evidenceRevision'
+> & {
+  provenance: Partial<Pick<QuestionItem['provenance'], 'sourceType' | 'sourceReference'>>;
+  parts: ReadonlyArray<{
+    partId?: string;
+    skillId: string;
+    secondarySkillIds?: string[];
+    difficultyInitial: number;
+    difficultyCalibrated?: number;
+    targetTimeSec?: number;
+  }>;
+};
+
 function findFamilyEvidence(
-  q: QuestionItem,
+  q: Pick<SelectionQuestion, 'questionFamilyId' | 'evidenceRevision'>,
   evidenceMap?: Record<string, QuestionMasteryEvidence>
 ): QuestionMasteryEvidence | undefined {
   if (!evidenceMap) return undefined;
@@ -270,7 +296,7 @@ function findFamilyEvidence(
   return undefined;
 }
 
-function pickWithDiversity<T extends { q: QuestionItem; priority: number }>(
+function pickWithDiversity<Q extends SelectionQuestion, T extends { q: Q; priority: number }>(
   candidates: T[],
   limit: number
 ): T[] {
@@ -308,10 +334,10 @@ function pickWithDiversity<T extends { q: QuestionItem; priority: number }>(
   return selected;
 }
 
-export interface PracticeSelectionInput {
+export interface PracticeSelectionInput<T extends SelectionQuestion = QuestionItem> {
   mode: SessionMode;
   sectionFilter?: SectionCode;
-  questions: QuestionItem[];
+  questions: T[];
   skillStates: Record<string, SkillState>;
   questionMemory: Record<string, QuestionMemoryState>;
   evidenceMap?: Record<string, QuestionMasteryEvidence>;
@@ -324,8 +350,8 @@ export interface PracticeSelectionInput {
   seed: number;
 }
 
-export interface PracticeCandidateInfo {
-  q: QuestionItem;
+export interface PracticeCandidateInfo<T extends SelectionQuestion = QuestionItem> {
+  q: T;
   priority: number;
   isDue: boolean;
   isConfirmationDue: boolean;
@@ -335,8 +361,8 @@ export interface PracticeCandidateInfo {
   avgDifficulty: number;
 }
 
-function scorePracticeCandidates(input: PracticeSelectionInput): {
-  scored: PracticeCandidateInfo[];
+function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(input: PracticeSelectionInput<T>): {
+  scored: PracticeCandidateInfo<T>[];
   sectionLimit?: number;
   effectiveCaps?: Record<SectionCode, number>;
 } {
@@ -376,7 +402,7 @@ function scorePracticeCandidates(input: PracticeSelectionInput): {
     return true;
   });
 
-  const scored: PracticeCandidateInfo[] = eligible
+  const scored: PracticeCandidateInfo<T>[] = eligible
     .map((q) => {
       const mem = questionMemory[q.questionFamilyId];
       const ev = findFamilyEvidence(q, evidenceMap);
@@ -454,10 +480,10 @@ function scorePracticeCandidates(input: PracticeSelectionInput): {
   return { scored, effectiveCaps };
 }
 
-export function selectPracticeCandidates(
-  input: PracticeSelectionInput & { poolLimit?: number }
+export function selectPracticeCandidates<T extends SelectionQuestion = QuestionItem>(
+  input: PracticeSelectionInput<T> & { poolLimit?: number }
 ): {
-  candidates: PracticeCandidateInfo[];
+  candidates: PracticeCandidateInfo<T>[];
   targetCount: number;
   effectiveCaps?: Record<SectionCode, number>;
 } {
@@ -466,12 +492,15 @@ export function selectPracticeCandidates(
 
   if (sectionLimit !== undefined) {
     const targetCount = Math.min(sectionLimit, scored.length);
-    const candidates = pickWithDiversity(scored, Math.min(scored.length, Math.max(targetCount * 2, poolLimit)));
+    const candidates = pickWithDiversity<T, PracticeCandidateInfo<T>>(
+      scored,
+      Math.min(scored.length, Math.max(targetCount * 2, poolLimit))
+    );
     return { candidates, targetCount };
   }
 
   const caps = effectiveCaps || { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
-  const candidates: PracticeCandidateInfo[] = [];
+  const candidates: PracticeCandidateInfo<T>[] = [];
   let targetCount = 0;
 
   for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
@@ -480,7 +509,7 @@ export function selectPracticeCandidates(
     const secScored = scored.filter((x) => x.q.section === sec);
     targetCount += Math.min(cap, secScored.length);
     const secPoolCap = Math.min(secScored.length, Math.max(cap * 2, Math.min(8, cap + 4)));
-    candidates.push(...pickWithDiversity(secScored, secPoolCap));
+    candidates.push(...pickWithDiversity<T, PracticeCandidateInfo<T>>(secScored, secPoolCap));
   }
 
   return {
@@ -490,20 +519,22 @@ export function selectPracticeCandidates(
   };
 }
 
-export function selectPracticeSession(input: PracticeSelectionInput): QuestionItem[] {
+export function selectPracticeSession<T extends SelectionQuestion = QuestionItem>(
+  input: PracticeSelectionInput<T>
+): T[] {
   const { scored, sectionLimit, effectiveCaps } = scorePracticeCandidates(input);
 
   if (sectionLimit !== undefined) {
-    return pickWithDiversity(scored, sectionLimit).map((item) => item.q);
+    return pickWithDiversity<T, PracticeCandidateInfo<T>>(scored, sectionLimit).map((item) => item.q);
   }
 
   const caps = effectiveCaps || { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
-  const picked: QuestionItem[] = [];
+  const picked: T[] = [];
   for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
     const cap = Math.max(0, Number(caps[sec] ?? 0));
     if (cap <= 0) continue;
     picked.push(
-      ...pickWithDiversity(
+      ...pickWithDiversity<T, PracticeCandidateInfo<T>>(
         scored.filter((x) => x.q.section === sec),
         cap
       ).map((item) => item.q)
@@ -537,9 +568,9 @@ export function detectPlateauStatus(input: {
 }
 
 export function getQuestionBatchTag(
-  q: Pick<QuestionItem, 'questionId'> & { provenance: Pick<QuestionItem['provenance'], 'sourceReference'> }
+  q: Pick<QuestionItem, 'questionId'> & { provenance?: Partial<Pick<QuestionItem['provenance'], 'sourceReference'>> }
 ): 'PT1' | 'PT2' | 'PT3' | 'SMOKE' | 'CUSTOM' {
-  const ref = q.provenance.sourceReference ?? '';
+  const ref = q.provenance?.sourceReference ?? '';
   if (q.questionId.includes('_pt1_') || ref.includes('PT1')) return 'PT1';
   if (q.questionId.includes('_pt2_') || ref.includes('PT2')) return 'PT2';
   if (q.questionId.includes('_pt3_') || ref.includes('PT3')) return 'PT3';
@@ -554,11 +585,11 @@ export function getQuestionBatchTag(
   return 'CUSTOM';
 }
 
-export function selectMockTestQuestions(input: {
+export function selectMockTestQuestions<T extends SelectionQuestion = QuestionItem>(input: {
   batch: 'PT1' | 'PT2' | 'PT3';
   sectionFilter?: SectionCode;
-  questions: QuestionItem[];
-}): QuestionItem[] {
+  questions: T[];
+}): T[] {
   const { batch, sectionFilter, questions } = input;
   const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
   return questions
@@ -575,11 +606,11 @@ export function selectMockTestQuestions(input: {
     });
 }
 
-export function selectBatchMockQuestions(input: {
+export function selectBatchMockQuestions<T extends SelectionQuestion = QuestionItem>(input: {
   batchId: string;
   sectionFilter?: SectionCode;
-  questions: QuestionItem[];
-}): QuestionItem[] {
+  questions: T[];
+}): T[] {
   const { batchId, sectionFilter, questions } = input;
   const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
   return questions
@@ -608,15 +639,15 @@ export const CANONICAL_POOL_MOCK_COUNTS: Record<SectionCode, number> = {
  * (no hardcoded test batches required). Strictly excludes benchmark_holdout items,
  * prioritizes unseen questions first, then least-recently-seen, and maintains section order.
  */
-export function selectPoolMockQuestions(input: {
-  questions: QuestionItem[];
+export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionItem>(input: {
+  questions: T[];
   sectionFilter?: SectionCode;
   questionCount?: number;
   questionMemory?: Record<string, QuestionMemoryState>;
   evidenceMap?: Record<string, QuestionMasteryEvidence>;
   autoRetireMastered?: boolean;
   seed?: number;
-}): QuestionItem[] {
+}): T[] {
   const {
     questions,
     sectionFilter,
@@ -638,7 +669,7 @@ export function selectPoolMockQuestions(input: {
     return true;
   });
 
-  const scoreForFreshMock = (q: QuestionItem): number => {
+  const scoreForFreshMock = (q: T): number => {
     const mem = questionMemory[q.questionFamilyId];
     const ev = findFamilyEvidence(q, evidenceMap);
     const isUnseen = !mem && (!ev || ev.status === 'unseen');
@@ -662,10 +693,10 @@ export function selectPoolMockQuestions(input: {
     const scored = eligible
       .map((q) => ({ q, priority: scoreForFreshMock(q) }))
       .sort((a, b) => b.priority - a.priority);
-    return pickWithDiversity(scored, cap).map((x) => x.q);
+    return pickWithDiversity<T, { q: T; priority: number }>(scored, cap).map((x) => x.q);
   }
 
-  const picked: QuestionItem[] = [];
+  const picked: T[] = [];
   const totalLimit =
     typeof questionCount === 'number' && questionCount > 0 ? Math.round(questionCount) : null;
   const sections: SectionCode[] = ['READ', 'MATH', 'THINK', 'WRIT'];
@@ -687,7 +718,7 @@ export function selectPoolMockQuestions(input: {
         .filter((q) => q.section === sec)
         .map((q) => ({ q, priority: scoreForFreshMock(q) }))
         .sort((a, b) => b.priority - a.priority);
-      picked.push(...pickWithDiversity(secScored, caps[sec]).map((x) => x.q));
+      picked.push(...pickWithDiversity<T, { q: T; priority: number }>(secScored, caps[sec]).map((x) => x.q));
     }
     return picked;
   }
@@ -697,13 +728,17 @@ export function selectPoolMockQuestions(input: {
       .filter((q) => q.section === sec)
       .map((q) => ({ q, priority: scoreForFreshMock(q) }))
       .sort((a, b) => b.priority - a.priority);
-    picked.push(...pickWithDiversity(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map((x) => x.q));
+    picked.push(
+      ...pickWithDiversity<T, { q: T; priority: number }>(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map(
+        (x) => x.q
+      )
+    );
   }
   return picked;
 }
 
-export function selectAdminCalibrationQuestions(input: {
-  questions: QuestionItem[];
+export function selectAdminCalibrationQuestions<T extends SelectionQuestion = QuestionItem>(input: {
+  questions: T[];
   section?: SectionCode;
   poolType?: string;
   qcStatus?: string;
@@ -713,7 +748,7 @@ export function selectAdminCalibrationQuestions(input: {
   batch?: string;
   batchId?: string;
   limit?: number;
-}): QuestionItem[] {
+}): T[] {
   const {
     questions,
     section,

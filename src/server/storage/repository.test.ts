@@ -1,32 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import type { BankImportManifest } from '../../shared/contracts';
+import { V3_STARTER_MANIFEST_EXAMPLE } from '../../shared/v3Schema';
 import { validateAndDryRunManifest } from '../manifestValidator';
 import { MemoryRepository } from './memoryRepository';
 import { sha256Json } from './repositoryUtils';
 
-test('MemoryRepository seeds golden-smoke-pack and preserves attempts across version-bumped imports', async () => {
-  const raw = await fs.readFile(path.join(process.cwd(), 'seed', 'golden-smoke-pack.json'), 'utf8');
-  const smoke = JSON.parse(raw) as BankImportManifest;
+test('MemoryRepository seeds starter manifest and preserves attempts across version-bumped imports', async () => {
+  const starter = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
 
   const repo = new MemoryRepository();
-  await repo.initAndSeedIfEmpty(smoke);
+  await repo.initAndSeedIfEmpty(starter);
 
   const questions = await repo.listQuestions();
-  assert.equal(questions.length, smoke.questions.length);
+  assert.equal(questions.length, starter.questions.length);
 
+  const mathSample = starter.questions.find((q) => q.section === 'MATH')!;
   await repo.appendPartAttempts([
     {
       attemptId: 'att_1',
       sessionId: 'sess_1',
-      questionId: 'q_math_0001_v1',
-      questionFamilyId: 'q_math_0001',
-      partId: 'q_math_0001_v1_p1',
-      skillId: 'MATH.GEO2D.COMPOSITE_AREA',
+      questionId: mathSample.questionId,
+      questionFamilyId: mathSample.questionFamilyId,
+      partId: mathSample.parts[0].partId,
+      skillId: mathSample.parts[0].skillId,
       difficultyAtAttempt: 3.2,
-      selectedAnswer: 'D',
+      selectedAnswer: 'B',
       isCorrect: true,
       timeSpentSec: 45,
       isSpacedReview: false,
@@ -34,8 +33,8 @@ test('MemoryRepository seeds golden-smoke-pack and preserves attempts across ver
     },
   ]);
 
-  const modifiedManifest: BankImportManifest = structuredClone(smoke);
-  const mathQ = modifiedManifest.questions.find((q) => q.questionId === 'q_math_0001_v1')!;
+  const modifiedManifest: BankImportManifest = structuredClone(starter);
+  const mathQ = modifiedManifest.questions.find((q) => q.questionId === mathSample.questionId)!;
   mathQ.parts[0].workedExplanation = 'Updated explanation v2';
 
   const existing = await repo.listQuestions();
@@ -52,13 +51,12 @@ test('MemoryRepository seeds golden-smoke-pack and preserves attempts across ver
 });
 
 test('MemoryRepository.hydrateSyncData restores cross-device sessions, attempts, configs, and custom questions idempotently', async () => {
-  const raw = await fs.readFile(path.join(process.cwd(), 'seed', 'golden-smoke-pack.json'), 'utf8');
-  const smoke = JSON.parse(raw) as BankImportManifest;
+  const starter = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
 
   const repo = new MemoryRepository();
-  await repo.initAndSeedIfEmpty(smoke);
+  await repo.initAndSeedIfEmpty(starter);
 
-  const customQ = structuredClone(smoke.questions[0]);
+  const customQ = structuredClone(starter.questions[0]);
   customQ.questionId = 'q_custom_sync_v1';
   customQ.questionFamilyId = 'q_custom_sync';
 
@@ -68,7 +66,7 @@ test('MemoryRepository.hydrateSyncData restores cross-device sessions, attempts,
 
   await repo.hydrateSyncData('uid_alice', {
     questions: [customQ],
-    questionOverrides: [{ questionId: smoke.questions[0].questionId, qcStatus: 'quarantined' }],
+    questionOverrides: [{ questionId: starter.questions[0].questionId, qcStatus: 'quarantined' }],
     configVersions: [
       {
         configVersionId: 'cfg_v9_sync',
@@ -103,10 +101,10 @@ test('MemoryRepository.hydrateSyncData restores cross-device sessions, attempts,
         attemptId: 'att_sync_1',
         studentId: 'uid_alice',
         sessionId: 'sess_prev',
-        questionId: smoke.questions[0].questionId,
-        questionFamilyId: smoke.questions[0].questionFamilyId,
-        partId: smoke.questions[0].parts[0].partId,
-        skillId: smoke.questions[0].parts[0].skillId,
+        questionId: starter.questions[0].questionId,
+        questionFamilyId: starter.questions[0].questionFamilyId,
+        partId: starter.questions[0].parts[0].partId,
+        skillId: starter.questions[0].parts[0].skillId,
         difficultyAtAttempt: 3,
         selectedAnswer: 'A',
         isCorrect: true,
@@ -138,10 +136,10 @@ test('MemoryRepository.hydrateSyncData restores cross-device sessions, attempts,
         attemptId: 'att_sync_1',
         studentId: 'uid_alice',
         sessionId: 'sess_prev',
-        questionId: smoke.questions[0].questionId,
-        questionFamilyId: smoke.questions[0].questionFamilyId,
-        partId: smoke.questions[0].parts[0].partId,
-        skillId: smoke.questions[0].parts[0].skillId,
+        questionId: starter.questions[0].questionId,
+        questionFamilyId: starter.questions[0].questionFamilyId,
+        partId: starter.questions[0].parts[0].partId,
+        skillId: starter.questions[0].parts[0].skillId,
         difficultyAtAttempt: 3,
         selectedAnswer: 'A',
         isCorrect: true,
@@ -171,7 +169,7 @@ test('MemoryRepository.hydrateSyncData restores cross-device sessions, attempts,
 
   const allQs = await repo.listQuestions();
   assert.ok(allQs.some((q) => q.questionId === 'q_custom_sync_v1'));
-  assert.equal(allQs.find((q) => q.questionId === smoke.questions[0].questionId)?.qcStatus, 'quarantined');
+  assert.equal(allQs.find((q) => q.questionId === starter.questions[0].questionId)?.qcStatus, 'quarantined');
 });
 
 test('MemoryRepository backup/restore includes plan-only learners and stays compatible with legacy bundles without dailyFocusPlans', async () => {

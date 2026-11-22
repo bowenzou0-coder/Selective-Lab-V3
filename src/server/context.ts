@@ -1,46 +1,33 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import type {
   BankImportManifest,
   LearnerAccountRecord,
   LearningConfig,
   WritingEvaluationRecord,
 } from '../shared/contracts.ts';
-import { SEED_DIR } from './paths.ts';
+import { V3_STARTER_MANIFEST_EXAMPLE } from '../shared/v3Schema.ts';
 import type { AppRepository } from './storage/repository.ts';
 
 /** Shared per-app state handed to every route module. */
 export interface AppContext {
   repo: AppRepository;
   backendName: AppRepository['backendName'];
-  /** Seeds the tiny starter pack into an empty bank once per process. */
+  /** Seeds the minimal in-memory starter pack when running the disposable demo backend. */
   ensureSeeded(): Promise<void>;
   inFlightWritingEvaluations: Map<string, Promise<WritingEvaluationRecord>>;
   resolveDefaultMonitoredStudentId(config: LearningConfig, users?: LearnerAccountRecord[]): Promise<string | null>;
-}
-
-async function readSeedManifest(filename: string): Promise<BankImportManifest | null> {
-  try {
-    return JSON.parse(await fs.readFile(path.join(SEED_DIR, filename), 'utf8')) as BankImportManifest;
-  } catch (err) {
-    console.warn(`Optional seed file ${filename} not loaded:`, err instanceof Error ? err.message : err);
-    return null;
-  }
 }
 
 export function createAppContext(repo: AppRepository, options: { skipSeed?: boolean } = {}): AppContext {
   let seedPromise: Promise<void> | null = null;
 
   async function ensureSeeded(): Promise<void> {
-    if (options.skipSeed) return;
-    // The live bank is managed with `npm run db:push`; only an empty database needs the starter pack.
-    seedPromise ??= (async () => {
-      const smoke = await readSeedManifest('golden-smoke-pack.json');
-      if (smoke) await repo.initAndSeedIfEmpty(smoke);
-    })().catch((err) => {
-      seedPromise = null;
-      throw err;
-    });
+    if (options.skipSeed || repo.backendName !== 'memory_preview') return;
+    seedPromise ??= repo
+      .initAndSeedIfEmpty(V3_STARTER_MANIFEST_EXAMPLE as unknown as BankImportManifest)
+      .catch((err) => {
+        seedPromise = null;
+        throw err;
+      });
     await seedPromise;
   }
 

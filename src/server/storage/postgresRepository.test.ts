@@ -674,8 +674,376 @@ test('Postgres bank cache revalidates on out-of-band writes and slim queries mat
   assert.ok(lean.length === 2 && lean.every((s) => s.submissionSummary === undefined));
   assert.ok((await repo.listSessions(10, studentId, false)).some((s) => s.submissionSummary));
   const activity = await repo.getLearnerActivity([studentId, 'nobody']);
-  assert.equal(activity[studentId].sessionsCount, 2);
+  assert.deepEqual(activity[studentId].sessionsCount, 2);
   assert.equal(activity.nobody.sessionsCount, 0);
   assert.equal(await repo.countHoldoutLeaks([target.questionId]), 2);
   assert.equal(await repo.countHoldoutLeaks([]), 0);
+});
+
+test('Postgres SQL-first pagination, search, status aggregates, progress stats, and bulk status match MemoryRepository', {
+  skip: !localTestUrl && 'Set TEST_POSTGRES_URL to a disposable local Postgres database',
+}, async (t) => {
+  const url = new URL(localTestUrl!);
+  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !url.searchParams.has('host'),
+    'TEST_POSTGRES_URL must point to a local database');
+  const schema = `selective_sql_parity_${randomUUID().replaceAll('-', '')}`;
+  const baseConfig = getPostgresPoolConfig({ DATABASE_URL: url.href });
+  const adminPool = new Pool(baseConfig);
+  await adminPool.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
+  t.after(async () => {
+    await pool.end();
+    try {
+      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
+    } finally {
+      await adminPool.end();
+    }
+  });
+
+  const pgRepo = new PostgresRepository(pool);
+  const memRepo = new MemoryRepository();
+  const baseManifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
+  const mathTemplate = structuredClone(baseManifest.questions.find((q) => q.section === 'MATH')!);
+
+  const parityManifest: BankImportManifest = {
+    ...baseManifest,
+    batchLabel: 'Parity Batch Alpha',
+    stimuli: [
+      ...baseManifest.stimuli,
+      {
+        stimulusId: 'stim_visual_1',
+        stimulusFamilyId: 'stim_visual_1',
+        version: 1,
+        section: 'READ',
+        genreOrTextType: 'passage',
+        title: 'Solar Harbour Observatory',
+        mainTextMarkdown: 'Tidal gauges track harbour currents.',
+        visual: { visualType: 'inline_svg', altText: 'Tide chart', svgMarkup: '<svg viewBox="0 0 10 10"/>' },
+        sourceType: 'ai_generated',
+      },
+    ],
+    questions: [
+      ...baseManifest.questions,
+      {
+        ...mathTemplate,
+        questionId: 'q_nat_2_v1',
+        questionFamilyId: 'q_nat_2',
+        qcStatus: 'active',
+        poolType: 'practice',
+        visual: undefined,
+        parts: [
+          {
+            ...mathTemplate.parts[0],
+            partId: 'q_nat_2_p1',
+            promptText: 'Calculate the perimeter of a 3 cm square.',
+            skillId: 'MATH.NUM.NUMBER_SEQUENCES',
+            secondarySkillIds: ['MATH.GEO2D.COMPOSITE_AREA'],
+            workedExplanation: 'Multiply side length by 4.',
+          },
+        ],
+      },
+      {
+        ...mathTemplate,
+        questionId: 'q_nat_10_v1',
+        questionFamilyId: 'q_nat_10',
+        qcStatus: 'quarantined',
+        poolType: 'practice',
+        visual: undefined,
+        parts: [
+          {
+            ...mathTemplate.parts[0],
+            partId: 'q_nat_10_p1',
+            promptText: 'Missing explanation item ten.',
+            skillId: 'MATH.NUM.NUMBER_SEQUENCES',
+            workedExplanation: '',
+          },
+        ],
+      },
+      {
+        ...mathTemplate,
+        questionId: 'q_pt1_holdout_v1',
+        questionFamilyId: 'q_pt1_holdout',
+        qcStatus: 'active',
+        poolType: 'benchmark_holdout',
+        parts: [
+          {
+            ...mathTemplate.parts[0],
+            partId: 'q_pt1_holdout_p1',
+            promptText: 'Holdout PT1 item.',
+            workedExplanation: 'Holdout explanation.',
+          },
+        ],
+        provenance: { sourceType: 'official_doe', sourceReference: 'NSW DoE PT1 Q1', verifierAgreed: true, auditorReviewed: true },
+      },
+      {
+        ...baseManifest.questions[0],
+        questionId: 'q_read_vis_v1',
+        questionFamilyId: 'q_read_vis',
+        section: 'READ',
+        formatType: 'READ_FICTION_MCQ',
+        stimulusId: 'stim_visual_1',
+        sharedPoolConfig: undefined,
+        parts: [
+          {
+            ...baseManifest.questions[0].parts[0],
+            partId: 'q_read_vis_p1',
+            promptText: 'What do the tidal gauges measure?',
+            options: [{ key: 'A', text: 'Harbour currents' }, { key: 'B', text: 'Wind speed' }],
+            correctAnswerKey: 'A',
+            workedExplanation: 'Explicitly stated in the observatory passage.',
+          },
+        ],
+      },
+    ],
+  };
+
+  // Validate import directly (without passing full manifest into a pre-seeded table)
+  await pgRepo.importManifest(parityManifest, 'test_seed');
+  await memRepo.importManifest(parityManifest, 'test_seed');
+
+  // Version bump q_nat_2 so includeHistorical vs latest behaves differently
+  const bumpManifest: BankImportManifest = {
+    manifestVersion: '1.0',
+    batchLabel: 'Parity Batch Bump',
+    defaultPoolType: 'practice',
+    defaultQcStatus: 'active',
+    stimuli: [],
+    questions: [
+      {
+        ...parityManifest.questions.find((q) => q.questionId === 'q_nat_2_v1')!,
+        parts: [
+          {
+            ...parityManifest.questions.find((q) => q.questionId === 'q_nat_2_v1')!.parts[0],
+            workedExplanation: 'Side length 3 cm times 4 equals 12 cm.',
+          },
+        ],
+      },
+    ],
+  };
+  await pgRepo.validateAndImportManifest(bumpManifest, 'test_bump', { dryRun: false });
+  await memRepo.importManifest(bumpManifest, 'test_bump');
+
+  // Seed learner state: exact retained evidence, family-fallback needs_repair evidence, memory-only in_review, open flag, attempts, writing
+  const studentId = 'parity_student';
+  const latestNat2 = (await pgRepo.getQuestionWithStimulus('q_nat_2_v2'))!.question;
+  const mathSvg = (await pgRepo.getQuestionWithStimulus('q_ai_math_svg_01_v1'))!.question;
+  const readVis = (await pgRepo.getQuestionWithStimulus('q_read_vis_v1'))!.question;
+
+  const evEntries: QuestionMasteryEvidence[] = [
+    {
+      evidenceKey: `${latestNat2.questionFamilyId}__${latestNat2.evidenceRevision}`,
+      questionFamilyId: latestNat2.questionFamilyId,
+      questionId: latestNat2.questionId,
+      evidenceRevision: latestNat2.evidenceRevision!,
+      section: 'MATH',
+      status: 'retained',
+      cleanPassesCount: 3,
+      passTimestampsIso: ['2026-11-01T00:00:00Z', '2026-11-03T00:00:00Z', '2026-11-12T00:00:00Z'],
+      everCleanPassed: true,
+      firstSubmissionCleanPass: true,
+      attemptsCount: 3,
+      resetCount: 0,
+      lastAttemptAtIso: '2026-11-12T00:00:00Z',
+      lastAllCorrect: true,
+      policyVersion: 'v3_3stage_24h_7d',
+      updatedAtIso: '2026-11-12T00:00:00Z',
+    },
+    {
+      // Intentionally mismatched older evidenceRevision to test family-fallback matching in bankStatus/SQL
+      evidenceKey: `${mathSvg.questionFamilyId}__er_older_revision`,
+      questionFamilyId: mathSvg.questionFamilyId,
+      questionId: mathSvg.questionId,
+      evidenceRevision: 'er_older_revision',
+      section: 'MATH',
+      status: 'needs_repair',
+      cleanPassesCount: 0,
+      passTimestampsIso: [],
+      everCleanPassed: false,
+      firstSubmissionCleanPass: false,
+      attemptsCount: 1,
+      resetCount: 1,
+      lastAttemptAtIso: '2026-11-10T00:00:00Z',
+      lastAllCorrect: false,
+      policyVersion: 'v3_3stage_24h_7d',
+      updatedAtIso: '2026-11-10T00:00:00Z',
+    },
+  ];
+  await Promise.all([
+    pgRepo.upsertQuestionEvidence(evEntries, studentId),
+    memRepo.upsertQuestionEvidence(evEntries, studentId),
+    pgRepo.upsertQuestionMemory([{
+      questionFamilyId: readVis.questionFamilyId,
+      timesSeen: 1,
+      lastSeenAt: '2026-11-11T00:00:00Z',
+      lastAllCorrect: true,
+      intervalDays: 1,
+      lapseCount: 0,
+      nextDueAt: '2026-11-12T00:00:00Z',
+    }], studentId),
+    memRepo.upsertQuestionMemory([{
+      questionFamilyId: readVis.questionFamilyId,
+      timesSeen: 1,
+      lastSeenAt: '2026-11-11T00:00:00Z',
+      lastAllCorrect: true,
+      intervalDays: 1,
+      lapseCount: 0,
+      nextDueAt: '2026-11-12T00:00:00Z',
+    }], studentId),
+    pgRepo.saveQuestionFlag({
+      flagId: 'flg_parity_1',
+      questionId: 'q_nat_2_v2',
+      sessionId: 'sess_p1',
+      studentId,
+      reason: 'check',
+      status: 'open',
+      createdAt: '2026-11-22T01:00:00Z',
+    }),
+    memRepo.saveQuestionFlag({
+      flagId: 'flg_parity_1',
+      questionId: 'q_nat_2_v2',
+      sessionId: 'sess_p1',
+      studentId,
+      reason: 'check',
+      status: 'open',
+      createdAt: '2026-11-22T01:00:00Z',
+    }),
+  ]);
+
+  const todayIso = '2026-11-22T05:00:00.000Z';
+  const attempts: PartAttemptRecord[] = [
+    {
+      attemptId: 'att_p1',
+      studentId,
+      sessionId: 'sess_p1',
+      questionId: 'q_nat_2_v2',
+      questionFamilyId: 'q_nat_2',
+      partId: 'q_nat_2_p1',
+      skillId: 'MATH.NUM.NUMBER_SEQUENCES',
+      difficultyAtAttempt: 2.5,
+      selectedAnswer: 'B',
+      isCorrect: true,
+      timeSpentSec: 30,
+      isSpacedReview: false,
+      createdAt: todayIso,
+    },
+    {
+      attemptId: 'att_p2',
+      studentId,
+      sessionId: 'sess_p1',
+      questionId: 'q_pt1_holdout_v1',
+      questionFamilyId: 'q_pt1_holdout',
+      partId: 'q_pt1_holdout_p1',
+      skillId: 'MATH.GEO2D.COMPOSITE_AREA',
+      difficultyAtAttempt: 2.5,
+      selectedAnswer: 'A',
+      isCorrect: false,
+      timeSpentSec: 40,
+      isSpacedReview: false,
+      isLegacy: true,
+      createdAt: '2026-11-21T05:00:00.000Z',
+    },
+    {
+      attemptId: 'att_p_sandbox',
+      studentId,
+      sessionId: 'sess_sb',
+      questionId: 'q_nat_2_v2',
+      questionFamilyId: 'q_nat_2',
+      partId: 'q_nat_2_p1',
+      skillId: 'MATH.NUM.NUMBER_SEQUENCES',
+      difficultyAtAttempt: 2.5,
+      selectedAnswer: 'B',
+      isCorrect: true,
+      timeSpentSec: 10,
+      isSpacedReview: false,
+      isSandbox: true,
+      createdAt: todayIso,
+    },
+  ];
+  await Promise.all([pgRepo.appendPartAttempts(attempts), memRepo.appendPartAttempts(attempts)]);
+
+  // Verify pagination, filters, search, sorting, and out-of-range clamping parity
+  const queries = [
+    { monitoredStudentId: studentId, dailyQuestionTarget: 8, sort: 'id_asc' as const, pageSize: 2, page: 1 },
+    { monitoredStudentId: studentId, page: 99, pageSize: 2, includeSummary: false },
+    { monitoredStudentId: studentId, poolStatus: 'live' as const, completionStatus: 'done' as const },
+    { monitoredStudentId: studentId, completionStatus: 'needs_repair' as const },
+    { monitoredStudentId: studentId, completionStatus: 'in_review' as const },
+    { monitoredStudentId: studentId, completionStatus: 'unseen' as const, includeSummary: false },
+    { monitoredStudentId: studentId, search: 'Observatory' },
+    { monitoredStudentId: studentId, search: 'perimeter', skillId: 'MATH.GEO2D.COMPOSITE_AREA' },
+    { monitoredStudentId: studentId, poolStatus: 'paused' as const, missingExplanation: true },
+    { monitoredStudentId: studentId, missingVisual: true, flaggedOnly: true },
+    { monitoredStudentId: studentId, batchId: 'tag_PT1' },
+    { monitoredStudentId: studentId, includeHistorical: true, sort: 'version_desc' as const },
+    { monitoredStudentId: null, dailyQuestionTarget: 8 },
+  ];
+
+  for (const qParams of queries) {
+    const [pgRes, memRes] = await Promise.all([
+      pgRepo.listQuestionsPaginated(qParams),
+      memRepo.listQuestionsPaginated(qParams),
+    ]);
+    assert.deepEqual(pgRes.questions.map((q) => q.questionId), memRes.questions.map((q) => q.questionId));
+    assert.equal(pgRes.totalMatching, memRes.totalMatching);
+    assert.equal(pgRes.page, memRes.page);
+    assert.deepEqual(Object.keys(pgRes.stimuliById).sort(), Object.keys(memRes.stimuliById).sort());
+    assert.deepEqual(pgRes.openFlagsByQuestionId, memRes.openFlagsByQuestionId);
+    assert.deepEqual(pgRes.progressByQuestionId, memRes.progressByQuestionId);
+    assert.deepEqual(pgRes.poolHealth, memRes.poolHealth);
+    assert.deepEqual(
+      pgRes.masteredLiveQuestionIds?.slice().sort(),
+      memRes.masteredLiveQuestionIds?.slice().sort()
+    );
+    if (memRes.batchSummaries) {
+      const normBatches = (list: typeof memRes.batchSummaries) =>
+        list.map(({ batchId: _id, createdAtIso: _ts, ...rest }) => ({
+          ...rest,
+          questionIds: [...rest.questionIds].sort(),
+        }));
+      assert.deepEqual(normBatches(pgRes.batchSummaries!), normBatches(memRes.batchSummaries));
+    }
+  }
+
+  // Verify SQL-aggregated summaries match MemoryRepository identically
+  assert.deepEqual(await pgRepo.getAdminBankStatusSummary(), await memRepo.getAdminBankStatusSummary());
+  const normDash = (d: Awaited<ReturnType<typeof pgRepo.getStudentDashboardBankSummary>>) => ({
+    ...d,
+    customBatches: d.customBatches.map(({ batchId: _id, ...rest }) => rest),
+  });
+  assert.deepEqual(
+    normDash(await pgRepo.getStudentDashboardBankSummary(studentId, false)),
+    normDash(await memRepo.getStudentDashboardBankSummary(studentId, false))
+  );
+  assert.deepEqual(
+    normDash(await pgRepo.getStudentDashboardBankSummary(studentId, true)),
+    normDash(await memRepo.getStudentDashboardBankSummary(studentId, true))
+  );
+  assert.deepEqual(
+    await pgRepo.getTodayAttemptCounts(studentId, '2026-11-22'),
+    await memRepo.getTodayAttemptCounts(studentId, '2026-11-22')
+  );
+  assert.deepEqual(
+    await pgRepo.getStudentProgressStats({ studentId, writingSubmissionsCount: 0, writingEvaluatedCount: 0 }),
+    await memRepo.getStudentProgressStats({ studentId, writingSubmissionsCount: 0, writingEvaluatedCount: 0 })
+  );
+  assert.deepEqual(
+    await pgRepo.getPoolHealthByLearner([studentId, 'empty_student'], 8),
+    await memRepo.getPoolHealthByLearner([studentId, 'empty_student'], 8)
+  );
+
+  // Verify slim selection queries + targeted ID fetch + bulkUpdateQuestionStatus
+  const [pgSel, memSel] = await Promise.all([
+    pgRepo.listSelectionQuestions({ qcStatus: 'active', section: 'MATH' }),
+    memRepo.listSelectionQuestions({ qcStatus: 'active', section: 'MATH' }),
+  ]);
+  assert.deepEqual(
+    pgSel.map((q) => q.questionId).sort(),
+    memSel.map((q) => q.questionId).sort()
+  );
+  assert.equal((await pgRepo.listQuestionsByIds(['q_nat_2_v2', 'q_read_vis_v1'])).length, 2);
+
+  const updated = await pgRepo.bulkUpdateQuestionStatus(['q_nat_2_v2', 'q_read_vis_v1'], 'retired');
+  assert.equal(updated, 2);
+  assert.equal((await pgRepo.getQuestionWithStimulus('q_nat_2_v2'))?.question.qcStatus, 'retired');
+  assert.equal((await pgRepo.getQuestionWithStimulus('q_read_vis_v1'))?.question.qcStatus, 'retired');
 });

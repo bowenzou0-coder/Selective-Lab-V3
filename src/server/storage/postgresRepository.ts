@@ -26,11 +26,22 @@ import { computeCanonicalHash, validateAndDryRunManifest } from '../manifestVali
 import { buildMediaMigrationManifest } from '../mediaService.ts';
 import { getPostgresPoolConfig } from './postgresConfig.ts';
 import { exportPostgresBackup, restorePostgresBackup } from './postgresBackup.ts';
-import { QuestionBankCache } from './questionBankCache.ts';
+import {
+  queryAdminBankStatusSummary,
+  queryBatchSummaries,
+  queryFilteredSelection,
+  queryPoolHealthByLearner,
+  queryQuestionsPaginatedSql,
+  queryStudentDashboardBankSummary,
+  queryStudentProgressStats,
+  queryTodayAttemptCounts,
+} from './postgresQueries.ts';
+import { deepFreeze, QuestionBankCache } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
   RevisionConflictError,
+  type AdminBankStatusSummary,
   type AppRepository,
   type BackupRestoreReport,
   type CanonicalBackupBundle,
@@ -46,14 +57,17 @@ import {
   type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
+  type QuestionSelectionItem,
   type QuestionVersionSummary,
   type ReserveSessionResult,
+  type StudentDashboardBankSummary,
+  type StudentProgressBankStats,
   type SyncHydratePayload,
+  type TodayAttemptCounts,
   type WritingSubmissionRecord,
 } from './repository.ts';
 import {
   emptyRestoreReport,
-  filterAndPaginateQuestions,
   finalizeBackupBundle,
   selectLatestByFamily,
   validateIncomingBackupBundle,
@@ -558,12 +572,105 @@ export class PostgresRepository implements AppRepository {
     includeHistorical?: boolean;
   }): Promise<QuestionItem[]> {
     await this.ensureSchema();
+    const hasNarrowFilter = Boolean(filter?.section || filter?.poolType || filter?.qcStatus);
+    if (hasNarrowFilter && !this.bank.hasWarmSnapshot()) {
+      const params: unknown[] = [];
+      const where: string[] = [];
+      if (filter?.section) {
+        params.push(filter.section);
+        where.push(`section = $${params.length}`);
+      }
+      if (filter?.poolType) {
+        params.push(filter.poolType);
+        where.push(`pool_type = $${params.length}`);
+      }
+      if (filter?.qcStatus) {
+        params.push(filter.qcStatus);
+        where.push(`qc_status = $${params.length}`);
+      }
+      const whereSql = `WHERE ${where.join(' AND ')}`;
+      const sql = filter?.includeHistorical
+        ? `SELECT data FROM questions ${whereSql}`
+        : `WITH latest AS (SELECT DISTINCT ON (question_family_id) section, pool_type, qc_status, data FROM questions ORDER BY question_family_id, version DESC)
+           SELECT data FROM latest ${whereSql}`;
+      const { rows } = await this.pool.query<{ data: QuestionItem }>(sql, params);
+      return rows.map((r) => deepFreeze(r.data));
+    }
     const bank = await this.bank.get();
     const base = filter?.includeHistorical ? bank.all : bank.latest;
     return base.filter((q) => {
       if (filter?.section && q.section !== filter.section) return false;
       if (filter?.poolType && q.poolType !== filter.poolType) return false;
       if (filter?.qcStatus && q.qcStatus !== filter.qcStatus) return false;
+      return true;
+    });
+  }
+
+  async listQuestionsByIds(questionIds: string[]): Promise<QuestionItem[]> {
+    await this.ensureSchema();
+    const unique = Array.from(new Set(questionIds.filter(Boolean)));
+    if (unique.length === 0) return [];
+    const warm = this.bank.hasWarmSnapshot() ? await this.bank.peek() : null;
+    if (warm) {
+      return unique.map((id) => warm.byId.get(id)).filter((q): q is QuestionItem => Boolean(q));
+    }
+    const { rows } = await this.pool.query<{ data: QuestionItem }>(
+      'SELECT data FROM questions WHERE question_id = ANY($1::text[])',
+      [unique]
+    );
+    return rows.map((r) => deepFreeze(r.data));
+  }
+
+  async listQuestionsByFamilies(familyIds: string[], questionIds: string[] = []): Promise<QuestionItem[]> {
+    await this.ensureSchema();
+    const fams = Array.from(new Set(familyIds.filter(Boolean)));
+    const qids = Array.from(new Set(questionIds.filter(Boolean)));
+    if (fams.length === 0 && qids.length === 0) return [];
+    const { rows } = await this.pool.query<{ data: QuestionItem }>(
+      'SELECT data FROM questions WHERE question_family_id = ANY($1::text[]) OR question_id = ANY($2::text[])',
+      [fams, qids]
+    );
+    return rows.map((r) => deepFreeze(r.data));
+  }
+
+  async listSelectionQuestions(filter?: {
+    section?: string;
+    poolType?: string;
+    qcStatus?: string;
+    batchId?: string;
+    batchTag?: string;
+    includeHistorical?: boolean;
+  }): Promise<QuestionSelectionItem[]> {
+    await this.ensureSchema();
+    const hasSqlPushdown = Boolean(filter?.section || filter?.batchId || filter?.batchTag || filter?.poolType);
+    if (filter?.includeHistorical || (hasSqlPushdown && !this.bank.hasWarmSelection())) {
+      return queryFilteredSelection(this.pool, filter || {});
+    }
+    const latest = await this.bank.getLatestSelection();
+    if (!filter?.section && !filter?.poolType && !filter?.qcStatus && !filter?.batchId && !filter?.batchTag) {
+      return [...latest];
+    }
+    return latest.filter((q) => {
+      if (filter.section && q.section !== filter.section) return false;
+      if (filter.poolType && q.poolType !== filter.poolType) return false;
+      if (filter.qcStatus && q.qcStatus !== filter.qcStatus) return false;
+      if (filter.batchId && q.batchId !== filter.batchId) return false;
+      if (filter.batchTag) {
+        const ref = q.provenance?.sourceReference ?? '';
+        const tag = q.questionId.includes('_pt1_') || ref.includes('PT1')
+          ? 'PT1'
+          : q.questionId.includes('_pt2_') || ref.includes('PT2')
+            ? 'PT2'
+            : q.questionId.includes('_pt3_') || ref.includes('PT3')
+              ? 'PT3'
+              : q.questionId.startsWith('q_read_') ||
+                  q.questionId.startsWith('q_math_') ||
+                  q.questionId.startsWith('q_think_') ||
+                  q.questionId.startsWith('q_writ_')
+                ? 'SMOKE'
+                : 'CUSTOM';
+        if (tag !== filter.batchTag) return false;
+      }
       return true;
     });
   }
@@ -576,19 +683,7 @@ export class PostgresRepository implements AppRepository {
 
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
     await this.ensureSchema();
-    const [bank, flags, batches] = await Promise.all([
-      this.bank.get(),
-      this.listQuestionFlags(),
-      this.listImportBatchSummaries(),
-    ]);
-    return filterAndPaginateQuestions({
-      allQuestions: bank.all,
-      latestQuestions: bank.latest,
-      stimuliById: bank.stimuliById,
-      flags,
-      batches,
-      params,
-    });
+    return queryQuestionsPaginatedSql(this.pool, params || {}, this.listImportBatchSummaries());
   }
 
   async listQuestionVersions(questionFamilyId: string): Promise<QuestionVersionSummary[]> {
@@ -683,7 +778,7 @@ export class PostgresRepository implements AppRepository {
           replayed: true,
         };
       }
-      const { questions, stimuliById } = await this.readQuestionBank(client, options.dryRun);
+      const { questions, stimuliById } = await this.readQuestionBankForManifest(client, raw, options.dryRun);
       const { manifest, report } = validateAndDryRunManifest(raw, questions, Object.fromEntries(stimuliById));
       const result = batchId && manifest && report.valid && !options.dryRun
         ? await this.writeManifest(client, manifest, importedBy, batchId, { questions, stimuliById })
@@ -699,17 +794,57 @@ export class PostgresRepository implements AppRepository {
     await client.query('LOCK TABLE stimuli, questions IN SHARE ROW EXCLUSIVE MODE');
   }
 
-  private async readQuestionBank(client: PoolClient, allowUninitialized = false) {
+  private async readQuestionBankForManifest(client: PoolClient, raw: unknown, allowUninitialized = false) {
     if (allowUninitialized) {
       const { rows } = await client.query("SELECT to_regclass('questions') AS questions");
       if (!rows[0].questions) {
         return { questions: [], stimuliById: new Map<string, StimulusGroup>() };
       }
     }
-    const stimuli = await client.query<{ stimulus_id: string; data: StimulusGroup }>(
-      'SELECT stimulus_id, data FROM stimuli'
-    );
-    const questions = await client.query<{ data: QuestionItem }>('SELECT data FROM questions');
+    const stimIds = new Set<string>();
+    const questionIds = new Set<string>();
+    const familyIds = new Set<string>();
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const m = raw as { stimuli?: unknown[]; questions?: unknown[] };
+      if (Array.isArray(m.stimuli)) {
+        for (const s of m.stimuli) {
+          const sid = (s as { stimulusId?: unknown })?.stimulusId;
+          if (typeof sid === 'string' && sid.trim()) stimIds.add(sid);
+        }
+      }
+      if (Array.isArray(m.questions)) {
+        for (const q of m.questions) {
+          const obj = q as { questionId?: unknown; questionFamilyId?: unknown; stimulusId?: unknown };
+          if (typeof obj?.questionId === 'string' && obj.questionId.trim()) {
+            questionIds.add(obj.questionId);
+            const fam =
+              typeof obj.questionFamilyId === 'string' && obj.questionFamilyId.trim()
+                ? obj.questionFamilyId
+                : obj.questionId.replace(/_v\d+$/, '');
+            familyIds.add(fam);
+          } else if (typeof obj?.questionFamilyId === 'string' && obj.questionFamilyId.trim()) {
+            familyIds.add(obj.questionFamilyId);
+          }
+          if (typeof obj?.stimulusId === 'string' && obj.stimulusId.trim()) {
+            stimIds.add(obj.stimulusId);
+          }
+        }
+      }
+    }
+    const [stimuli, questions] = await Promise.all([
+      stimIds.size > 0
+        ? client.query<{ stimulus_id: string; data: StimulusGroup }>(
+            'SELECT stimulus_id, data FROM stimuli WHERE stimulus_id = ANY($1::text[])',
+            [Array.from(stimIds)]
+          )
+        : Promise.resolve({ rows: [] as { stimulus_id: string; data: StimulusGroup }[] }),
+      familyIds.size > 0 || questionIds.size > 0
+        ? client.query<{ data: QuestionItem }>(
+            'SELECT data FROM questions WHERE question_family_id = ANY($1::text[]) OR question_id = ANY($2::text[])',
+            [Array.from(familyIds), Array.from(questionIds)]
+          )
+        : Promise.resolve({ rows: [] as { data: QuestionItem }[] }),
+    ]);
     return {
       questions: questions.rows.map((row) => row.data),
       stimuliById: new Map(stimuli.rows.map((row) => [row.stimulus_id, row.data])),
@@ -729,13 +864,13 @@ export class PostgresRepository implements AppRepository {
     manifest: BankImportManifest,
     importedBy: string,
     batchId: string,
-    bank?: Awaited<ReturnType<PostgresRepository['readQuestionBank']>>
+    bank?: Awaited<ReturnType<PostgresRepository['readQuestionBankForManifest']>>
   ): Promise<ManifestImportResult> {
     const nowIso = new Date().toISOString();
     const newQuestionIds: string[] = [];
     const versionBumpedQuestionIds: string[] = [];
     const skippedQuestionIds: string[] = [];
-    const { questions, stimuliById } = bank ?? await this.readQuestionBank(client);
+    const { questions, stimuliById } = bank ?? await this.readQuestionBankForManifest(client, manifest);
     const stimulusWrites: StimulusGroup[] = [];
     for (const s of manifest.stimuli || []) {
       const hash =
@@ -866,6 +1001,57 @@ export class PostgresRepository implements AppRepository {
     );
     this.invalidateBank();
     if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
+  }
+
+  async bulkUpdateQuestionStatus(questionIds: string[], qcStatus: QuestionItem['qcStatus']): Promise<number> {
+    await this.ensureSchema();
+    const unique = Array.from(new Set(questionIds.filter(Boolean)));
+    if (unique.length === 0) return 0;
+    const { rowCount } = await this.pool.query(
+      `UPDATE questions SET qc_status = $2, data = data || $3::jsonb WHERE question_id = ANY($1::text[])`,
+      [unique, qcStatus, JSON.stringify({ qcStatus, updatedAtIso: new Date().toISOString() })]
+    );
+    this.invalidateBank();
+    return rowCount ?? 0;
+  }
+
+  async getAdminBankStatusSummary(): Promise<AdminBankStatusSummary> {
+    await this.ensureSchema();
+    return queryAdminBankStatusSummary(this.pool);
+  }
+
+  async getStudentDashboardBankSummary(
+    studentId: string,
+    autoRetireMastered: boolean
+  ): Promise<StudentDashboardBankSummary> {
+    await this.ensureSchema();
+    return queryStudentDashboardBankSummary(this.pool, studentId, autoRetireMastered);
+  }
+
+  async getTodayAttemptCounts(studentId: string, datePrefix: string): Promise<TodayAttemptCounts> {
+    await this.ensureSchema();
+    return queryTodayAttemptCounts(this.pool, studentId, datePrefix);
+  }
+
+  async getStudentProgressStats(input: {
+    studentId: string;
+    writingSubmissionsCount: number;
+    writingEvaluatedCount: number;
+    policyVersion?: string;
+  }): Promise<StudentProgressBankStats> {
+    await this.ensureSchema();
+    return queryStudentProgressStats(this.pool, input);
+  }
+
+  async getPoolHealthByLearner(studentIds: string[], dailyQuestionTarget: number) {
+    await this.ensureSchema();
+    return queryPoolHealthByLearner(this.pool, studentIds, dailyQuestionTarget);
+  }
+
+  async getBatchSummaries(studentId: string | null) {
+    await this.ensureSchema();
+    const batches = await this.listImportBatchSummaries();
+    return queryBatchSummaries(this.pool, studentId, batches);
   }
 
   async deleteQuestions(questionIds: string[]): Promise<number> {

@@ -24,12 +24,25 @@ function signedCookie(sub: string, role: 'student' | 'admin'): string {
 
 async function startTestServer() {
   const repo = new MemoryRepository();
-  // Mirror the live bank: starter pack plus a small official PT1–PT3 sample (the full official
-  // papers live only in Postgres).
-  await repo.initAndSeedIfEmpty(JSON.parse(await readFile('seed/golden-smoke-pack.json', 'utf8')) as BankImportManifest);
   const officialSample = JSON.parse(
     await readFile('src/server/__fixtures__/official-sample.json', 'utf8')
   ) as Record<'pt12' | 'pt3', BankImportManifest>;
+  // Seed starter pack + one synthetic holdout math item + official PT1–PT3 sample.
+  const starter = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
+  const mathTemplate = structuredClone(officialSample.pt12.questions.find((q) => q.section === 'MATH')!);
+  starter.questions.push({
+    ...mathTemplate,
+    questionId: 'q_fixture_holdout_math_v1',
+    questionFamilyId: 'q_fixture_holdout_math',
+    poolType: 'benchmark_holdout',
+    qcStatus: 'active',
+    parts: mathTemplate.parts.map((p, idx) => ({
+      ...p,
+      partId: `q_fixture_holdout_math_p${idx + 1}`,
+      workedExplanation: 'Holdout math fixture explanation.',
+    })),
+  });
+  await repo.initAndSeedIfEmpty(starter);
   await repo.importManifest(officialSample.pt12, 'system_seed');
   await repo.importManifest(officialSample.pt3, 'system_seed');
   const { app } = await createApp({ repo, skipSeed: false, skipVite: true });
@@ -1395,6 +1408,38 @@ test('Admin lightweight endpoints: batch summaries, summary-free paging, and cro
       headers: { Cookie: signedCookie('lite_student', 'student') },
     });
     assert.equal(forbidden.status, 403);
+
+    // Bulk status update endpoint: enforces admin auth, validates status, updates multiple questions in 1 call.
+    const studentBulk = await fetch(`${srv.baseUrl}/api/admin/questions/bulk-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: signedCookie('lite_student', 'student') },
+      body: JSON.stringify({ questionIds: ['q_off_pt1_math_q01_v1'], qcStatus: 'retired' }),
+    });
+    assert.equal(studentBulk.status, 403);
+
+    const invalidBulk = await fetch(`${srv.baseUrl}/api/admin/questions/bulk-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ questionIds: ['q_off_pt1_math_q01_v1'], qcStatus: 'bogus' }),
+    });
+    assert.equal(invalidBulk.status, 400);
+
+    const okBulk = await fetch(`${srv.baseUrl}/api/admin/questions/bulk-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        questionIds: ['q_off_pt1_math_q01_v1', 'q_off_pt1_math_q02_v1'],
+        qcStatus: 'quarantined',
+      }),
+    });
+    assert.equal(okBulk.status, 200);
+    const bulkBody = (await okBulk.json()) as { ok: boolean; updatedCount: number };
+    assert.equal(bulkBody.ok, true);
+    assert.equal(bulkBody.updatedCount, 2);
+    const updatedQ1 = await srv.repo.getQuestionWithStimulus('q_off_pt1_math_q01_v1');
+    const updatedQ2 = await srv.repo.getQuestionWithStimulus('q_off_pt1_math_q02_v1');
+    assert.equal(updatedQ1?.question.qcStatus, 'quarantined');
+    assert.equal(updatedQ2?.question.qcStatus, 'quarantined');
   } finally {
     await srv.close();
   }

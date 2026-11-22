@@ -16,6 +16,7 @@ import {
   clampAlgorithmAdjustments,
   selectPracticeCandidates,
   selectPracticeSession,
+  type SelectionQuestion,
 } from '../shared/engine.ts';
 import { SKILLS_TAXONOMY, VALID_SKILL_IDS } from '../shared/skills.ts';
 import {
@@ -54,7 +55,7 @@ export function computeRankedSkillCandidates(input: {
   skillStates: Record<string, SkillState>;
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
-  questions: QuestionItem[];
+  questions: SelectionQuestion[];
   nowIso?: string;
 }): FocusPlanSummaryRow[] {
   const nowIso = input.nowIso ?? new Date().toISOString();
@@ -222,7 +223,7 @@ export function allocateAutoCalibratedDailyPlan(input: {
   return { dailyQuestionLimitBySection: allocation, dailyGoalMinutes };
 }
 
-function countAvailableBySection(questions: QuestionItem[]): Record<SectionCode, number> {
+function countAvailableBySection(questions: SelectionQuestion[]): Record<SectionCode, number> {
   const counts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
   for (const q of questions) {
     if (q.qcStatus === 'active' && q.poolType !== 'benchmark_holdout') {
@@ -237,7 +238,7 @@ export function buildDeterministicDailyFocusPlan(input: {
   skillStates: Record<string, SkillState>;
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
-  questions: QuestionItem[];
+  questions: SelectionQuestion[];
   config?: LearningConfig;
   nowIso?: string;
 }): DailyFocusPlan {
@@ -719,14 +720,20 @@ export async function generateGeminiFocusOverride(input: {
   };
 }
 
+type MaybeLazy<T> = T | (() => Promise<T>);
+
+async function resolveLazy<T>(value: MaybeLazy<T>): Promise<T> {
+  return typeof value === 'function' ? (value as () => Promise<T>)() : value;
+}
+
 type DailyFocusPlanInput = {
   repo: AppRepository;
   studentId: string;
-  skillStates: Record<string, SkillState>;
-  evidenceMap: Record<string, QuestionMasteryEvidence>;
-  questionMemory: Record<string, QuestionMemoryState>;
-  /** Pass a loader to fetch the full bank only when today's plan is not already cached. */
-  questions: QuestionItem[] | (() => Promise<QuestionItem[]>);
+  skillStates: MaybeLazy<Record<string, SkillState>>;
+  evidenceMap: MaybeLazy<Record<string, QuestionMasteryEvidence>>;
+  questionMemory: MaybeLazy<Record<string, QuestionMemoryState>>;
+  /** Pass a loader to fetch the bank only when today's plan is not already cached. */
+  questions: MaybeLazy<SelectionQuestion[]>;
   config?: LearningConfig;
   forceRefresh?: boolean;
   nowIso?: string;
@@ -775,12 +782,17 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
     }
   }
 
-  const questions = typeof input.questions === 'function' ? await input.questions() : input.questions;
+  const [questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
+    resolveLazy(input.questions),
+    resolveLazy(input.skillStates),
+    resolveLazy(input.evidenceMap),
+    resolveLazy(input.questionMemory),
+  ]);
   const deterministic = buildDeterministicDailyFocusPlan({
     studentId: input.studentId,
-    skillStates: input.skillStates,
-    evidenceMap: input.evidenceMap,
-    questionMemory: input.questionMemory,
+    skillStates,
+    evidenceMap,
+    questionMemory,
     questions,
     config: input.config,
     nowIso,
@@ -792,9 +804,9 @@ async function loadOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<D
   }
 
   const candidateRows = computeRankedSkillCandidates({
-    skillStates: input.skillStates,
-    evidenceMap: input.evidenceMap,
-    questionMemory: input.questionMemory,
+    skillStates,
+    evidenceMap,
+    questionMemory,
     questions,
     nowIso,
   });
@@ -827,7 +839,7 @@ export async function generateDailyFocusPlanStateless(input: {
   skillStates: Record<string, SkillState>;
   evidenceMap: Record<string, QuestionMasteryEvidence>;
   questionMemory: Record<string, QuestionMemoryState>;
-  questions: QuestionItem[];
+  questions: SelectionQuestion[];
   config?: LearningConfig;
   nowIso?: string;
   decideFn?: DecisionsExecutor;
@@ -872,10 +884,12 @@ export async function generateDailyFocusPlanStateless(input: {
   }
 }
 
-export async function decidePracticeQuestionOrderWithGemini(input: {
+export async function decidePracticeQuestionOrderWithGemini<
+  T extends SelectionQuestion = QuestionItem,
+>(input: {
   mode: SessionMode;
   sectionFilter?: SectionCode;
-  questions: QuestionItem[];
+  questions: T[];
   skillStates: Record<string, SkillState>;
   questionMemory: Record<string, QuestionMemoryState>;
   evidenceMap?: Record<string, QuestionMasteryEvidence>;
@@ -885,7 +899,7 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
   nowIso: string;
   seed: number;
   decideFn?: DecisionsExecutor;
-}): Promise<{ questions: QuestionItem[]; decision: SessionSelectionDecision }> {
+}): Promise<{ questions: T[]; decision: SessionSelectionDecision }> {
   const baseAdj = clampAlgorithmAdjustments(input.dailyPlan?.algorithmAdjustments);
   const dailyLimitsOverride =
     input.config.autoCalibrate?.enabled && input.dailyPlan?.dailyQuestionLimitBySection
@@ -908,7 +922,7 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
   });
 
   const deterministicFallback = (rationale?: string): {
-    questions: QuestionItem[];
+    questions: T[];
     decision: SessionSelectionDecision;
   } => ({
     questions: deterministicQuestions,
@@ -1035,7 +1049,7 @@ export async function decidePracticeQuestionOrderWithGemini(input: {
     .sort((a, b) => b.combinedRank - a.combinedRank);
 
   // Order cleanly while respecting section caps and avoiding identical consecutive skills when variety exists
-  const chosen: QuestionItem[] = [];
+  const chosen: T[] = [];
   const seenIds = new Set<string>();
   const sectionCounts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
   const remaining = [...scoredCandidates];

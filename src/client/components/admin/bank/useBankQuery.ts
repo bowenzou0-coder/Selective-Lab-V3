@@ -72,6 +72,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 interface UseBankQueryOptions {
   initialBatchId?: string;
   monitoredStudentId?: string | null;
+  enabled?: boolean;
   onError: (message: string) => void;
   loadErrorMessage: string;
   onLoaded?: (res: PaginatedQuestionsResponse) => void;
@@ -84,6 +85,7 @@ interface UseBankQueryOptions {
 export function useBankQuery({
   initialBatchId = '',
   monitoredStudentId,
+  enabled = true,
   onError,
   loadErrorMessage,
   onLoaded,
@@ -112,6 +114,7 @@ export function useBankQuery({
   const loadedSummaryKey = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     const includeSummary = loadedSummaryKey.current !== summaryKey;
     setLoading(true);
@@ -177,6 +180,7 @@ export function useBankQuery({
     filters.missingExplanation,
     filters.includeHistorical,
     monitoredStudentId,
+    enabled,
     page,
     pageSize,
     summaryKey,

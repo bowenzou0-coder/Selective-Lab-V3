@@ -256,6 +256,7 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
   const [tab, setTab] = useState<StudioTab>(parseInitialTab);
   const [status, setStatus] = useState<AdminStatusResponse | null>(null);
   const [learnersData, setLearnersData] = useState<AdminLearnersResponse | null>(null);
+  const [learnersLoaded, setLearnersLoaded] = useState(false);
   const [selectedLearnerId, setSelectedLearnerId] = useState<string>('');
   const [pinningPrimary, setPinningPrimary] = useState(false);
   const [notice, setNotice] = useState('');
@@ -283,6 +284,8 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
       }
     } catch {
       // ignore initial status fetch errors; individual panels surface errors
+    } finally {
+      setLearnersLoaded(true);
     }
   }, []);
 
@@ -497,6 +500,7 @@ export function AdminView({ onOpenSession }: AdminViewProps) {
           onError={handleError}
           onDataMutated={() => void loadStatus()}
           monitoredStudentId={monitoredStudentId}
+          learnerReady={learnersLoaded}
           monitoredLearner={selectedLearner}
           studentCount={studentLearners.length}
         />

@@ -7,6 +7,7 @@ import type {
 } from '../../shared/bankStatus.ts';
 import type {
   BankImportManifest,
+  BankMasterySummary,
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
@@ -17,6 +18,7 @@ import type {
   QuestionItem,
   QuestionMasteryEvidence,
   QuestionMemoryState,
+  SectionCode,
   SessionCheckpoint,
   SessionQuestionSnapshot,
   SessionRecord,
@@ -106,6 +108,61 @@ export type QuestionMeta = Pick<
   | 'evidenceRevision'
 > & { provenance: Partial<Pick<QuestionItem['provenance'], 'sourceType' | 'sourceReference'>> };
 
+/** Slim selection projection of a question (only fields needed for adaptive/mock/calibration selection). */
+export type QuestionSelectionPart = Pick<
+  QuestionItem['parts'][number],
+  'partId' | 'skillId' | 'secondarySkillIds' | 'difficultyInitial' | 'difficultyCalibrated' | 'targetTimeSec'
+>;
+
+export type QuestionSelectionItem = Pick<
+  QuestionItem,
+  | 'questionId'
+  | 'questionFamilyId'
+  | 'version'
+  | 'section'
+  | 'formatType'
+  | 'poolType'
+  | 'qcStatus'
+  | 'stimulusId'
+  | 'batchId'
+  | 'batchLabel'
+  | 'evidenceRevision'
+> & {
+  provenance: Partial<Pick<QuestionItem['provenance'], 'sourceType' | 'sourceReference'>>;
+  parts: QuestionSelectionPart[];
+};
+
+export interface AdminBankStatusSummary {
+  totalQuestions: number;
+  byPool: Record<string, number>;
+  bySection: Record<string, number>;
+  byQcStatus: Record<string, number>;
+  holdoutQuestionCount: number;
+  leakedCount: number;
+  openFlagsCount: number;
+  batchesCount: number;
+}
+
+export interface StudentDashboardBankSummary {
+  batchCounts: Record<'PT1' | 'PT2' | 'PT3', Record<SectionCode, number>>;
+  poolCounts: Record<SectionCode, { live: number; unseen: number }>;
+  customBatches: { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }[];
+}
+
+export interface TodayAttemptCounts {
+  attempted: number;
+  correct: number;
+}
+
+export interface StudentProgressBankStats {
+  sectionStats: Record<
+    SectionCode,
+    { attempts: number; correct: number; avgTimeSec: number; targetTimeSec: number }
+  >;
+  totalAttempts: number;
+  masterySummary: BankMasterySummary;
+}
+
 /** Import batch record without its (potentially long) question id lists. */
 export type ImportBatchSummary = Omit<ImportBatchRecord, 'newQuestionIds' | 'versionBumpedQuestionIds' | 'skippedQuestionIds'>;
 
@@ -132,6 +189,9 @@ export interface QuestionQueryParams {
     memory: Record<string, QuestionMemoryState>;
     dailyQuestionTarget: number;
   };
+  /** When provided, SQL joins question_evidence/question_memory for this learner (null = bank-only/all unseen). */
+  monitoredStudentId?: string | null;
+  dailyQuestionTarget?: number;
   formatType?: string;
   batchId?: string;
   batchTag?: string;
@@ -315,6 +375,19 @@ export interface AppRepository {
     qcStatus?: string;
     includeHistorical?: boolean;
   }): Promise<QuestionItem[]>;
+  /** Targeted fetch of full question bodies by ID (no full-bank scan). */
+  listQuestionsByIds(questionIds: string[]): Promise<QuestionItem[]>;
+  /** Targeted fetch of full question bodies matching families or IDs (used for manifest dry-run/import). */
+  listQuestionsByFamilies(familyIds: string[], questionIds?: string[]): Promise<QuestionItem[]>;
+  /** Slim selection-only projection of questions (no prompts, options, SVGs or explanations). */
+  listSelectionQuestions(filter?: {
+    section?: string;
+    poolType?: string;
+    qcStatus?: string;
+    batchId?: string;
+    batchTag?: string;
+    includeHistorical?: boolean;
+  }): Promise<QuestionSelectionItem[]>;
   /** Latest-version metadata rows; far cheaper than listQuestions for counts and summaries. */
   listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]>;
   listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult>;
@@ -330,8 +403,30 @@ export interface AppRepository {
   listImportBatchSummaries(): Promise<ImportBatchSummary[]>;
   getImportBatch(batchId: string): Promise<ImportBatchRecord | null>;
   updateQuestionStatus(questionId: string, qcStatus: QuestionItem['qcStatus']): Promise<void>;
+  bulkUpdateQuestionStatus(questionIds: string[], qcStatus: QuestionItem['qcStatus']): Promise<number>;
   deleteQuestions?(questionIds: string[]): Promise<number>;
   updateQuestionVisual(questionId: string, visual: VisualSpec): Promise<void>;
+
+  /** SQL-aggregated admin status summary (avoids reading full bank metadata). */
+  getAdminBankStatusSummary(): Promise<AdminBankStatusSummary>;
+  /** SQL-aggregated student dashboard pool/batch summary. */
+  getStudentDashboardBankSummary(studentId: string, autoRetireMastered: boolean): Promise<StudentDashboardBankSummary>;
+  /** SQL-aggregated attempt counts for a single UTC date prefix (YYYY-MM-DD). */
+  getTodayAttemptCounts(studentId: string, datePrefix: string): Promise<TodayAttemptCounts>;
+  /** SQL-aggregated section accuracy/timing stats and bank-wide mastery summary. */
+  getStudentProgressStats(input: {
+    studentId: string;
+    writingSubmissionsCount: number;
+    writingEvaluatedCount: number;
+    policyVersion?: string;
+  }): Promise<StudentProgressBankStats>;
+  /** SQL-aggregated pool health counts across multiple learners. */
+  getPoolHealthByLearner(
+    studentIds: string[],
+    dailyQuestionTarget: number
+  ): Promise<{ totalLiveQuestions: number; byStudentId: Record<string, PoolHealthSummary> }>;
+  /** SQL-aggregated batch directory summaries for a monitored learner (or null for bank-only). */
+  getBatchSummaries(studentId: string | null): Promise<BatchDirectorySummary[]>;
 
   getActiveConfig(): Promise<{ configVersionId: string; versionNumber: number; config: LearningConfig }>;
   listConfigVersions(): Promise<

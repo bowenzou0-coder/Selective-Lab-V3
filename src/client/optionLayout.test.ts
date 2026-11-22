@@ -51,15 +51,14 @@ test('shouldUseVisualOptionGrid returns false for text-only options or long-text
   );
 });
 
-test('all bundled seed questions with visual options qualify for the compact 2-column grid', () => {
+test('all bundled fixture questions with visual options qualify for the compact 2-column grid', () => {
   const readJson = (rel: string) => JSON.parse(fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8'));
-  const smoke = readJson('seed/golden-smoke-pack.json') as { questions?: QuestionItem[] };
   // Option parts of every official PT1–PT3 question with visual options (full papers live in Postgres).
   const official = readJson('src/server/__fixtures__/official-sample.json') as {
     visualOptionParts: Pick<QuestionItem, 'questionId' | 'parts'>[];
   };
   let visualQuestionParts = 0;
-  for (const q of [...(smoke.questions || []), ...official.visualOptionParts]) {
+  for (const q of official.visualOptionParts) {
     for (const p of q.parts || []) {
       const hasAnyVisual = (p.options || []).some(
         (o) => o.visual && o.visual.visualType !== 'none'

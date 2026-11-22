@@ -5,12 +5,12 @@ Vite + React 19 client, Express API (one Vercel function), Neon Postgres. Find t
 | Area | Path | Notes |
 | --- | --- | --- |
 | Entrypoint | `server.ts` → `src/server/app.ts` | `createApp()` wires middleware, static files, routes. `api/index.ts` is the Vercel handler. |
-| Shared route state | `src/server/context.ts` | `ensureSeeded` (starter pack only), monitored-learner resolution. |
-| Routes | `src/server/routes/*.ts` | `auth` (health, media, sign-in), `student` (dashboard), `sessions` (create/get/checkpoint/submit), `studentProgress` (writing eval, flags, progress, export), `adminLearners`, `adminBank` (status, questions, batches, calibration, import), `adminSystem` (config, flags, backup, migrate). |
+| Shared route state | `src/server/context.ts` | `ensureSeeded` (memory demo only), monitored-learner resolution. |
+| Routes | `src/server/routes/*.ts` | `auth` (health, media, sign-in), `student` (dashboard), `sessions` (create/get/checkpoint/submit), `studentProgress` (writing eval, flags, progress, export), `adminLearners`, `adminBank` (status, questions, bulk-status, batches, calibration, import), `adminSystem` (config, flags, backup, migrate). |
 | Session grading/expiry | `src/server/sessionLifecycle.ts` | Snapshots, finalize, deadline auto-submit. |
-| Repository contract | `src/server/storage/repository.ts` | `AppRepository`, `QuestionMeta`, query params. |
-| Postgres | `src/server/storage/postgresRepository.ts` | Schema/indexes in `runSchemaInit` (bump `SCHEMA_MARKER` when adding DDL). |
-| Bank cache | `src/server/storage/questionBankCache.ts` | Fingerprint-validated, deep-frozen bank + metadata; clone before mutating. |
+| Repository contract | `src/server/storage/repository.ts` | `AppRepository`, `QuestionMeta`, `QuestionSelectionItem`, query params. |
+| Postgres | `src/server/storage/postgresRepository.ts`, `postgresQueries.ts` | SQL-level filtering, pagination, aggregates & targeted reads; schema/indexes in `runSchemaInit` (bump `SCHEMA_MARKER` when adding DDL). |
+| Bank cache | `src/server/storage/questionBankCache.ts` | Fingerprint-validated slim selection/meta caches + full-bank fallback for backup/preflight; clone before mutating. |
 | Filtering/paging | `src/server/storage/repositoryUtils.ts` | `filterAndPaginateQuestions`, `summarizeBatches`. |
 | Memory repo | `src/server/storage/memoryRepository.ts` | `dev:demo` and API tests. |
 | AI | `src/server/geminiPlanner.ts`, `geminiWriting.ts`, `geminiClient.ts` | Daily plans, practice order, writing feedback. |

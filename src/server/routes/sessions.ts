@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { Express } from 'express';
 import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { decidePracticeQuestionOrderWithGemini, getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
-import { ForbiddenError, NotFoundError, RevisionConflictError } from '../storage/repository.ts';
+import { ForbiddenError, NotFoundError, RevisionConflictError, type QuestionSelectionItem } from '../storage/repository.ts';
 import type { MarkingResult, MockTestBatch, QuestionItem, SectionCode, SessionCheckpoint, SessionMode, SessionRecord, SessionSelectionDecision, WritingDeterministicMetrics, WritingEvaluationRecord } from '../../shared/contracts.ts';
 import { gradeSubmission, selectBatchMockQuestions, selectMockTestQuestions, selectPoolMockQuestions, selectPracticeSession, toStudentQuestionView } from '../../shared/engine.ts';
 import type { AppContext } from '../context.ts';
@@ -34,11 +34,22 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         return;
       }
 
-      const [existingSessions, configData, allQuestions, skillStates, questionMemory, evidenceMap] =
+      const selectionFilter =
+        mockSource === 'pool'
+          ? { qcStatus: 'active', section: sectionFilter }
+          : batchId
+            ? { qcStatus: 'active', batchId, section: sectionFilter }
+            : mockBatch
+              ? { qcStatus: 'active', batchTag: mockBatch, section: sectionFilter }
+              : mode === 'benchmark_exam'
+                ? { qcStatus: 'active', batchTag: 'PT3', section: sectionFilter }
+                : { qcStatus: 'active', section: mode === 'writing_sprint' ? ('WRIT' as SectionCode) : sectionFilter };
+
+      const [existingSessions, configData, candidateQuestions, skillStates, questionMemory, evidenceMap] =
         await Promise.all([
-          repo.listSessions(50, studentId, false),
+          repo.listActiveSessions(studentId),
           repo.getActiveConfig(),
-          repo.listQuestions(),
+          repo.listSelectionQuestions(selectionFilter),
           repo.getSkillStates(studentId),
           repo.getQuestionMemory(studentId),
           repo.getQuestionEvidence(studentId),
@@ -58,7 +69,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
       }
 
       const nowIso = new Date().toISOString();
-      let selected: QuestionItem[] = [];
+      let selectedMeta: QuestionSelectionItem[] = [];
       let selectionDecision: SessionSelectionDecision | undefined;
       let title = '';
       let effectiveMode: SessionMode = mode;
@@ -66,8 +77,8 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
 
       if (mockSource === 'pool') {
         effectiveMode = 'section_drill';
-        selected = selectPoolMockQuestions({
-          questions: allQuestions,
+        selectedMeta = selectPoolMockQuestions({
+          questions: candidateQuestions,
           sectionFilter,
           questionCount,
           questionMemory,
@@ -84,10 +95,10 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         title = `Fresh Pool Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Exam)'}`;
       } else if (batchId) {
         effectiveMode = 'section_drill';
-        selected = selectBatchMockQuestions({
+        selectedMeta = selectBatchMockQuestions({
           batchId,
           sectionFilter,
-          questions: allQuestions,
+          questions: candidateQuestions,
         });
         const baseSec = getOfficialTimeLimitSec(sectionFilter);
         timeLimitSec =
@@ -96,16 +107,16 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
             : timeMultiplier <= 0
               ? 0
               : Math.round(baseSec * timeMultiplier);
-        const batchLabel = selected[0]?.batchLabel || batchId;
+        const batchLabel = selectedMeta[0]?.batchLabel || batchId;
         title = `${batchLabel}${sectionFilter ? ` (${sectionFilter})` : ''}`;
       } else if (mockBatch) {
-        selected = selectMockTestQuestions({
+        selectedMeta = selectMockTestQuestions({
           batch: mockBatch,
           sectionFilter,
-          questions: allQuestions,
+          questions: candidateQuestions,
         });
         if (mockBatch === 'PT3') {
-          effectiveMode = selected.some((q) => q.poolType === 'benchmark_holdout')
+          effectiveMode = selectedMeta.some((q) => q.poolType === 'benchmark_holdout')
             ? 'benchmark_exam'
             : 'section_drill';
         }
@@ -117,10 +128,10 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         }
         title = `${mockBatch} Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Test)'}`;
       } else if (mode === 'benchmark_exam') {
-        selected = selectMockTestQuestions({
+        selectedMeta = selectMockTestQuestions({
           batch: 'PT3',
           sectionFilter,
-          questions: allQuestions,
+          questions: candidateQuestions,
         });
         const baseSec = getOfficialTimeLimitSec(sectionFilter);
         timeLimitSec =
@@ -142,16 +153,19 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
                 skillStates,
                 evidenceMap,
                 questionMemory,
-                questions: allQuestions,
+                questions: () =>
+                  effectiveSection
+                    ? repo.listSelectionQuestions({ qcStatus: 'active' })
+                    : Promise.resolve(candidateQuestions),
                 config: configData.config,
                 nowIso,
               })).plan;
         const seed = Date.now() & 0xfffffff;
         if (mode === 'writing_sprint') {
-          selected = selectPracticeSession({
+          selectedMeta = selectPracticeSession({
             mode: normalizedMode,
             sectionFilter: effectiveSection,
-            questions: allQuestions,
+            questions: candidateQuestions,
             skillStates,
             questionMemory,
             evidenceMap,
@@ -165,7 +179,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           const ordered = await decidePracticeQuestionOrderWithGemini({
             mode: normalizedMode,
             sectionFilter: effectiveSection,
-            questions: allQuestions,
+            questions: candidateQuestions,
             skillStates,
             questionMemory,
             evidenceMap,
@@ -175,7 +189,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
             nowIso,
             seed,
           });
-          selected = ordered.questions;
+          selectedMeta = ordered.questions;
           selectionDecision = ordered.decision;
         }
         effectiveMode = normalizedMode;
@@ -185,7 +199,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         } else if (effectiveSection) {
           const drillMin = Math.max(1, configData.config.sessionDefaults.sectionDrillTimeMinutes ?? 8);
           timeLimitSec = effectiveSection === 'WRIT' ? 1800 : drillMin * 60;
-          title = `${effectiveSection} Practice Drill (${selected.length} Qs)`;
+          title = `${effectiveSection} Practice Drill (${selectedMeta.length} Qs)`;
         } else {
           const goalMin =
             configData.config.autoCalibrate?.enabled && dailyPlan?.dailyGoalMinutes
@@ -198,6 +212,17 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           timeLimitSec = Math.max(0, Math.round(customTimeLimitSec));
         }
       }
+
+      if (selectedMeta.length === 0) {
+        res.status(400).json({ error: 'No active questions matched the requested session criteria.' });
+        return;
+      }
+
+      const fetchedQuestions = await repo.listQuestionsByIds(selectedMeta.map((q) => q.questionId));
+      const fetchedById = new Map(fetchedQuestions.map((q) => [q.questionId, q]));
+      const selected = selectedMeta
+        .map((q) => fetchedById.get(q.questionId))
+        .filter((q): q is QuestionItem => Boolean(q));
 
       if (selected.length === 0) {
         res.status(400).json({ error: 'No active questions matched the requested session criteria.' });

@@ -18,6 +18,7 @@ interface QuestionBankStudioProps {
   onError: (msg: string) => void;
   onDataMutated?: () => void;
   monitoredStudentId?: string | null;
+  learnerReady?: boolean;
   monitoredLearner?: AdminLearnerSummary | null;
   studentCount?: number;
 }
@@ -31,6 +32,7 @@ export function QuestionBankStudio({
   onError,
   onDataMutated,
   monitoredStudentId,
+  learnerReady = true,
   monitoredLearner = null,
   studentCount = 0,
 }: QuestionBankStudioProps) {
@@ -56,6 +58,7 @@ export function QuestionBankStudio({
   const bank = useBankQuery({
     initialBatchId,
     monitoredStudentId,
+    enabled: learnerReady,
     onError,
     loadErrorMessage: isZh ? '无法加载题库。' : 'Unable to load the Question Bank.',
     onLoaded,
@@ -80,14 +83,23 @@ export function QuestionBankStudio({
     }
   }, [selectedQid]);
 
+  const selectedQuestion = useMemo(
+    () => questions.find((q) => q.questionId === selectedQid) || questions[0] || null,
+    [questions, selectedQid]
+  );
+
   useEffect(() => {
-    if (!selectedQid) {
+    if (!selectedQuestion) {
       setVersionsForSelected([]);
+      return;
+    }
+    if (selectedQuestion.version <= 1 && !filters.includeHistorical) {
+      setVersionsForSelected([selectedQuestion]);
       return;
     }
     let active = true;
     api
-      .getQuestionVersions(selectedQid)
+      .getQuestionVersions(selectedQuestion.questionId)
       .then((res) => {
         if (active) setVersionsForSelected(res.versions.map((v) => v.question));
       })
@@ -97,12 +109,7 @@ export function QuestionBankStudio({
     return () => {
       active = false;
     };
-  }, [selectedQid]);
-
-  const selectedQuestion = useMemo(
-    () => questions.find((q) => q.questionId === selectedQid) || questions[0] || null,
-    [questions, selectedQid]
-  );
+  }, [selectedQuestion, filters.includeHistorical]);
   const selectedStimulus = selectedQuestion?.stimulusId ? bank.stimuliById[selectedQuestion.stimulusId] : undefined;
 
   const afterMutation = useCallback(() => {

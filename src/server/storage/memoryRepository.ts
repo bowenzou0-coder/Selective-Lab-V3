@@ -19,15 +19,18 @@ import type {
   VisualSpec,
   WritingEvaluationRecord,
 } from '../../shared/contracts.ts';
-import { DEFAULT_LEARNING_CONFIG } from '../../shared/contracts.ts';
-import { computeEvidenceRevision } from '../../shared/mastery.ts';
+import { DEFAULT_LEARNING_CONFIG, type SectionCode } from '../../shared/contracts.ts';
+import { computeBankMasterySummary, computeEvidenceRevision } from '../../shared/mastery.ts';
+import { computePoolHealth, deriveQuestionProgressMeta, type PoolHealthSummary } from '../../shared/bankStatus.ts';
+import { getQuestionBatchTag } from '../../shared/engine.ts';
 import { computeCanonicalHash } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
-import { deepFreeze, toQuestionMeta } from './questionBankCache.ts';
+import { deepFreeze, toQuestionMeta, toQuestionSelection } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
   RevisionConflictError,
+  type AdminBankStatusSummary,
   type AppRepository,
   type BackupRestoreReport,
   type CanonicalBackupBundle,
@@ -43,9 +46,13 @@ import {
   type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
+  type QuestionSelectionItem,
   type QuestionVersionSummary,
   type ReserveSessionResult,
+  type StudentDashboardBankSummary,
+  type StudentProgressBankStats,
   type SyncHydratePayload,
+  type TodayAttemptCounts,
   type WritingSubmissionRecord,
 } from './repository.ts';
 import {
@@ -53,6 +60,7 @@ import {
   filterAndPaginateQuestions,
   finalizeBackupBundle,
   selectLatestByFamily,
+  summarizeBatches,
   validateIncomingBackupBundle,
 } from './repositoryUtils.ts';
 
@@ -352,6 +360,45 @@ export class MemoryRepository implements AppRepository {
       .map((q) => deepFreeze(structuredClone(q)));
   }
 
+  async listQuestionsByIds(questionIds: string[]): Promise<QuestionItem[]> {
+    const out: QuestionItem[] = [];
+    for (const id of new Set(questionIds)) {
+      const q = this.questions.get(id);
+      if (q) out.push(deepFreeze(structuredClone(q)));
+    }
+    return out;
+  }
+
+  async listQuestionsByFamilies(familyIds: string[], questionIds: string[] = []): Promise<QuestionItem[]> {
+    const famSet = new Set(familyIds);
+    const idSet = new Set(questionIds);
+    return Array.from(this.questions.values())
+      .filter((q) => famSet.has(q.questionFamilyId) || idSet.has(q.questionId))
+      .map((q) => deepFreeze(structuredClone(q)));
+  }
+
+  async listSelectionQuestions(filter?: {
+    section?: string;
+    poolType?: string;
+    qcStatus?: string;
+    batchId?: string;
+    batchTag?: string;
+    includeHistorical?: boolean;
+  }): Promise<QuestionSelectionItem[]> {
+    const all = Array.from(this.questions.values());
+    const base = filter?.includeHistorical ? all : selectLatestByFamily(all);
+    return base
+      .filter((q) => {
+        if (filter?.section && q.section !== filter.section) return false;
+        if (filter?.poolType && q.poolType !== filter.poolType) return false;
+        if (filter?.qcStatus && q.qcStatus !== filter.qcStatus) return false;
+        if (filter?.batchId && q.batchId !== filter.batchId) return false;
+        if (filter?.batchTag && getQuestionBatchTag(q) !== filter.batchTag) return false;
+        return true;
+      })
+      .map((q) => deepFreeze(toQuestionSelection(structuredClone(q))));
+  }
+
   async listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]> {
     return selectLatestByFamily(Array.from(this.questions.values()))
       .filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus)
@@ -364,12 +411,24 @@ export class MemoryRepository implements AppRepository {
     for (const [id, s] of this.stimuli.entries()) {
       stimuliById[id] = deepFreeze(structuredClone(s));
     }
+    let resolvedParams = params;
+    if (params && params.monitoredStudentId !== undefined && !params.progress) {
+      const sid = params.monitoredStudentId;
+      resolvedParams = {
+        ...params,
+        progress: {
+          evidence: sid ? await this.getQuestionEvidence(sid) : {},
+          memory: sid ? await this.getQuestionMemory(sid) : {},
+          dailyQuestionTarget: Math.max(1, params.dailyQuestionTarget ?? 10),
+        },
+      };
+    }
     return filterAndPaginateQuestions({
       allQuestions,
       stimuliById,
       flags: await this.listQuestionFlags(),
-      batches: await this.listImportBatches(),
-      params,
+      batches: await this.listImportBatchSummaries(),
+      params: resolvedParams,
     });
   }
 
@@ -534,6 +593,226 @@ export class MemoryRepository implements AppRepository {
     if (!q) throw new NotFoundError(`Question ${questionId} not found.`);
     q.qcStatus = qcStatus;
     q.updatedAtIso = new Date().toISOString();
+  }
+
+  async bulkUpdateQuestionStatus(questionIds: string[], qcStatus: QuestionItem['qcStatus']): Promise<number> {
+    const nowIso = new Date().toISOString();
+    let updated = 0;
+    for (const id of new Set(questionIds)) {
+      const q = this.questions.get(id);
+      if (q) {
+        q.qcStatus = qcStatus;
+        q.updatedAtIso = nowIso;
+        updated++;
+      }
+    }
+    return updated;
+  }
+
+  async getAdminBankStatusSummary(): Promise<AdminBankStatusSummary> {
+    const questions = await this.listQuestionMeta();
+    const holdoutIds = questions.filter((q) => q.poolType === 'benchmark_holdout').map((q) => q.questionId);
+    const leakedCount = await this.countHoldoutLeaks(holdoutIds);
+    const flags = await this.listQuestionFlags();
+    const batches = await this.listImportBatchSummaries();
+    const byPool: Record<string, number> = {};
+    const bySection: Record<string, number> = {};
+    const byQcStatus: Record<string, number> = {};
+    for (const q of questions) {
+      byPool[q.poolType] = (byPool[q.poolType] || 0) + 1;
+      bySection[q.section] = (bySection[q.section] || 0) + 1;
+      byQcStatus[q.qcStatus] = (byQcStatus[q.qcStatus] || 0) + 1;
+    }
+    return {
+      totalQuestions: questions.length,
+      byPool,
+      bySection,
+      byQcStatus,
+      holdoutQuestionCount: holdoutIds.length,
+      leakedCount,
+      openFlagsCount: flags.filter((f) => f.status === 'open').length,
+      batchesCount: batches.length,
+    };
+  }
+
+  async getStudentDashboardBankSummary(
+    studentId: string,
+    autoRetireMastered: boolean
+  ): Promise<StudentDashboardBankSummary> {
+    const [questions, importBatches, evidenceMap, questionMemory] = await Promise.all([
+      this.listQuestionMeta({ qcStatus: 'active' }),
+      this.listImportBatchSummaries(),
+      this.getQuestionEvidence(studentId),
+      this.getQuestionMemory(studentId),
+    ]);
+    const batchCounts: Record<'PT1' | 'PT2' | 'PT3', Record<SectionCode, number>> = {
+      PT1: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+      PT2: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+      PT3: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+    };
+    const poolCounts: Record<SectionCode, { live: number; unseen: number }> = {
+      READ: { live: 0, unseen: 0 },
+      MATH: { live: 0, unseen: 0 },
+      THINK: { live: 0, unseen: 0 },
+      WRIT: { live: 0, unseen: 0 },
+    };
+    const batchById = new Map(importBatches.map((b) => [b.batchId, b]));
+    const customBatchMap = new Map<
+      string,
+      { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
+    >();
+    for (const q of questions) {
+      const tag = getQuestionBatchTag(q);
+      if (tag === 'PT1' || tag === 'PT2' || tag === 'PT3') {
+        batchCounts[tag][q.section] += 1;
+      }
+      if (q.poolType !== 'benchmark_holdout') {
+        const prog = deriveQuestionProgressMeta(q, evidenceMap, questionMemory);
+        if (!(autoRetireMastered && prog.completionStatus === 'done')) {
+          poolCounts[q.section].live += 1;
+          if (prog.completionStatus === 'unseen') {
+            poolCounts[q.section].unseen += 1;
+          }
+        }
+      }
+      if (q.batchId && tag !== 'PT1' && tag !== 'PT2' && tag !== 'PT3' && q.poolType !== 'benchmark_holdout') {
+        const batchMeta = batchById.get(q.batchId);
+        if (batchMeta?.importedBy !== 'system_seed') {
+          const entry = customBatchMap.get(q.batchId) || {
+            batchId: q.batchId,
+            batchLabel: batchMeta?.batchLabel || q.batchLabel || q.batchId,
+            counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+            total: 0,
+          };
+          entry.counts[q.section] += 1;
+          entry.total += 1;
+          customBatchMap.set(q.batchId, entry);
+        }
+      }
+    }
+    return {
+      batchCounts,
+      poolCounts,
+      customBatches: Array.from(customBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
+    };
+  }
+
+  async getTodayAttemptCounts(studentId: string, datePrefix: string): Promise<TodayAttemptCounts> {
+    const rows = this.attempts.filter(
+      (a) => (a.studentId || DEFAULT_STUDENT_ID) === studentId && !a.isSandbox && a.createdAt.startsWith(datePrefix)
+    );
+    return {
+      attempted: rows.length,
+      correct: rows.filter((a) => a.isCorrect).length,
+    };
+  }
+
+  async getStudentProgressStats(input: {
+    studentId: string;
+    writingSubmissionsCount: number;
+    writingEvaluatedCount: number;
+    policyVersion?: string;
+  }): Promise<StudentProgressBankStats> {
+    const [attempts, questions, evidenceMap] = await Promise.all([
+      this.listPartAttempts(5000, input.studentId, false),
+      this.listQuestions(),
+      this.getQuestionEvidence(input.studentId),
+    ]);
+    const stimIds = Array.from(new Set(questions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id))));
+    const stimuliById = await this.listStimuliByIds(stimIds);
+    const questionMap = new Map(questions.map((q) => [q.questionId, q]));
+    const partTargetMap = new Map<string, { section: SectionCode; targetTimeSec: number }>();
+    for (const q of questions) {
+      for (const p of q.parts) {
+        partTargetMap.set(p.partId, { section: q.section, targetTimeSec: p.targetTimeSec });
+      }
+    }
+    const sectionStats: Record<
+      SectionCode,
+      { attempts: number; correct: number; avgTimeSec: number; targetTimeSec: number }
+    > = {
+      READ: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 0 },
+      MATH: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 0 },
+      THINK: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 0 },
+      WRIT: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 1800 },
+    };
+    const secTimeSums: Record<SectionCode, { spent: number; target: number }> = {
+      READ: { spent: 0, target: 0 },
+      MATH: { spent: 0, target: 0 },
+      THINK: { spent: 0, target: 0 },
+      WRIT: { spent: 0, target: 0 },
+    };
+    const holdoutAttempts: PartAttemptRecord[] = [];
+    let legacyAttemptsCount = 0;
+    for (const a of attempts) {
+      if (a.isLegacy) legacyAttemptsCount++;
+      const q = questionMap.get(a.questionId);
+      if (q?.poolType === 'benchmark_holdout') holdoutAttempts.push(a);
+      const meta = partTargetMap.get(a.partId);
+      const sec = meta?.section || q?.section || 'MATH';
+      sectionStats[sec].attempts++;
+      if (a.isCorrect) sectionStats[sec].correct++;
+      secTimeSums[sec].spent += a.timeSpentSec;
+      secTimeSums[sec].target += meta?.targetTimeSec ?? 60;
+    }
+    for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
+      const cnt = sectionStats[sec].attempts;
+      if (cnt > 0) {
+        sectionStats[sec].avgTimeSec = Math.round(secTimeSums[sec].spent / cnt);
+        sectionStats[sec].targetTimeSec = Math.round(secTimeSums[sec].target / cnt);
+      } else {
+        sectionStats[sec].targetTimeSec = sec === 'WRIT' ? 1800 : 60;
+      }
+    }
+    const masterySummary = computeBankMasterySummary({
+      questions,
+      stimuliById,
+      evidenceMap,
+      legacyAttemptsCount,
+      holdoutAttempts,
+      writingSubmissionsCount: input.writingSubmissionsCount,
+      writingEvaluatedCount: input.writingEvaluatedCount,
+      policyVersion: input.policyVersion,
+    });
+    return { sectionStats, totalAttempts: attempts.length, masterySummary };
+  }
+
+  async getPoolHealthByLearner(
+    studentIds: string[],
+    dailyQuestionTarget: number
+  ): Promise<{ totalLiveQuestions: number; byStudentId: Record<string, PoolHealthSummary> }> {
+    const latestQuestions = await this.listQuestionMeta();
+    const baseHealth = computePoolHealth({
+      questions: latestQuestions,
+      evidenceMap: {},
+      questionMemory: {},
+      dailyQuestionTarget,
+    });
+    const byStudentId: Record<string, PoolHealthSummary> = {};
+    for (const uid of studentIds) {
+      const [evidenceMap, questionMemory] = await Promise.all([
+        this.getQuestionEvidence(uid),
+        this.getQuestionMemory(uid),
+      ]);
+      byStudentId[uid] = computePoolHealth({
+        questions: latestQuestions,
+        evidenceMap,
+        questionMemory,
+        dailyQuestionTarget,
+      });
+    }
+    return { totalLiveQuestions: baseHealth.liveCount, byStudentId };
+  }
+
+  async getBatchSummaries(studentId: string | null) {
+    const [questions, batches, evidence, memory] = await Promise.all([
+      this.listQuestionMeta(),
+      this.listImportBatchSummaries(),
+      studentId ? this.getQuestionEvidence(studentId) : Promise.resolve({}),
+      studentId ? this.getQuestionMemory(studentId) : Promise.resolve({}),
+    ]);
+    const progress = new Map(questions.map((q) => [q.questionId, deriveQuestionProgressMeta(q, evidence, memory)]));
+    return summarizeBatches(questions, batches, progress);
   }
 
   async deleteQuestions(questionIds: string[]): Promise<number> {

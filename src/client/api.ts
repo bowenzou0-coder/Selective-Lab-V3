@@ -473,14 +473,10 @@ export const api = {
       body: JSON.stringify({ qcStatus }),
     }),
   bulkUpdateQuestionStatus: (questionIds: string[], qcStatus: QuestionItem['qcStatus']) =>
-    Promise.all(
-      questionIds.map((qid) =>
-        request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(qid)}/status`, {
-          method: 'PATCH',
-          body: JSON.stringify({ qcStatus }),
-        })
-      )
-    ).then(() => ({ ok: true, updatedCount: questionIds.length })),
+    request<{ ok: boolean; updatedCount: number }>('/api/admin/questions/bulk-status', {
+      method: 'POST',
+      body: JSON.stringify({ questionIds, qcStatus }),
+    }),
   deleteQuestions: (questionIds: string[]) =>
     request<{ ok: boolean; deletedCount: number }>('/api/admin/questions/delete', {
       method: 'POST',

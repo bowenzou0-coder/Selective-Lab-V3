@@ -3,8 +3,7 @@ import type { Express } from 'express';
 import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { GeminiServiceError } from '../geminiClient.ts';
 import { evaluateWritingWithGemini } from '../geminiWriting.ts';
-import type { PartAttemptRecord, QuestionFlagRecord, SectionCode, WritingDeterministicMetrics } from '../../shared/contracts.ts';
-import { computeBankMasterySummary } from '../../shared/mastery.ts';
+import type { QuestionFlagRecord, WritingDeterministicMetrics } from '../../shared/contracts.ts';
 import { SKILLS_TAXONOMY } from '../../shared/skills.ts';
 import type { AppContext } from '../context.ts';
 
@@ -102,97 +101,32 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
     try {
       await ctx.ensureSeeded();
       const studentId = req.auth!.studentId;
-      const [attempts, skillStates, sessions, writingSubmissions, questions, evidenceMap, configData] =
-        await Promise.all([
-          repo.listPartAttempts(5000, studentId, false),
-          repo.getSkillStates(studentId),
-          repo.listSessions(200, studentId, false, { omitSubmissionSummary: true }),
-          repo.listWritingSubmissions(studentId),
-          repo.listQuestions(),
-          repo.getQuestionEvidence(studentId),
-          repo.getActiveConfig(),
-        ]);
+      const [configData, skillStates, sessions, writingSubmissions] = await Promise.all([
+        repo.getActiveConfig(),
+        repo.getSkillStates(studentId),
+        repo.listSessions(200, studentId, false, { omitSubmissionSummary: true }),
+        repo.listWritingSubmissions(studentId),
+      ]);
 
-      const stimIds = Array.from(
-        new Set(questions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
-      );
-      const stimuliById = await repo.listStimuliByIds(stimIds);
-
-      const questionMap = new Map(questions.map((q) => [q.questionId, q]));
-      const partTargetMap = new Map<string, { section: SectionCode; targetTimeSec: number }>();
-      for (const q of questions) {
-        for (const p of q.parts) {
-          partTargetMap.set(p.partId, { section: q.section, targetTimeSec: p.targetTimeSec });
-        }
-      }
-
-      const sectionStats: Record<
-        SectionCode,
-        { attempts: number; correct: number; avgTimeSec: number; targetTimeSec: number }
-      > = {
-        READ: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 0 },
-        MATH: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 0 },
-        THINK: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 0 },
-        WRIT: { attempts: 0, correct: 0, avgTimeSec: 0, targetTimeSec: 1800 },
-      };
-
-      const secTimeSums: Record<SectionCode, { spent: number; target: number }> = {
-        READ: { spent: 0, target: 0 },
-        MATH: { spent: 0, target: 0 },
-        THINK: { spent: 0, target: 0 },
-        WRIT: { spent: 0, target: 0 },
-      };
-
-      const holdoutAttempts: PartAttemptRecord[] = [];
-      let legacyAttemptsCount = 0;
-
-      for (const a of attempts) {
-        if (a.isLegacy) legacyAttemptsCount++;
-        const q = questionMap.get(a.questionId);
-        if (q?.poolType === 'benchmark_holdout') {
-          holdoutAttempts.push(a);
-        }
-        const meta = partTargetMap.get(a.partId);
-        const sec = meta?.section || q?.section || 'MATH';
-        sectionStats[sec].attempts++;
-        if (a.isCorrect) sectionStats[sec].correct++;
-        secTimeSums[sec].spent += a.timeSpentSec;
-        secTimeSums[sec].target += meta?.targetTimeSec ?? 60;
-      }
-
-      for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
-        const cnt = sectionStats[sec].attempts;
-        if (cnt > 0) {
-          sectionStats[sec].avgTimeSec = Math.round(secTimeSums[sec].spent / cnt);
-          sectionStats[sec].targetTimeSec = Math.round(secTimeSums[sec].target / cnt);
-        } else {
-          sectionStats[sec].targetTimeSec = sec === 'WRIT' ? 1800 : 60;
-        }
-      }
+      const stats = await repo.getStudentProgressStats({
+        studentId,
+        writingSubmissionsCount: writingSubmissions.length,
+        writingEvaluatedCount: writingSubmissions.filter((w) => w.evaluations.length > 0).length,
+        policyVersion: configData.config.masteryPolicy?.policyVersion,
+      });
 
       const skills = SKILLS_TAXONOMY.map((def) => ({
         ...def,
         state: skillStates[def.skillId] || null,
       }));
 
-      const masterySummary = computeBankMasterySummary({
-        questions,
-        stimuliById,
-        evidenceMap,
-        legacyAttemptsCount,
-        holdoutAttempts,
-        writingSubmissionsCount: writingSubmissions.length,
-        writingEvaluatedCount: writingSubmissions.filter((w) => w.evaluations.length > 0).length,
-        policyVersion: configData.config.masteryPolicy?.policyVersion,
-      });
-
       res.json({
-        sectionStats,
+        sectionStats: stats.sectionStats,
         skills,
         sessions: sessions.filter((s) => !s.isSandbox),
         writingSubmissions,
-        totalAttempts: attempts.length,
-        masterySummary,
+        totalAttempts: stats.totalAttempts,
+        masterySummary: stats.masterySummary,
       });
     } catch (err) {
       console.error('GET /api/student/progress error:', err);

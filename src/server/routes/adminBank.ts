@@ -3,54 +3,84 @@ import type { Express } from 'express';
 import { requireAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { validateAndDryRunManifest } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest, prepareMediaUpload } from '../mediaService.ts';
-import { NotFoundError, type QuestionQueryParams } from '../storage/repository.ts';
+import {
+  NotFoundError,
+  type QuestionQueryParams,
+  type QuestionSelectionItem,
+} from '../storage/repository.ts';
 import type { BankImportManifest, QuestionItem, SessionRecord, VisualSpec } from '../../shared/contracts.ts';
 import { selectAdminCalibrationQuestions } from '../../shared/engine.ts';
-import { deriveQuestionProgressMeta } from '../../shared/bankStatus.ts';
-import { summarizeBatches } from '../storage/repositoryUtils.ts';
+import { selectLatestByFamily } from '../storage/repositoryUtils.ts';
 import type { AppContext } from '../context.ts';
 import { UPLOADS_DIR } from '../paths.ts';
 import { buildQuestionSnapshots, resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
 
+function extractManifestLookupRefs(raw: unknown): {
+  familyIds: string[];
+  questionIds: string[];
+  stimulusIds: string[];
+} {
+  const familyIds = new Set<string>();
+  const questionIds = new Set<string>();
+  const stimulusIds = new Set<string>();
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const m = raw as { stimuli?: unknown[]; questions?: unknown[] };
+    if (Array.isArray(m.stimuli)) {
+      for (const s of m.stimuli) {
+        const sid = (s as { stimulusId?: unknown })?.stimulusId;
+        if (typeof sid === 'string' && sid.trim()) stimulusIds.add(sid);
+      }
+    }
+    if (Array.isArray(m.questions)) {
+      for (const q of m.questions) {
+        const obj = q as { questionId?: unknown; questionFamilyId?: unknown; stimulusId?: unknown };
+        if (typeof obj?.questionId === 'string' && obj.questionId.trim()) {
+          questionIds.add(obj.questionId);
+          const fam =
+            typeof obj.questionFamilyId === 'string' && obj.questionFamilyId.trim()
+              ? obj.questionFamilyId
+              : obj.questionId.replace(/_v\d+$/, '');
+          familyIds.add(fam);
+        } else if (typeof obj?.questionFamilyId === 'string' && obj.questionFamilyId.trim()) {
+          familyIds.add(obj.questionFamilyId);
+        }
+        if (typeof obj?.stimulusId === 'string' && obj.stimulusId.trim()) {
+          stimulusIds.add(obj.stimulusId);
+        }
+      }
+    }
+  }
+  return {
+    familyIds: Array.from(familyIds),
+    questionIds: Array.from(questionIds),
+    stimulusIds: Array.from(stimulusIds),
+  };
+}
+
 /** Admin question bank, media, calibration and import (/api/admin/*). */
 export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
-  const { repo, backendName } = ctx;
+  const { repo } = ctx;
   app.get('/api/admin/status', requireAdmin, async (_req, res) => {
     try {
       await ctx.ensureSeeded();
-      const [questions, configData, flags, batches] = await Promise.all([
-        repo.listQuestionMeta(),
+      const [summary, configData] = await Promise.all([
+        repo.getAdminBankStatusSummary(),
         repo.getActiveConfig(),
-        repo.listQuestionFlags(),
-        repo.listImportBatchSummaries(),
       ]);
-
-      const holdoutIds = questions.filter((q) => q.poolType === 'benchmark_holdout').map((q) => q.questionId);
-      // Checked across every learner's sessions in SQL (previously only the default student's 500 newest).
-      const leakedCount = await repo.countHoldoutLeaks(holdoutIds);
-
-      const byPool: Record<string, number> = {};
-      const bySection: Record<string, number> = {};
-      const byQcStatus: Record<string, number> = {};
-      for (const q of questions) {
-        byPool[q.poolType] = (byPool[q.poolType] || 0) + 1;
-        bySection[q.section] = (bySection[q.section] || 0) + 1;
-        byQcStatus[q.qcStatus] = (byQcStatus[q.qcStatus] || 0) + 1;
-      }
 
       res.json({
         backendName: repo.backendName,
         isEphemeralPreview: repo.backendName === 'memory_preview',
-        totalQuestions: questions.length,
-        byPool,
-        bySection,
-        byQcStatus,
-        holdoutIsolationOk: leakedCount === 0,
-        holdoutQuestionCount: holdoutIds.length,
-        leakedCount,
-        openFlagsCount: flags.filter((f) => f.status === 'open').length,
+        totalQuestions: summary.totalQuestions,
+        byPool: summary.byPool,
+        bySection: summary.bySection,
+        byQcStatus: summary.byQcStatus,
+        holdoutIsolationOk: summary.leakedCount === 0,
+        holdoutQuestionCount: summary.holdoutQuestionCount,
+        leakedCount: summary.leakedCount,
+        openFlagsCount: summary.openFlagsCount,
         activeConfigVersion: configData.versionNumber,
-        batchesCount: batches.length,
+        batchesCount: summary.batchesCount,
       });
     } catch (err) {
       console.error('GET /api/admin/status error:', err);
@@ -68,13 +98,6 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
           ? null
           : requestedStudentId || (await ctx.resolveDefaultMonitoredStudentId(config));
 
-      const [evidence, memory] = monitoredStudentId
-        ? await Promise.all([
-            repo.getQuestionEvidence(monitoredStudentId),
-            repo.getQuestionMemory(monitoredStudentId),
-          ])
-        : [{}, {}];
-
       const dailyLimits = config.sessionDefaults.dailyQuestionLimitBySection;
       const dailyQuestionTarget = Math.max(1, (dailyLimits.READ || 0) + (dailyLimits.MATH || 0) + (dailyLimits.THINK || 0));
       const result = await repo.listQuestionsPaginated({
@@ -84,7 +107,8 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
         qcStatus: req.query.qcStatus ? String(req.query.qcStatus) : undefined,
         poolStatus: req.query.poolStatus as QuestionQueryParams['poolStatus'],
         completionStatus: req.query.completionStatus as QuestionQueryParams['completionStatus'],
-        progress: { evidence, memory, dailyQuestionTarget },
+        monitoredStudentId,
+        dailyQuestionTarget,
         formatType: req.query.formatType ? String(req.query.formatType) : undefined,
         batchId: req.query.batchId ? String(req.query.batchId) : undefined,
         batchTag: req.query.batchTag ? String(req.query.batchTag) : undefined,
@@ -134,7 +158,7 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
     }
   });
 
-  // Lightweight batch directory for the Batches tab (metadata rows only, no question bodies).
+  // Lightweight batch directory for the Batches tab (SQL-aggregated, no question bodies).
   app.get('/api/admin/batches/summary', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ctx.ensureSeeded();
@@ -144,19 +168,34 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
         requestedStudentId === 'none'
           ? null
           : requestedStudentId || (await ctx.resolveDefaultMonitoredStudentId(config));
-      const [questions, batches, evidence, memory] = await Promise.all([
-        repo.listQuestionMeta(),
-        repo.listImportBatchSummaries(),
-        monitoredStudentId ? repo.getQuestionEvidence(monitoredStudentId) : Promise.resolve({}),
-        monitoredStudentId ? repo.getQuestionMemory(monitoredStudentId) : Promise.resolve({}),
-      ]);
-      const progress = new Map(
-        questions.map((q) => [q.questionId, deriveQuestionProgressMeta(q, evidence, memory)])
-      );
-      res.json({ batchSummaries: summarizeBatches(questions, batches, progress), monitoredStudentId });
+      const batchSummaries = await repo.getBatchSummaries(monitoredStudentId);
+      res.json({ batchSummaries, monitoredStudentId });
     } catch (err) {
       console.error('GET /api/admin/batches/summary error:', err);
       res.status(500).json({ error: 'Failed to load batch summaries.' });
+    }
+  });
+
+  app.post('/api/admin/questions/bulk-status', requireAdmin, async (req, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const rawIds = Array.isArray(req.body?.questionIds) ? req.body.questionIds : [];
+      const ids = rawIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0);
+      const qcStatus = req.body?.qcStatus as QuestionItem['qcStatus'];
+      const allowed = new Set(['draft', 'verified', 'active', 'quarantined', 'retired']);
+      if (!allowed.has(qcStatus)) {
+        res.status(400).json({ error: 'Invalid qcStatus.' });
+        return;
+      }
+      if (ids.length === 0) {
+        res.json({ ok: true, updatedCount: 0 });
+        return;
+      }
+      const updatedCount = await repo.bulkUpdateQuestionStatus(ids, qcStatus);
+      res.json({ ok: true, updatedCount });
+    } catch (err) {
+      console.error('POST /api/admin/questions/bulk-status error:', err);
+      res.status(500).json({ error: 'Failed to update question QC statuses.' });
     }
   });
 
@@ -311,8 +350,8 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
 
       let selected: QuestionItem[] = [];
       if (explicitIds.length > 0) {
-        const allQuestions = await repo.listQuestions({ includeHistorical: true });
-        const byId = new Map(allQuestions.map((q) => [q.questionId, q]));
+        const fetched = await repo.listQuestionsByIds(explicitIds);
+        const byId = new Map(fetched.map((q) => [q.questionId, q]));
         const missingIds = explicitIds.filter((id) => !byId.has(id));
         if (missingIds.length > 0) {
           res.status(400).json({
@@ -322,11 +361,16 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
         }
         selected = explicitIds.map((id) => byId.get(id)!);
       } else {
-        const allQuestions = await repo.listQuestions({
+        const candidates = await repo.listSelectionQuestions({
+          section: req.body?.section || undefined,
+          poolType: req.body?.poolType || undefined,
+          qcStatus: req.body?.qcStatus || undefined,
+          batchId: req.body?.batchId || undefined,
+          batchTag: req.body?.batch || undefined,
           includeHistorical: Boolean(req.body?.includeHistorical),
         });
-        selected = selectAdminCalibrationQuestions({
-          questions: allQuestions,
+        const pickedMeta: QuestionSelectionItem[] = selectAdminCalibrationQuestions({
+          questions: candidates,
           section: req.body?.section || undefined,
           poolType: req.body?.poolType || undefined,
           qcStatus: req.body?.qcStatus || undefined,
@@ -337,6 +381,11 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
           batchId: req.body?.batchId || undefined,
           limit: req.body?.limit ? Number(req.body.limit) : 15,
         });
+        if (pickedMeta.length > 0) {
+          const fetched = await repo.listQuestionsByIds(pickedMeta.map((q) => q.questionId));
+          const byId = new Map(fetched.map((q) => [q.questionId, q]));
+          selected = pickedMeta.map((q) => byId.get(q.questionId)).filter((q): q is QuestionItem => Boolean(q));
+        }
       }
 
       if (selected.length === 0) {
@@ -407,11 +456,11 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
   app.post('/api/admin/import/dry-run', requireAdmin, async (req, res) => {
     try {
       await ctx.ensureSeeded();
-      const existing = await repo.listQuestions({ includeHistorical: true });
-      const stimIds = Array.from(
-        new Set(existing.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
-      );
-      const existingStimuli = await repo.listStimuliByIds(stimIds);
+      const { familyIds, questionIds, stimulusIds } = extractManifestLookupRefs(req.body?.manifest);
+      const [existing, existingStimuli] = await Promise.all([
+        repo.listQuestionsByFamilies(familyIds, questionIds),
+        repo.listStimuliByIds(stimulusIds),
+      ]);
       const { report } = validateAndDryRunManifest(req.body?.manifest, existing, existingStimuli);
       res.json({ report });
     } catch (err) {
@@ -423,11 +472,11 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
   app.post('/api/admin/import/commit', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ctx.ensureSeeded();
-      const existing = await repo.listQuestions({ includeHistorical: true });
-      const stimIds = Array.from(
-        new Set(existing.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
-      );
-      const existingStimuli = await repo.listStimuliByIds(stimIds);
+      const { familyIds, questionIds, stimulusIds } = extractManifestLookupRefs(req.body?.manifest);
+      const [existing, existingStimuli] = await Promise.all([
+        repo.listQuestionsByFamilies(familyIds, questionIds),
+        repo.listStimuliByIds(stimulusIds),
+      ]);
       const { manifest, report } = validateAndDryRunManifest(req.body?.manifest, existing, existingStimuli);
       if (!manifest || !report.valid) {
         res.status(400).json({ error: 'Manifest failed validation.', report });
@@ -435,9 +484,8 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
       }
       const importedBy = req.auth?.email || req.auth?.studentId || 'admin';
       const result = await repo.importManifest(manifest, importedBy);
-      const allLatest = await repo.listQuestions();
-      const committedFamilies = new Set(manifest.questions.map((q) => q.questionFamilyId));
-      const committedQuestions = allLatest.filter((q) => committedFamilies.has(q.questionFamilyId));
+      const committedFamilies = manifest.questions.map((q) => q.questionFamilyId);
+      const committedQuestions = selectLatestByFamily(await repo.listQuestionsByFamilies(committedFamilies));
       const committedManifest: BankImportManifest = {
         ...manifest,
         questions: committedQuestions.length > 0 ? committedQuestions : manifest.questions,

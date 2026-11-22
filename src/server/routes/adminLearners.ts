@@ -2,8 +2,7 @@ import type { Express } from 'express';
 import { requireAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { getRuntimeDiagnostics } from '../diagnostics.ts';
 import { generateDailyFocusPlanStateless, getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
-import { computePoolHealth } from '../../shared/bankStatus.ts';
-import type { AdminLearnerSummary, LearnerAccountRecord, LearningConfig } from '../../shared/contracts.ts';
+import type { AdminLearnerSummary, LearningConfig } from '../../shared/contracts.ts';
 import type { AppContext } from '../context.ts';
 
 
@@ -58,56 +57,42 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
   app.get('/api/admin/learners', requireAdmin, async (_req, res) => {
     try {
       await ctx.ensureSeeded();
-      const [users, latestQuestions, configData] = await Promise.all([
+      const [users, configData] = await Promise.all([
         repo.listUsers(),
-        repo.listQuestionMeta(),
         repo.getActiveConfig(),
       ]);
-      // Counts and last-activity come from one SQL aggregate instead of loading every row.
-      const activityById = await repo.getLearnerActivity(users.map((u) => u.uid));
       const dailyLimits = configData.config.sessionDefaults.dailyQuestionLimitBySection;
       const dailyQuestionTarget = Math.max(
         1,
         (dailyLimits.READ || 0) + (dailyLimits.MATH || 0) + (dailyLimits.THINK || 0)
       );
-      const baseHealth = computePoolHealth({
-        questions: latestQuestions,
-        evidenceMap: {},
-        questionMemory: {},
-        dailyQuestionTarget,
-      });
+      const userIds = users.map((u) => u.uid);
+      // Counts, last-activity, and pool health all come from SQL aggregates instead of loading rows.
+      const [activityById, poolHealthRes] = await Promise.all([
+        repo.getLearnerActivity(userIds),
+        repo.getPoolHealthByLearner(userIds, dailyQuestionTarget),
+      ]);
 
-      const summaries: AdminLearnerSummary[] = await Promise.all(
-        users.map(async (u) => {
-          const [evidenceMap, questionMemory] = await Promise.all([
-            repo.getQuestionEvidence(u.uid),
-            repo.getQuestionMemory(u.uid),
-          ]);
-          const activity = activityById[u.uid];
-          const health = computePoolHealth({
-            questions: latestQuestions,
-            evidenceMap,
-            questionMemory,
-            dailyQuestionTarget,
-          });
-          const latestMs = Math.max(
-            Date.parse(u.updatedAtIso || '') || 0,
-            Date.parse(activity?.lastActiveAtIso || '') || 0
-          );
-          return {
-            ...u,
-            sessionsCount: activity?.sessionsCount ?? 0,
-            attemptsCount: activity?.attemptsCount ?? 0,
-            lastActiveAtIso: latestMs > 0 ? new Date(latestMs).toISOString() : undefined,
-            unseenLiveCount: health.unseenLiveCount,
-            doneLiveCount: health.doneLiveCount,
-            needsRepairLiveCount: health.needsRepairLiveCount,
-            inReviewLiveCount: health.inReviewLiveCount,
-            unseenLivePercent: health.unseenLivePercent,
-            estimatedRunwayDays: health.estimatedRunwayDays,
-          };
-        })
-      );
+      const summaries: AdminLearnerSummary[] = users.map((u) => {
+        const activity = activityById[u.uid];
+        const health = poolHealthRes.byStudentId[u.uid];
+        const latestMs = Math.max(
+          Date.parse(u.updatedAtIso || '') || 0,
+          Date.parse(activity?.lastActiveAtIso || '') || 0
+        );
+        return {
+          ...u,
+          sessionsCount: activity?.sessionsCount ?? 0,
+          attemptsCount: activity?.attemptsCount ?? 0,
+          lastActiveAtIso: latestMs > 0 ? new Date(latestMs).toISOString() : undefined,
+          unseenLiveCount: health?.unseenLiveCount ?? 0,
+          doneLiveCount: health?.doneLiveCount ?? 0,
+          needsRepairLiveCount: health?.needsRepairLiveCount ?? 0,
+          inReviewLiveCount: health?.inReviewLiveCount ?? 0,
+          unseenLivePercent: health?.unseenLivePercent ?? 0,
+          estimatedRunwayDays: health?.estimatedRunwayDays ?? 0,
+        };
+      });
 
       const primaryId = configData.config.primaryMonitoredStudentId || null;
       summaries.sort((a, b) => {
@@ -129,7 +114,7 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         primaryMonitoredStudentId:
           primaryId && users.some((u) => u.uid === primaryId) ? primaryId : null,
         defaultMonitoredStudentId,
-        totalLiveQuestions: baseHealth.liveCount,
+        totalLiveQuestions: poolHealthRes.totalLiveQuestions,
       });
     } catch (err) {
       console.error('GET /api/admin/learners error:', err);
@@ -182,18 +167,13 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         requestedId ||
         (await ctx.resolveDefaultMonitoredStudentId(configData.config)) ||
         req.auth!.studentId;
-      const [skillStates, evidenceMap, questionMemory] = await Promise.all([
-        repo.getSkillStates(targetStudentId),
-        repo.getQuestionEvidence(targetStudentId),
-        repo.getQuestionMemory(targetStudentId),
-      ]);
       const { plan } = await getOrCreateDailyFocusPlan({
         repo,
         studentId: targetStudentId,
-        skillStates,
-        evidenceMap,
-        questionMemory,
-        questions: () => repo.listQuestions({ qcStatus: 'active' }),
+        skillStates: () => repo.getSkillStates(targetStudentId),
+        evidenceMap: () => repo.getQuestionEvidence(targetStudentId),
+        questionMemory: () => repo.getQuestionMemory(targetStudentId),
+        questions: () => repo.listSelectionQuestions({ qcStatus: 'active' }),
         config: configData.config,
       });
       res.json({ studentId: targetStudentId, plan });
@@ -210,7 +190,7 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
       const studentId = requestedId && requestedId !== 'none' ? requestedId : req.auth!.studentId;
       const [configData, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
         repo.getActiveConfig(),
-        repo.listQuestions({ qcStatus: 'active' }),
+        repo.listSelectionQuestions({ qcStatus: 'active' }),
         repo.getSkillStates(studentId),
         repo.getQuestionEvidence(studentId),
         repo.getQuestionMemory(studentId),
