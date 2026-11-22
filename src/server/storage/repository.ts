@@ -88,6 +88,35 @@ export interface SyncHydratePayload {
   flags?: QuestionFlagRecord[];
 }
 
+/** Metadata-only projection of a question (no parts, SVGs or explanations). */
+export type QuestionMeta = Pick<
+  QuestionItem,
+  | 'questionId'
+  | 'questionFamilyId'
+  | 'version'
+  | 'section'
+  | 'formatType'
+  | 'poolType'
+  | 'qcStatus'
+  | 'stimulusId'
+  | 'batchId'
+  | 'batchLabel'
+  | 'createdAtIso'
+  | 'updatedAtIso'
+  | 'evidenceRevision'
+> & { provenance: Partial<Pick<QuestionItem['provenance'], 'sourceType' | 'sourceReference'>> };
+
+export interface LearnerActivityStats {
+  sessionsCount: number;
+  attemptsCount: number;
+  lastActiveAtIso?: string;
+}
+
+export interface ListSessionsOptions {
+  /** Drop the heavy stored submission summary (review results, attempts) from each row. */
+  omitSubmissionSummary?: boolean;
+}
+
 export interface QuestionQueryParams {
   search?: string;
   section?: string;
@@ -281,6 +310,8 @@ export interface AppRepository {
     qcStatus?: string;
     includeHistorical?: boolean;
   }): Promise<QuestionItem[]>;
+  /** Latest-version metadata rows; far cheaper than listQuestions for counts and summaries. */
+  listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]>;
   listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult>;
   listQuestionVersions(questionFamilyId: string): Promise<QuestionVersionSummary[]>;
   listStimuliByIds(stimulusIds: string[]): Promise<Record<string, StimulusGroup>>;
@@ -320,7 +351,18 @@ export interface AppRepository {
     studentId?: string
   ): Promise<void>;
   finalizeSessionAtomically(input: FinalizeSessionInput): Promise<FinalizeSessionResult>;
-  listSessions(limit?: number, studentId?: string, includeSandbox?: boolean): Promise<SessionRecord[]>;
+  listSessions(
+    limit?: number,
+    studentId?: string,
+    includeSandbox?: boolean,
+    options?: ListSessionsOptions
+  ): Promise<SessionRecord[]>;
+  /** In-progress, non-sandbox sessions for one student (newest first). */
+  listActiveSessions(studentId: string): Promise<SessionRecord[]>;
+  /** Session/attempt counts and last activity per learner, computed without loading rows. */
+  getLearnerActivity(studentIds: string[]): Promise<Record<string, LearnerActivityStats>>;
+  /** Planned holdout questions found in non-benchmark sessions across every learner. */
+  countHoldoutLeaks(holdoutQuestionIds: string[]): Promise<number>;
 
   appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void>;
   listPartAttempts(limit?: number, studentId?: string, includeSandbox?: boolean): Promise<PartAttemptRecord[]>;

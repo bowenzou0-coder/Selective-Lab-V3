@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
 import { LoginTicket, OAuth2Client, type TokenPayload } from 'google-auth-library';
 import { createApp } from '../../server.ts';
-import type { BankImportManifest, LearningConfig, SectionCode } from '../shared/contracts.ts';
+import type { BankImportManifest, LearningConfig, QuestionItem, SectionCode } from '../shared/contracts.ts';
 import { V3_STARTER_MANIFEST_EXAMPLE } from '../shared/v3Schema.ts';
 import { AUTH_COOKIE_NAME, GOOGLE_NONCE_COOKIE_NAME, signSessionToken } from './auth.ts';
 import { getQuestionBatchTag } from '../shared/engine.ts';
@@ -23,6 +24,14 @@ function signedCookie(sub: string, role: 'student' | 'admin'): string {
 
 async function startTestServer() {
   const repo = new MemoryRepository();
+  // Mirror the live bank: starter pack plus a small official PT1–PT3 sample (the full official
+  // papers live only in Postgres).
+  await repo.initAndSeedIfEmpty(JSON.parse(await readFile('seed/golden-smoke-pack.json', 'utf8')) as BankImportManifest);
+  const officialSample = JSON.parse(
+    await readFile('src/server/__fixtures__/official-sample.json', 'utf8')
+  ) as Record<'pt12' | 'pt3', BankImportManifest>;
+  await repo.importManifest(officialSample.pt12, 'system_seed');
+  await repo.importManifest(officialSample.pt3, 'system_seed');
   const { app } = await createApp({ repo, skipSeed: false, skipVite: true });
   const server = await new Promise<http.Server>((resolve) => {
     const srv = app.listen(0, '127.0.0.1', () => resolve(srv));
@@ -339,8 +348,10 @@ test('Checkpoint concurrency (409), idempotent submit, snapshot immutability on 
 
     // Edit bank question in-place + retire v1 + change correct key to 'B'
     await srv.repo.updateQuestionStatus('q_snap_test_v1', 'retired');
-    const qInMem = (await srv.repo.getQuestionWithStimulus('q_snap_test_v1'))!;
-    qInMem.question.parts[0].correctAnswerKey = 'B';
+    // Edit the stored bank row itself (repository reads hand out frozen copies).
+    const bankStore = (srv.repo as unknown as { questions: Map<string, QuestionItem> }).questions;
+    bankStore.get('q_snap_test_v1')!.parts[0].correctAnswerKey = 'B';
+    assert.equal((await srv.repo.getQuestionWithStimulus('q_snap_test_v1'))!.question.parts[0].correctAnswerKey, 'B');
 
     // Checkpoint concurrency on active sessionId: rev 1 -> 2, stale rev 1 -> 409
     const cp1 = await fetch(`${srv.baseUrl}/api/student/sessions/${sessionId}/checkpoint`, {

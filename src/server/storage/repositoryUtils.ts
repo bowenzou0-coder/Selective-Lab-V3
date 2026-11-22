@@ -18,6 +18,7 @@ import type {
   AppRepository,
   BackupRestoreReport,
   CanonicalBackupBundle,
+  QuestionMeta,
   QuestionQueryParams,
   QuestionQueryResult,
 } from './repository.ts';
@@ -26,8 +27,10 @@ export function sha256Json(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-export function selectLatestByFamily(allQuestions: QuestionItem[]): QuestionItem[] {
-  const latestByFamily = new Map<string, QuestionItem>();
+export function selectLatestByFamily<T extends Pick<QuestionItem, 'questionFamilyId' | 'version'>>(
+  allQuestions: readonly T[]
+): T[] {
+  const latestByFamily = new Map<string, T>();
   for (const q of allQuestions) {
     const prev = latestByFamily.get(q.questionFamilyId);
     if (!prev || q.version > prev.version) {
@@ -37,10 +40,10 @@ export function selectLatestByFamily(allQuestions: QuestionItem[]): QuestionItem
   return Array.from(latestByFamily.values());
 }
 
-function summarizeBatches(
-  questions: QuestionItem[],
-  batches: ImportBatchRecord[],
-  progress: Map<string, QuestionProgressMeta>,
+export function summarizeBatches(
+  questions: readonly QuestionMeta[],
+  batches: readonly ImportBatchRecord[],
+  progress: ReadonlyMap<string, QuestionProgressMeta>,
 ): BatchDirectorySummary[] {
   const labels = {
     PT1: 'Official Practice Test 1',
@@ -82,8 +85,10 @@ function summarizeBatches(
 }
 
 export function filterAndPaginateQuestions(input: {
-  allQuestions: QuestionItem[];
-  stimuliById: Record<string, StimulusGroup>;
+  allQuestions: readonly QuestionItem[];
+  /** Pre-computed latest versions (the Postgres bank cache keeps these). */
+  latestQuestions?: readonly QuestionItem[];
+  stimuliById: Readonly<Record<string, StimulusGroup>>;
   flags: QuestionFlagRecord[];
   batches: ImportBatchRecord[];
   params?: QuestionQueryParams;
@@ -96,7 +101,7 @@ export function filterAndPaginateQuestions(input: {
     }
   }
 
-  const latest = selectLatestByFamily(allQuestions);
+  const latest = input.latestQuestions ?? selectLatestByFamily(allQuestions);
   const base = params.includeHistorical ? allQuestions : latest;
   const { progress } = params;
   const progressByQid = new Map<string, QuestionProgressMeta>();

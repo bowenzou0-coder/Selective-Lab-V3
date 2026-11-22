@@ -25,6 +25,7 @@ import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { computeCanonicalHash, validateAndDryRunManifest } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
 import { getPostgresPoolConfig } from './postgresConfig.ts';
+import { QuestionBankCache, toQuestionMeta } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -35,9 +36,12 @@ import {
   type CheckpointSaveResult,
   type FinalizeSessionInput,
   type FinalizeSessionResult,
+  type LearnerActivityStats,
+  type ListSessionsOptions,
   type MigrationPreflightReport,
   type ProgressCountsResponse,
   type ProgressResetResponse,
+  type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
@@ -76,6 +80,9 @@ export function getOrCreatePgPool(): Pool {
 
 type ManifestImportResult = Awaited<ReturnType<AppRepository['importManifest']>> & { replayed: boolean };
 const schemaReadyByPool = new WeakMap<Pool, Promise<void>>();
+const bankCacheByPool = new WeakMap<Pool, QuestionBankCache>();
+// Bump with the newest object created by runSchemaInit so cold starts skip the DDL transaction.
+const SCHEMA_MARKER = 'sessions_student_status_idx';
 
 function manifestBatchId(manifest: object): string {
   const canonical = JSON.stringify(manifest, (key, value: unknown) => {
@@ -99,7 +106,21 @@ function manifestImportResult(batch: ImportBatchRecord, replayed: boolean): Mani
 export class PostgresRepository implements AppRepository {
   readonly backendName = 'postgres' as const;
 
-  constructor(private readonly pool: Pool = getOrCreatePgPool()) {}
+  private readonly bank: QuestionBankCache;
+
+  constructor(private readonly pool: Pool = getOrCreatePgPool()) {
+    let bank = bankCacheByPool.get(pool);
+    if (!bank) {
+      bank = new QuestionBankCache(pool);
+      bankCacheByPool.set(pool, bank);
+    }
+    this.bank = bank;
+  }
+
+  /** Drop the process-local bank copy after a local write (other writers are caught by the fingerprint). */
+  private invalidateBank(): void {
+    this.bank.invalidate();
+  }
 
   async ensureSchema(): Promise<void> {
     let schemaReady = schemaReadyByPool.get(this.pool);
@@ -263,8 +284,15 @@ export class PostgresRepository implements AppRepository {
       CREATE INDEX IF NOT EXISTS part_attempts_student_created_idx ON part_attempts (student_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS writing_submissions_student_idx ON writing_submissions (student_id);
       CREATE INDEX IF NOT EXISTS writing_evaluations_submission_idx ON writing_evaluations (submission_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS questions_status_pool_section_idx ON questions (qc_status, pool_type, section);
+      CREATE INDEX IF NOT EXISTS questions_stimulus_idx ON questions (stimulus_id);
+      CREATE INDEX IF NOT EXISTS questions_batch_idx ON questions ((data->>'batchId'));
+      CREATE INDEX IF NOT EXISTS question_flags_status_idx ON question_flags (status);
+      CREATE INDEX IF NOT EXISTS sessions_student_status_idx ON sessions (student_id, status, is_sandbox, started_at DESC);
     `;
     try {
+      const ready = await this.pool.query<{ ready: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ready', [SCHEMA_MARKER]);
+      if (ready.rows[0]?.ready) return;
       await this.transaction(async (client) => {
         // IF NOT EXISTS alone can race with DDL from another cold function instance.
         await client.query("SELECT pg_advisory_xact_lock(hashtext('selective_lab_schema'), hashtext(current_schema()))");
@@ -284,6 +312,9 @@ export class PostgresRepository implements AppRepository {
 
   async initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void> {
     await this.ensureSchema();
+    const seeded = await this.pool.query<{ seeded: boolean }>('SELECT EXISTS (SELECT 1 FROM questions) AS seeded');
+    if (seeded.rows[0]?.seeded) return;
+    this.invalidateBank();
     await this.transaction(async (client) => {
       await this.lockQuestionBank(client);
       const existing = await client.query('SELECT 1 FROM questions LIMIT 1');
@@ -406,6 +437,14 @@ export class PostgresRepository implements AppRepository {
   }
 
   async hydrateSyncData(studentId: string, payload: SyncHydratePayload): Promise<void> {
+    try {
+      await this.hydrateSyncDataImpl(studentId, payload);
+    } finally {
+      this.invalidateBank();
+    }
+  }
+
+  private async hydrateSyncDataImpl(studentId: string, payload: SyncHydratePayload): Promise<void> {
     await this.ensureSchema();
     const uid = studentId || DEFAULT_STUDENT_ID;
     for (const s of payload.stimuli || []) {
@@ -517,9 +556,8 @@ export class PostgresRepository implements AppRepository {
     includeHistorical?: boolean;
   }): Promise<QuestionItem[]> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT data FROM questions');
-    const all = rows.map((r) => r.data as QuestionItem);
-    const base = filter?.includeHistorical ? all : selectLatestByFamily(all);
+    const bank = await this.bank.get();
+    const base = filter?.includeHistorical ? bank.all : bank.latest;
     return base.filter((q) => {
       if (filter?.section && q.section !== filter.section) return false;
       if (filter?.poolType && q.poolType !== filter.poolType) return false;
@@ -528,21 +566,63 @@ export class PostgresRepository implements AppRepository {
     });
   }
 
+  async listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]> {
+    await this.ensureSchema();
+    const warm = await this.bank.peek();
+    if (warm) {
+      return warm.latest
+        .filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus)
+        .map(toQuestionMeta);
+    }
+    // Cold instance: project only metadata columns (~5% of the bank's bytes).
+    const { rows } = await this.pool.query<{
+      questionId: string; questionFamilyId: string; version: number; section: QuestionItem['section'];
+      formatType: QuestionItem['formatType']; poolType: QuestionItem['poolType']; qcStatus: QuestionItem['qcStatus'];
+      stimulusId: string | null; batchId: string | null; batchLabel: string | null; createdAtIso: string | null;
+      updatedAtIso: string | null; evidenceRevision: string | null;
+      sourceType: QuestionItem['provenance']['sourceType'] | null; sourceReference: string | null;
+    }>(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (question_family_id)
+           question_id AS "questionId", question_family_id AS "questionFamilyId", version, section,
+           format_type AS "formatType", pool_type AS "poolType", qc_status AS "qcStatus", stimulus_id AS "stimulusId",
+           data->>'batchId' AS "batchId", data->>'batchLabel' AS "batchLabel",
+           data->>'createdAtIso' AS "createdAtIso", data->>'updatedAtIso' AS "updatedAtIso",
+           data->>'evidenceRevision' AS "evidenceRevision",
+           data#>>'{provenance,sourceType}' AS "sourceType", data#>>'{provenance,sourceReference}' AS "sourceReference"
+         FROM questions ORDER BY question_family_id, version DESC
+       ) latest WHERE ($1::text IS NULL OR "qcStatus" = $1)`,
+      [filter?.qcStatus ?? null]
+    );
+    return rows.map((r) => ({
+      questionId: r.questionId,
+      questionFamilyId: r.questionFamilyId,
+      version: r.version,
+      section: r.section,
+      formatType: r.formatType,
+      poolType: r.poolType,
+      qcStatus: r.qcStatus,
+      stimulusId: r.stimulusId ?? undefined,
+      batchId: r.batchId ?? undefined,
+      batchLabel: r.batchLabel ?? undefined,
+      createdAtIso: r.createdAtIso ?? undefined,
+      updatedAtIso: r.updatedAtIso ?? undefined,
+      evidenceRevision: r.evidenceRevision ?? undefined,
+      provenance: { sourceType: r.sourceType ?? undefined, sourceReference: r.sourceReference ?? undefined },
+    }));
+  }
+
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
     await this.ensureSchema();
-    const [qRes, sRes, flags, batches] = await Promise.all([
-      this.pool.query('SELECT data FROM questions'),
-      this.pool.query('SELECT stimulus_id, data FROM stimuli'),
+    const [bank, flags, batches] = await Promise.all([
+      this.bank.get(),
       this.listQuestionFlags(),
       this.listImportBatches(),
     ]);
-    const stimuliById: Record<string, StimulusGroup> = {};
-    for (const r of sRes.rows) {
-      stimuliById[r.stimulus_id] = r.data as StimulusGroup;
-    }
     return filterAndPaginateQuestions({
-      allQuestions: qRes.rows.map((r) => r.data as QuestionItem),
-      stimuliById,
+      allQuestions: bank.all,
+      latestQuestions: bank.latest,
+      stimuliById: bank.stimuliById,
       flags,
       batches,
       params,
@@ -564,6 +644,12 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     const unique = Array.from(new Set(stimulusIds.filter(Boolean)));
     if (unique.length === 0) return {};
+    const warm = await this.bank.peek();
+    if (warm) {
+      const out: Record<string, StimulusGroup> = {};
+      for (const id of unique) if (warm.stimuliById[id]) out[id] = warm.stimuliById[id];
+      return out;
+    }
     const { rows } = await this.pool.query('SELECT stimulus_id, data FROM stimuli WHERE stimulus_id = ANY($1)', [
       unique,
     ]);
@@ -576,6 +662,12 @@ export class PostgresRepository implements AppRepository {
     questionId: string
   ): Promise<{ question: QuestionItem; stimulus?: StimulusGroup } | null> {
     await this.ensureSchema();
+    const warm = await this.bank.peek();
+    if (warm) {
+      const question = warm.byId.get(questionId);
+      if (!question) return null;
+      return { question, stimulus: question.stimulusId ? warm.stimuliById[question.stimulusId] : undefined };
+    }
     const { rows: [row] } = await this.pool.query<{ question: QuestionItem; stimulus: StimulusGroup | null }>(
       `SELECT q.data AS question, s.data AS stimulus FROM questions q
        LEFT JOIN stimuli s ON s.stimulus_id = q.stimulus_id WHERE q.question_id = $1`,
@@ -590,11 +682,15 @@ export class PostgresRepository implements AppRepository {
   ): Promise<ManifestImportResult> {
     await this.ensureSchema();
     const batchId = manifestBatchId(manifest);
-    return this.transaction(async (client) => {
-      await this.lockQuestionBank(client);
-      return (await this.findManifestImport(client, batchId)) ??
-        this.writeManifest(client, manifest, importedBy, batchId);
-    });
+    try {
+      return await this.transaction(async (client) => {
+        await this.lockQuestionBank(client);
+        return (await this.findManifestImport(client, batchId)) ??
+          this.writeManifest(client, manifest, importedBy, batchId);
+      });
+    } finally {
+      this.invalidateBank();
+    }
   }
 
   async validateAndImportManifest(raw: unknown, importedBy: string, options: { dryRun: boolean }) {
@@ -631,7 +727,9 @@ export class PostgresRepository implements AppRepository {
         ? await this.writeManifest(client, manifest, importedBy, batchId, { questions, stimuliById })
         : null;
       return { report, result, replayed: false };
-    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined);
+    }, options.dryRun ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : undefined).finally(() => {
+      if (!options.dryRun) this.invalidateBank();
+    });
   }
 
   private async lockQuestionBank(client: PoolClient): Promise<void> {
@@ -795,12 +893,14 @@ export class PostgresRepository implements AppRepository {
       `UPDATE questions SET qc_status = $2, data = data || $3::jsonb WHERE question_id = $1`,
       [questionId, qcStatus, JSON.stringify({ qcStatus, updatedAtIso: new Date().toISOString() })]
     );
+    this.invalidateBank();
     if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
   }
 
   async deleteQuestions(questionIds: string[]): Promise<number> {
     await this.ensureSchema();
     const { rowCount } = await this.pool.query('DELETE FROM questions WHERE question_id = ANY($1::text[])', [questionIds]);
+    this.invalidateBank();
     return rowCount ?? 0;
   }
 
@@ -816,6 +916,7 @@ export class PostgresRepository implements AppRepository {
         evidenceRevision: computeEvidenceRevision({ ...question, visual }, stimulus),
       })]
     );
+    this.invalidateBank();
     if (!rowCount) throw new NotFoundError(`Question ${questionId} not found.`);
   }
 
@@ -1126,14 +1227,74 @@ export class PostgresRepository implements AppRepository {
     }
   }
 
-  async listSessions(limit = 50, studentId = DEFAULT_STUDENT_ID, includeSandbox = true): Promise<SessionRecord[]> {
+  async listSessions(
+    limit = 50,
+    studentId = DEFAULT_STUDENT_ID,
+    includeSandbox = true,
+    options: ListSessionsOptions = {}
+  ): Promise<SessionRecord[]> {
     await this.ensureSchema();
+    const column = options.omitSubmissionSummary ? "data - 'submissionSummary'" : 'data';
     const { rows } = await this.pool.query(
-      `SELECT data FROM sessions WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
+      `SELECT ${column} AS data FROM sessions WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
        ORDER BY started_at DESC LIMIT $3`,
       [studentId, includeSandbox, limit]
     );
     return rows.map((r) => r.data as SessionRecord);
+  }
+
+  async listActiveSessions(studentId: string): Promise<SessionRecord[]> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query(
+      `SELECT data FROM sessions WHERE student_id = $1 AND status = 'in_progress' AND NOT is_sandbox
+       ORDER BY started_at DESC`,
+      [studentId]
+    );
+    return rows.map((r) => r.data as SessionRecord);
+  }
+
+  async getLearnerActivity(studentIds: string[]): Promise<Record<string, LearnerActivityStats>> {
+    await this.ensureSchema();
+    const out: Record<string, LearnerActivityStats> = {};
+    if (studentIds.length === 0) return out;
+    const { rows } = await this.pool.query<{
+      student_id: string; sessions_count: number; attempts_count: number; last_active: Date | null;
+    }>(
+      `SELECT ids.student_id,
+              coalesce(s.n, 0)::int AS sessions_count,
+              coalesce(a.n, 0)::int AS attempts_count,
+              greatest(s.last_at, a.last_at) AS last_active
+       FROM unnest($1::text[]) AS ids(student_id)
+       LEFT JOIN (
+         SELECT student_id, count(*) AS n, max(coalesce(completed_at, started_at)) AS last_at
+         FROM sessions WHERE NOT is_sandbox AND student_id = ANY($1) GROUP BY student_id
+       ) s USING (student_id)
+       LEFT JOIN (
+         SELECT student_id, count(*) AS n, max(created_at) AS last_at
+         FROM part_attempts WHERE NOT is_sandbox AND student_id = ANY($1) GROUP BY student_id
+       ) a USING (student_id)`,
+      [studentIds]
+    );
+    for (const r of rows) {
+      out[r.student_id] = {
+        sessionsCount: r.sessions_count,
+        attemptsCount: r.attempts_count,
+        lastActiveAtIso: r.last_active ? new Date(r.last_active).toISOString() : undefined,
+      };
+    }
+    return out;
+  }
+
+  async countHoldoutLeaks(holdoutQuestionIds: string[]): Promise<number> {
+    await this.ensureSchema();
+    if (holdoutQuestionIds.length === 0) return 0;
+    const { rows } = await this.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM sessions s CROSS JOIN LATERAL jsonb_array_elements_text(s.data->'plannedQuestionIds') AS planned(qid)
+       WHERE s.mode NOT IN ('benchmark_exam', 'admin_calibration') AND planned.qid = ANY($1::text[])`,
+      [holdoutQuestionIds]
+    );
+    return rows[0]?.n ?? 0;
   }
 
   async appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void> {
@@ -1528,6 +1689,14 @@ export class PostgresRepository implements AppRepository {
   }
 
   async restoreFullBackup(rawBundle: unknown, options: { dryRun: boolean }): Promise<BackupRestoreReport> {
+    try {
+      return await this.restoreFullBackupImpl(rawBundle, options);
+    } finally {
+      if (!options.dryRun) this.invalidateBank();
+    }
+  }
+
+  private async restoreFullBackupImpl(rawBundle: unknown, options: { dryRun: boolean }): Promise<BackupRestoreReport> {
     await this.ensureSchema();
     const validated = validateIncomingBackupBundle(rawBundle);
     if (!validated.valid || !validated.bundle) {

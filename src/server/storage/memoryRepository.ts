@@ -23,6 +23,7 @@ import { DEFAULT_LEARNING_CONFIG } from '../../shared/contracts.ts';
 import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { computeCanonicalHash } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
+import { deepFreeze, toQuestionMeta } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -36,6 +37,9 @@ import {
   type MigrationPreflightReport,
   type ProgressCountsResponse,
   type ProgressResetResponse,
+  type LearnerActivityStats,
+  type ListSessionsOptions,
+  type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
   type QuestionVersionSummary,
@@ -343,14 +347,21 @@ export class MemoryRepository implements AppRepository {
         if (filter?.qcStatus && q.qcStatus !== filter.qcStatus) return false;
         return true;
       })
-      .map((q) => structuredClone(q));
+      // Frozen like the Postgres bank cache, so tests catch callers that mutate shared bank objects.
+      .map((q) => deepFreeze(structuredClone(q)));
+  }
+
+  async listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]> {
+    return selectLatestByFamily(Array.from(this.questions.values()))
+      .filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus)
+      .map((q) => toQuestionMeta(structuredClone(q)));
   }
 
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
-    const allQuestions = Array.from(this.questions.values()).map((q) => structuredClone(q));
+    const allQuestions = Array.from(this.questions.values()).map((q) => deepFreeze(structuredClone(q)));
     const stimuliById: Record<string, StimulusGroup> = {};
     for (const [id, s] of this.stimuli.entries()) {
-      stimuliById[id] = structuredClone(s);
+      stimuliById[id] = deepFreeze(structuredClone(s));
     }
     return filterAndPaginateQuestions({
       allQuestions,
@@ -375,7 +386,7 @@ export class MemoryRepository implements AppRepository {
     const out: Record<string, StimulusGroup> = {};
     for (const id of stimulusIds) {
       const s = this.stimuli.get(id);
-      if (s) out[id] = structuredClone(s);
+      if (s) out[id] = deepFreeze(structuredClone(s));
     }
     return out;
   }
@@ -387,8 +398,8 @@ export class MemoryRepository implements AppRepository {
     if (!q) return null;
     const stimulus = q.stimulusId ? this.stimuli.get(q.stimulusId) : undefined;
     return {
-      question: structuredClone(q),
-      stimulus: stimulus ? structuredClone(stimulus) : undefined,
+      question: deepFreeze(structuredClone(q)),
+      stimulus: stimulus ? deepFreeze(structuredClone(stimulus)) : undefined,
     };
   }
 
@@ -735,13 +746,60 @@ export class MemoryRepository implements AppRepository {
   async listSessions(
     limit = 50,
     studentId = DEFAULT_STUDENT_ID,
-    includeSandbox = true
+    includeSandbox = true,
+    options: ListSessionsOptions = {}
   ): Promise<SessionRecord[]> {
     return Array.from(this.sessions.values())
       .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && (includeSandbox || !s.isSandbox))
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
       .slice(0, limit)
+      .map((s) => {
+        const copy = structuredClone(s);
+        if (options.omitSubmissionSummary) delete copy.submissionSummary;
+        return copy;
+      });
+  }
+
+  async listActiveSessions(studentId: string): Promise<SessionRecord[]> {
+    return Array.from(this.sessions.values())
+      .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && s.status === 'in_progress' && !s.isSandbox)
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
       .map((s) => structuredClone(s));
+  }
+
+  async getLearnerActivity(studentIds: string[]): Promise<Record<string, LearnerActivityStats>> {
+    const out: Record<string, LearnerActivityStats> = {};
+    for (const uid of studentIds) {
+      let latestMs = 0;
+      let sessionsCount = 0;
+      let attemptsCount = 0;
+      for (const s of this.sessions.values()) {
+        if ((s.studentId || DEFAULT_STUDENT_ID) !== uid || s.isSandbox) continue;
+        sessionsCount++;
+        latestMs = Math.max(latestMs, Date.parse(s.completedAt || s.startedAt) || 0);
+      }
+      for (const a of this.attempts) {
+        if ((a.studentId || DEFAULT_STUDENT_ID) !== uid || a.isSandbox) continue;
+        attemptsCount++;
+        latestMs = Math.max(latestMs, Date.parse(a.createdAt) || 0);
+      }
+      out[uid] = {
+        sessionsCount,
+        attemptsCount,
+        lastActiveAtIso: latestMs > 0 ? new Date(latestMs).toISOString() : undefined,
+      };
+    }
+    return out;
+  }
+
+  async countHoldoutLeaks(holdoutQuestionIds: string[]): Promise<number> {
+    const holdout = new Set(holdoutQuestionIds);
+    let leaked = 0;
+    for (const s of this.sessions.values()) {
+      if (s.mode === 'benchmark_exam' || s.mode === 'admin_calibration') continue;
+      for (const qid of s.plannedQuestionIds) if (holdout.has(qid)) leaked++;
+    }
+    return leaked;
   }
 
   async appendPartAttempts(attempts: PartAttemptRecord[]): Promise<void> {

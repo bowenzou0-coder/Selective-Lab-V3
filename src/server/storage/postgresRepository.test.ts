@@ -598,3 +598,84 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.equal(legacyApplied.applied.dailyFocusPlans, 0);
   assert.equal(await legacyRepo.getDailyFocusPlan('learner_full', '2026-11-20'), null);
 });
+
+test('Postgres bank cache revalidates on out-of-band writes and slim queries match full reads', {
+  skip: !localTestUrl && 'Set TEST_POSTGRES_URL to a disposable local Postgres database',
+}, async (t) => {
+  const url = new URL(localTestUrl!);
+  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !url.searchParams.has('host'),
+    'TEST_POSTGRES_URL must point to a local database');
+  const schema = `selective_cache_${randomUUID().replaceAll('-', '')}`;
+  const baseConfig = getPostgresPoolConfig({ DATABASE_URL: url.href });
+  const adminPool = new Pool(baseConfig);
+  await adminPool.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
+  const writerPool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
+  t.after(async () => {
+    await Promise.all([pool.end(), writerPool.end()]);
+    try {
+      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
+    } finally {
+      await adminPool.end();
+    }
+  });
+
+  const repo = new PostgresRepository(pool);
+  const manifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
+  await repo.importManifest(manifest, 'test');
+  const indexes = await pool.query<{ indexname: string }>(
+    'SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()'
+  );
+  for (const name of ['questions_status_pool_section_idx', 'question_flags_status_idx', 'sessions_student_status_idx']) {
+    assert.ok(indexes.rows.some((r) => r.indexname === name), `missing index ${name}`);
+  }
+
+  const full = await repo.listQuestions();
+  assert.ok(full.length > 0 && Object.isFrozen(full[0]), 'cached bank rows are frozen');
+  const meta = await repo.listQuestionMeta();
+  assert.deepEqual(meta.map((q) => q.questionId).sort(), full.map((q) => q.questionId).sort());
+
+  // A cold repository (no bank in memory) answers from the SQL projection with identical rows.
+  const coldPool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
+  t.after(() => coldPool.end());
+  const coldMeta = await new PostgresRepository(coldPool).listQuestionMeta();
+  const byId = (rows: typeof meta) => Object.fromEntries(rows.map((r) => [r.questionId, r]));
+  assert.deepEqual(byId(coldMeta), byId(meta));
+
+  // Another process (e.g. `npm run db:push`) changes a row: the fingerprint must catch it.
+  const target = full[0];
+  await writerPool.query(
+    `UPDATE questions SET qc_status = 'retired', data = data || '{"qcStatus":"retired"}'::jsonb WHERE question_id = $1`,
+    [target.questionId]
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const refreshed = (await repo.listQuestions()).find((q) => q.questionId === target.questionId);
+  assert.equal(refreshed?.qcStatus, 'retired');
+  assert.equal((await repo.getQuestionWithStimulus(target.questionId))?.question.qcStatus, 'retired');
+
+  // Local writes invalidate immediately (no revalidation window).
+  await repo.updateQuestionStatus(target.questionId, 'active');
+  assert.equal((await repo.listQuestions()).find((q) => q.questionId === target.questionId)?.qcStatus, 'active');
+
+  // Session/activity aggregates.
+  const studentId = 'cache_student';
+  const nowIso = new Date().toISOString();
+  const baseSession = {
+    studentId, mode: 'daily_adaptive', title: 'T', isSandbox: false, configVersionId: 'cfg_v1',
+    checkpointRevision: 1, totalSlots: 1, correctSlots: 0, startedAt: nowIso,
+  } as const;
+  await repo.createSession({ ...baseSession, sessionId: 's_live', status: 'in_progress', plannedQuestionIds: [target.questionId] });
+  await repo.createSession({
+    ...baseSession, sessionId: 's_done', status: 'submitted', completedAt: nowIso, plannedQuestionIds: [target.questionId],
+    submissionSummary: { ok: true, correctSlots: 0, totalSlots: 1, completedAt: nowIso } as SessionRecord['submissionSummary'],
+  });
+  assert.deepEqual((await repo.listActiveSessions(studentId)).map((s) => s.sessionId), ['s_live']);
+  const lean = await repo.listSessions(10, studentId, false, { omitSubmissionSummary: true });
+  assert.ok(lean.length === 2 && lean.every((s) => s.submissionSummary === undefined));
+  assert.ok((await repo.listSessions(10, studentId, false)).some((s) => s.submissionSummary));
+  const activity = await repo.getLearnerActivity([studentId, 'nobody']);
+  assert.equal(activity[studentId].sessionsCount, 2);
+  assert.equal(activity.nobody.sessionsCount, 0);
+  assert.equal(await repo.countHoldoutLeaks([target.questionId]), 2);
+  assert.equal(await repo.countHoldoutLeaks([]), 0);
+});

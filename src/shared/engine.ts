@@ -537,7 +537,7 @@ export function detectPlateauStatus(input: {
 }
 
 export function getQuestionBatchTag(
-  q: QuestionItem
+  q: Pick<QuestionItem, 'questionId'> & { provenance: Pick<QuestionItem['provenance'], 'sourceReference'> }
 ): 'PT1' | 'PT2' | 'PT3' | 'SMOKE' | 'CUSTOM' {
   const ref = q.provenance.sourceReference ?? '';
   if (q.questionId.includes('_pt1_') || ref.includes('PT1')) return 'PT1';

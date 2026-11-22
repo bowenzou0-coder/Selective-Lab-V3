@@ -52,29 +52,25 @@ test('shouldUseVisualOptionGrid returns false for text-only options or long-text
 });
 
 test('all bundled seed questions with visual options qualify for the compact 2-column grid', () => {
-  const seedFiles = [
-    'seed/golden-smoke-pack.json',
-    'seed/official-doe-pt1-2.json',
-    'seed/official-doe-pt3-holdout.json',
-  ];
+  const readJson = (rel: string) => JSON.parse(fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8'));
+  const smoke = readJson('seed/golden-smoke-pack.json') as { questions?: QuestionItem[] };
+  // Option parts of every official PT1–PT3 question with visual options (full papers live in Postgres).
+  const official = readJson('src/server/__fixtures__/official-sample.json') as {
+    visualOptionParts: Pick<QuestionItem, 'questionId' | 'parts'>[];
+  };
   let visualQuestionParts = 0;
-  for (const rel of seedFiles) {
-    const raw = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8')) as {
-      questions?: QuestionItem[];
-    };
-    for (const q of raw.questions || []) {
-      for (const p of q.parts || []) {
-        const hasAnyVisual = (p.options || []).some(
-          (o) => o.visual && o.visual.visualType !== 'none'
+  for (const q of [...(smoke.questions || []), ...official.visualOptionParts]) {
+    for (const p of q.parts || []) {
+      const hasAnyVisual = (p.options || []).some(
+        (o) => o.visual && o.visual.visualType !== 'none'
+      );
+      if (hasAnyVisual) {
+        visualQuestionParts += 1;
+        assert.equal(
+          shouldUseVisualOptionGrid(p.options),
+          true,
+          `Expected ${q.questionId} to use compact 2-column visual option grid`
         );
-        if (hasAnyVisual) {
-          visualQuestionParts += 1;
-          assert.equal(
-            shouldUseVisualOptionGrid(p.options),
-            true,
-            `Expected ${q.questionId} to use compact 2-column visual option grid`
-          );
-        }
       }
     }
   }
