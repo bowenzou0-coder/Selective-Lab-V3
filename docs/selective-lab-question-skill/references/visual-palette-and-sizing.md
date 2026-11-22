@@ -35,13 +35,13 @@ Reference for creating inline SVGs, structured tables, raster assets, and standa
 
 ---
 
-## 2. Bundled Typography (`fonts/`)
+## 2. Typography
 
-This skill folder bundles all 14 Anthropic OTF fonts used by Selective Lab so previews render identically offline or inside an Obsidian vault:
+Selective Lab renders with its Anthropic Serif, Sans and Mono WOFF2 faces (served from the app's `public/fonts/`). Inside the repo, `scripts/preview_manifest.mjs` picks them up automatically; elsewhere previews fall back to system fonts, which is fine for review.
 
-- **Reading prose & display headings:** `AnthropicSerif-Text-Regular-Static.otf`, `AnthropicSerif-Text-Medium-Static.otf`, `AnthropicSerif-Text-RegularItalic-Static.otf`, `AnthropicSerif-Display-*.otf`
-- **UI, Maths, Thinking Skills & SVG labels:** `AnthropicSans-Text-Regular-Static.otf`, `AnthropicSans-Text-Medium-Static.otf`, `AnthropicSans-Text-Semibold-Static.otf`, `AnthropicSans-Display-*.otf`
-- **Timers, IDs & JSON:** `Anthropic Mono Web.otf`
+- **Reading prose & display headings:** Anthropic Serif Text / Display.
+- **UI, Maths, Thinking Skills & SVG labels:** Anthropic Sans Text / Display.
+- **Timers, IDs & JSON:** Anthropic Mono.
 
 ### SVG Font Stack
 Inside `svgMarkup`, always include web-safe fallbacks so SVGs remain crisp even outside the app:

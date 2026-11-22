@@ -21,6 +21,5 @@ Just say `"generate a set of 40 maths"` or `"generate today's full exam set"`. T
 - `references/real-exam-calibration-2021-2023.md` — Blueprint from real 2021–2023 NSW SHSPT papers
 - `references/visual-palette-and-sizing.md` — Sunlit Editorial Studio palette, SVG hygiene & 2×2 tile sizing
 - `schema/` — Full Draft 2020-12 JSON Schema + 77 canonical skills
-- `fonts/` — 14 bundled Anthropic Serif, Sans & Mono `.otf` fonts (for local HTML previews)
 - `examples/` — Full 12-question (33-part) verified showcase covering all 8 `formatType`s + preview HTML
 - `scripts/` — Behind-the-scenes agent tools (`validate_manifest.mjs`, `merge_manifests.mjs`, `preview_manifest.mjs`, `compute_evidence_refs.mjs`)

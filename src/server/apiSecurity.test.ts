@@ -1345,3 +1345,57 @@ test('Multi-account student isolation, admin learner monitoring switcher, primar
     await srv.close();
   }
 });
+
+test('Admin lightweight endpoints: batch summaries, summary-free paging, and cross-learner holdout isolation', async () => {
+  const srv = await startTestServer();
+  const adminCookie = signedCookie('lite_admin', 'admin');
+  try {
+    const summaryRes = await fetch(`${srv.baseUrl}/api/admin/batches/summary?studentId=none`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(summaryRes.status, 200);
+    const summary = (await summaryRes.json()) as { batchSummaries: { total: number; questionIds: string[] }[] };
+    const bankSize = (await srv.repo.listQuestionMeta()).length;
+    assert.equal(summary.batchSummaries.reduce((n, b) => n + b.total, 0), bankSize);
+
+    const pageRes = await fetch(`${srv.baseUrl}/api/admin/questions?page=1&pageSize=5&summary=0`, {
+      headers: { Cookie: adminCookie },
+    });
+    const page = (await pageRes.json()) as Record<string, unknown>;
+    assert.equal(pageRes.status, 200);
+    assert.equal((page.questions as unknown[]).length, 5);
+    assert.equal(page.poolHealth, undefined);
+    assert.equal(page.batchSummaries, undefined);
+    assert.equal(page.batches, undefined, 'import batch records are not sent to the bank UI');
+
+    // A holdout question planned into another learner's practice session must be reported.
+    const holdout = (await srv.repo.listQuestionMeta()).find((q) => q.poolType === 'benchmark_holdout')!;
+    await srv.repo.createSession({
+      sessionId: 'sess_leak_check',
+      studentId: 'google_other_learner',
+      configVersionId: 'cfg_v1',
+      mode: 'daily_adaptive',
+      title: 'Leak check',
+      isSandbox: false,
+      status: 'in_progress',
+      plannedQuestionIds: [holdout.questionId],
+      checkpointRevision: 1,
+      totalSlots: 1,
+      correctSlots: 0,
+      startedAt: new Date().toISOString(),
+    });
+    const status = (await (await fetch(`${srv.baseUrl}/api/admin/status`, { headers: { Cookie: adminCookie } })).json()) as {
+      holdoutIsolationOk: boolean;
+      leakedCount: number;
+    };
+    assert.equal(status.holdoutIsolationOk, false);
+    assert.equal(status.leakedCount, 1);
+
+    const forbidden = await fetch(`${srv.baseUrl}/api/admin/batches/summary`, {
+      headers: { Cookie: signedCookie('lite_student', 'student') },
+    });
+    assert.equal(forbidden.status, 403);
+  } finally {
+    await srv.close();
+  }
+});

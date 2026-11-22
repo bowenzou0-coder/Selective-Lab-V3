@@ -74,6 +74,17 @@ Every objectively scored part requires a clear, thorough, easy-to-read `workedEx
 - **Plain text formatting:** Use `1)`, `2)`, real line breaks serialized once as `\n` (never double-escaped `\\n`), `×`, `÷`, `=`, `3/4`, and units.
 - **Writing:** Put 6-criterion rubric guidance + common pitfalls in `workedExplanation` and set `distractorRationales: {}`.
 
+# Quality Gate (validator-enforced with `--strict`)
+
+Silently re-solve every item before returning it. `scripts/validate_manifest.mjs --strict` fails a batch on any of these, so fix them first:
+
+- **Unique answer:** no two options with identical text; no "all/none of the above".
+- **No giveaways:** the correct option is not conspicuously longer (≥1.9× the distractors' median) than the rest; every `distractorRationales` entry names the specific mistake (≥20 chars).
+- **Balanced keys:** across a batch, no answer letter above 40% per format, every letter used, and never 4+ consecutive identical keys.
+- **Real inference:** at most ~35% of Reading MCQs may be literal recall (`recall_locate`, `LITERAL_DETAIL`, `LITERAL_SENSE`).
+- **Maths working:** numbered steps `1)`, `2)`, … ending on the final option letter or value.
+- **SVG geometry:** balanced `<g>/<text>` tags, every label anchored inside the `viewBox`, no two labels drawn at the same point.
+
 # Visuals & Sunlit Editorial Studio Sizing
 
 Full palette and sizing rules in `references/visual-palette-and-sizing.md`:
@@ -86,7 +97,7 @@ Full palette and sizing rules in `references/visual-palette-and-sizing.md`:
 
 # BankImportManifest JSON Contract
 
-- **Top-level:** `manifestVersion: "1.0"`, unique `batchLabel` (max 200 chars, auto-generate e.g. `batch_YYYYMMDD_<section>_<part>`), `defaultPoolType: "practice"` (all active questions go straight into the unified pool; do NOT use `"benchmark_holdout"` unless explicitly requested), `defaultQcStatus: "verified"` (or `"active"` only if requested), `stimuli` (`[]` if none), and non-empty `questions`.
+- **Top-level:** `manifestVersion: "1.0"`, unique `batchLabel` (max 200 chars, auto-generate e.g. `batch_YYYYMMDD_<section>_<part>`), `defaultPoolType: "practice"` (do NOT use `"benchmark_holdout"` unless explicitly requested), `defaultQcStatus: "active"` (synced questions go live in the unified pool; use `"verified"` only when the user wants them staged as Paused for admin review), `stimuli` (`[]` if none), and non-empty `questions`.
 - **IDs & bounds:** `questionId`, `questionFamilyId`, `stimulusId`, `stimulusFamilyId` match `^[a-zA-Z0-9_-]{1,128}$`, `version: 1`, zero-based `partIndex`, globally unique `partId`. Independent questions sharing one stimulus have distinct `questionFamilyId`s and the same `stimulusId`. Omit `contentHash`, `evidenceRevision`, `batchId`, per-item `batchLabel`, timestamps, and `difficultyCalibrated`.
 - **Formats & exact part shapes:**
   - `MATH_MCQ_5`: 5 options `A`–`E`; `targetTimeSec` 65–85.
