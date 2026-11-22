@@ -25,7 +25,7 @@ import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { computeCanonicalHash, validateAndDryRunManifest } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
 import { getPostgresPoolConfig } from './postgresConfig.ts';
-import { QuestionBankCache, toQuestionMeta } from './questionBankCache.ts';
+import { QuestionBankCache } from './questionBankCache.ts';
 import {
   ForbiddenError,
   NotFoundError,
@@ -36,6 +36,7 @@ import {
   type CheckpointSaveResult,
   type FinalizeSessionInput,
   type FinalizeSessionResult,
+  type ImportBatchSummary,
   type LearnerActivityStats,
   type ListSessionsOptions,
   type MigrationPreflightReport,
@@ -568,48 +569,8 @@ export class PostgresRepository implements AppRepository {
 
   async listQuestionMeta(filter?: { qcStatus?: string }): Promise<QuestionMeta[]> {
     await this.ensureSchema();
-    const warm = await this.bank.peek();
-    if (warm) {
-      return warm.latest
-        .filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus)
-        .map(toQuestionMeta);
-    }
-    // Cold instance: project only metadata columns (~5% of the bank's bytes).
-    const { rows } = await this.pool.query<{
-      questionId: string; questionFamilyId: string; version: number; section: QuestionItem['section'];
-      formatType: QuestionItem['formatType']; poolType: QuestionItem['poolType']; qcStatus: QuestionItem['qcStatus'];
-      stimulusId: string | null; batchId: string | null; batchLabel: string | null; createdAtIso: string | null;
-      updatedAtIso: string | null; evidenceRevision: string | null;
-      sourceType: QuestionItem['provenance']['sourceType'] | null; sourceReference: string | null;
-    }>(
-      `SELECT * FROM (
-         SELECT DISTINCT ON (question_family_id)
-           question_id AS "questionId", question_family_id AS "questionFamilyId", version, section,
-           format_type AS "formatType", pool_type AS "poolType", qc_status AS "qcStatus", stimulus_id AS "stimulusId",
-           data->>'batchId' AS "batchId", data->>'batchLabel' AS "batchLabel",
-           data->>'createdAtIso' AS "createdAtIso", data->>'updatedAtIso' AS "updatedAtIso",
-           data->>'evidenceRevision' AS "evidenceRevision",
-           data#>>'{provenance,sourceType}' AS "sourceType", data#>>'{provenance,sourceReference}' AS "sourceReference"
-         FROM questions ORDER BY question_family_id, version DESC
-       ) latest WHERE ($1::text IS NULL OR "qcStatus" = $1)`,
-      [filter?.qcStatus ?? null]
-    );
-    return rows.map((r) => ({
-      questionId: r.questionId,
-      questionFamilyId: r.questionFamilyId,
-      version: r.version,
-      section: r.section,
-      formatType: r.formatType,
-      poolType: r.poolType,
-      qcStatus: r.qcStatus,
-      stimulusId: r.stimulusId ?? undefined,
-      batchId: r.batchId ?? undefined,
-      batchLabel: r.batchLabel ?? undefined,
-      createdAtIso: r.createdAtIso ?? undefined,
-      updatedAtIso: r.updatedAtIso ?? undefined,
-      evidenceRevision: r.evidenceRevision ?? undefined,
-      provenance: { sourceType: r.sourceType ?? undefined, sourceReference: r.sourceReference ?? undefined },
-    }));
+    const latest = await this.bank.getLatestMeta();
+    return latest.filter((q) => !filter?.qcStatus || q.qcStatus === filter.qcStatus);
   }
 
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
@@ -617,7 +578,7 @@ export class PostgresRepository implements AppRepository {
     const [bank, flags, batches] = await Promise.all([
       this.bank.get(),
       this.listQuestionFlags(),
-      this.listImportBatches(),
+      this.listImportBatchSummaries(),
     ]);
     return filterAndPaginateQuestions({
       allQuestions: bank.all,
@@ -879,6 +840,15 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     const { rows } = await this.pool.query('SELECT data FROM import_batches ORDER BY created_at DESC');
     return rows.map((r) => r.data as ImportBatchRecord);
+  }
+
+  async listImportBatchSummaries(): Promise<ImportBatchSummary[]> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query(
+      `SELECT data - 'newQuestionIds' - 'versionBumpedQuestionIds' - 'skippedQuestionIds' AS data
+       FROM import_batches ORDER BY created_at DESC`
+    );
+    return rows.map((r) => r.data as ImportBatchSummary);
   }
 
   async getImportBatch(batchId: string): Promise<ImportBatchRecord | null> {

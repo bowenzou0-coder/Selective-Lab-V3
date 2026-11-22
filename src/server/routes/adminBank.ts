@@ -22,7 +22,7 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
         repo.listQuestionMeta(),
         repo.getActiveConfig(),
         repo.listQuestionFlags(),
-        repo.listImportBatches(),
+        repo.listImportBatchSummaries(),
       ]);
 
       const holdoutIds = questions.filter((q) => q.poolType === 'benchmark_holdout').map((q) => q.questionId);
@@ -97,7 +97,9 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
         page: req.query.page ? Number(req.query.page) : 1,
         pageSize: req.query.pageSize ? Number(req.query.pageSize) : 50,
       });
-      res.json({ ...result, monitoredStudentId });
+      // Import batch records are not used by the bank UI and carry every question id; omit them.
+      const { batches: _batches, ...payload } = result;
+      res.json({ ...payload, monitoredStudentId });
     } catch (err) {
       console.error('GET /api/admin/questions error:', err);
       res.status(500).json({ error: 'Failed to load admin questions.' });
@@ -143,7 +145,7 @@ export function registerAdminBankRoutes(app: Express, ctx: AppContext): void {
           : requestedStudentId || (await ctx.resolveDefaultMonitoredStudentId(config));
       const [questions, batches, evidence, memory] = await Promise.all([
         repo.listQuestionMeta(),
-        repo.listImportBatches(),
+        repo.listImportBatchSummaries(),
         monitoredStudentId ? repo.getQuestionEvidence(monitoredStudentId) : Promise.resolve({}),
         monitoredStudentId ? repo.getQuestionMemory(monitoredStudentId) : Promise.resolve({}),
       ]);

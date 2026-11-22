@@ -37,6 +37,7 @@ import {
   type MigrationPreflightReport,
   type ProgressCountsResponse,
   type ProgressResetResponse,
+  type ImportBatchSummary,
   type LearnerActivityStats,
   type ListSessionsOptions,
   type QuestionMeta,
@@ -511,6 +512,12 @@ export class MemoryRepository implements AppRepository {
     this.batches.unshift(batch);
 
     return { imported, skipped, versionBumped, batch };
+  }
+
+  async listImportBatchSummaries(): Promise<ImportBatchSummary[]> {
+    return (await this.listImportBatches()).map(
+      ({ newQuestionIds: _n, versionBumpedQuestionIds: _v, skippedQuestionIds: _s, ...summary }) => summary
+    );
   }
 
   async listImportBatches(): Promise<ImportBatchRecord[]> {

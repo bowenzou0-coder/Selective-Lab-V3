@@ -18,6 +18,7 @@ import type {
   AppRepository,
   BackupRestoreReport,
   CanonicalBackupBundle,
+  ImportBatchSummary,
   QuestionMeta,
   QuestionQueryParams,
   QuestionQueryResult,
@@ -42,7 +43,7 @@ export function selectLatestByFamily<T extends Pick<QuestionItem, 'questionFamil
 
 export function summarizeBatches(
   questions: readonly QuestionMeta[],
-  batches: readonly ImportBatchRecord[],
+  batches: readonly ImportBatchSummary[],
   progress: ReadonlyMap<string, QuestionProgressMeta>,
 ): BatchDirectorySummary[] {
   const labels = {
@@ -90,7 +91,7 @@ export function filterAndPaginateQuestions(input: {
   latestQuestions?: readonly QuestionItem[];
   stimuliById: Readonly<Record<string, StimulusGroup>>;
   flags: QuestionFlagRecord[];
-  batches: ImportBatchRecord[];
+  batches: ImportBatchSummary[];
   params?: QuestionQueryParams;
 }): QuestionQueryResult {
   const { allQuestions, stimuliById, flags, batches, params = {} } = input;

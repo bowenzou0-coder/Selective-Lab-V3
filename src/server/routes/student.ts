@@ -28,7 +28,7 @@ export function registerStudentRoutes(app: Express, ctx: AppContext): void {
         repo.listSessions(100, studentId, false, { omitSubmissionSummary: true }),
         repo.listPartAttempts(500, studentId, false),
         repo.listQuestionMeta({ qcStatus: 'active' }),
-        repo.listImportBatches(),
+        repo.listImportBatchSummaries(),
         repo.getSkillStates(studentId),
         repo.getQuestionEvidence(studentId),
         repo.getQuestionMemory(studentId),

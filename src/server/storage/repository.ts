@@ -106,6 +106,9 @@ export type QuestionMeta = Pick<
   | 'evidenceRevision'
 > & { provenance: Partial<Pick<QuestionItem['provenance'], 'sourceType' | 'sourceReference'>> };
 
+/** Import batch record without its (potentially long) question id lists. */
+export type ImportBatchSummary = Omit<ImportBatchRecord, 'newQuestionIds' | 'versionBumpedQuestionIds' | 'skippedQuestionIds'>;
+
 export interface LearnerActivityStats {
   sessionsCount: number;
   attemptsCount: number;
@@ -149,7 +152,7 @@ export interface QuestionQueryResult {
   page: number;
   pageSize: number;
   openFlagsByQuestionId: Record<string, number>;
-  batches: ImportBatchRecord[];
+  batches: ImportBatchSummary[];
   progressByQuestionId?: Record<string, QuestionProgressMeta>;
   poolHealth?: PoolHealthSummary;
   masteredLiveQuestionIds?: string[];
@@ -321,6 +324,8 @@ export interface AppRepository {
     importedBy?: string
   ): Promise<{ imported: number; skipped: number; versionBumped: number; batch: ImportBatchRecord }>;
   listImportBatches(): Promise<ImportBatchRecord[]>;
+  /** Batch labels/provenance only (no question id arrays) for summaries and counts. */
+  listImportBatchSummaries(): Promise<ImportBatchSummary[]>;
   getImportBatch(batchId: string): Promise<ImportBatchRecord | null>;
   updateQuestionStatus(questionId: string, qcStatus: QuestionItem['qcStatus']): Promise<void>;
   deleteQuestions?(questionIds: string[]): Promise<number>;

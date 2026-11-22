@@ -165,7 +165,6 @@ export interface PaginatedQuestionsResponse {
   page: number;
   pageSize: number;
   openFlagsByQuestionId: Record<string, number>;
-  batches: ImportBatchRecord[];
   progressByQuestionId?: Record<string, QuestionProgressMeta>;
   poolHealth?: PoolHealthSummary;
   masteredLiveQuestionIds?: string[];
