@@ -26,6 +26,7 @@ import type {
 import { LanguageToggle, useI18n } from '../i18n';
 import { PostSubmissionReview } from './PostSubmissionReview';
 import { QuestionWorkspace } from './QuestionWorkspace';
+import { FormattedText } from './FormattedText';
 
 function formatTimer(totalSec: number): string {
   const s = Math.max(0, Math.floor(totalSec));
@@ -437,7 +438,6 @@ export function SessionPlayerView({
       markLocalDirty();
       setCurrentIndex(bounded);
       setActiveGapIndex(0);
-      setNavOpen(false);
     },
     [questions.length, markLocalDirty]
   );
@@ -826,11 +826,19 @@ export function SessionPlayerView({
               type="button"
               onClick={() => setNavOpen((v) => !v)}
               aria-expanded={navOpen}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-medium text-[#113C36] cursor-pointer whitespace-nowrap transition-colors"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
+                navOpen
+                  ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
+                  : 'border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36]'
+              }`}
             >
               <Grid className="w-3.5 h-3.5" />
               <span>{t('session.navigator')}</span>
-              <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+              <ChevronDown
+                className={`w-3.5 h-3.5 opacity-70 transition-transform ${
+                  navOpen ? 'rotate-180' : ''
+                }`}
+              />
             </button>
 
             {session.mode === 'admin_calibration' && isAdmin && activeInspectorQ && (
@@ -885,7 +893,7 @@ export function SessionPlayerView({
                   </span>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5 max-w-[840px]">
                 {questions.map((q, idx) => {
                   const isCurr = idx === currentIndex;
                   const isQFlagged = flaggedQuestionIds.includes(q.questionId);
@@ -898,7 +906,7 @@ export function SessionPlayerView({
                       key={q.questionId}
                       type="button"
                       onClick={() => handleGoIndex(idx)}
-                      className={`w-10 h-10 rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums relative cursor-pointer transition-colors ${
+                      className={`w-9 h-9 inline-flex items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums relative cursor-pointer transition-colors ${
                         isCurr
                           ? 'border-[#113C36] bg-[#113C36] text-white'
                           : isQAnswered
@@ -1048,11 +1056,11 @@ export function SessionPlayerView({
                 ))}
               </div>
               {activeInspectorPart?.workedExplanation && (
-                <div className="text-[#4A5955] whitespace-pre-line pt-1">
-                  <strong className="text-[#113C36]">
+                <div className="text-[#4A5955] pt-1 space-y-1">
+                  <strong className="text-[#113C36] block">
                     Explanation{activeInspectorQ.parts.length > 1 ? ` (Part ${safeInspectorPartIdx + 1})` : ''}:
-                  </strong>{' '}
-                  {activeInspectorPart.workedExplanation}
+                  </strong>
+                  <FormattedText text={activeInspectorPart.workedExplanation} variant="explanation" />
                 </div>
               )}
             </div>

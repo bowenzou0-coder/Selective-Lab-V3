@@ -13,6 +13,7 @@ export interface StudioShellProps {
   currentPath: string;
   role: 'student' | 'admin' | null;
   studentId?: string | null;
+  email?: string;
   onNavigate: (path: string) => void;
   onSignOut: () => void;
   banner?: ReactNode;
@@ -24,6 +25,7 @@ type NavKey = 'dashboard' | 'drills' | 'mocks' | 'progress' | 'admin';
 export function StudioShell({
   currentPath,
   role,
+  email,
   onNavigate,
   onSignOut,
   banner,
@@ -74,7 +76,9 @@ export function StudioShell({
     { key: 'drills', label: t('nav.drills'), shortLabel: t('nav.drillsShort'), href: '/#practice-drills', icon: BookOpenCheck },
     { key: 'mocks', label: t('nav.mocks'), shortLabel: t('nav.mocksShort'), href: '/#mock-simulator', icon: Clock },
     { key: 'progress', label: t('nav.progress'), shortLabel: t('nav.progressShort'), href: '/progress', icon: BarChart3 },
-    { key: 'admin', label: t('nav.admin'), shortLabel: t('nav.adminShort'), href: '/admin', icon: SlidersHorizontal },
+    ...(role === 'admin'
+      ? [{ key: 'admin' as const, label: t('nav.admin'), shortLabel: t('nav.adminShort'), href: '/admin', icon: SlidersHorizontal }]
+      : []),
   ];
 
   return (
@@ -153,7 +157,7 @@ export function StudioShell({
             <div className="flex items-center gap-2 px-1.5 text-xs text-[#4A5955]">
               <span className="w-2 h-2 rounded-full bg-[#1D6346] shrink-0" aria-hidden="true" />
               <span className="truncate font-medium">
-                {role === 'admin' ? t('nav.adminWorkspace') : t('nav.syncedAccount')}
+                {role === 'admin' ? t('nav.adminWorkspace') : email || t('nav.syncedAccount')}
               </span>
             </div>
             <div className="px-1">

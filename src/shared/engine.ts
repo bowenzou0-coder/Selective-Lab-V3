@@ -565,7 +565,6 @@ export function selectMockTestQuestions(input: {
     .filter((q) => {
       if (q.qcStatus !== 'active') return false;
       if (getQuestionBatchTag(q) !== batch) return false;
-      if (batch === 'PT3' && q.poolType !== 'benchmark_holdout') return false;
       if (sectionFilter && q.section !== sectionFilter) return false;
       return true;
     })

@@ -102,6 +102,15 @@ export default function App() {
     }
   }, [auth, path]);
 
+  // Redirect non-admin accounts away from /admin so student accounts never see admin UI
+  useEffect(() => {
+    if (!auth?.authenticated || auth.role === 'admin') return;
+    if (path.startsWith('/admin')) {
+      window.history.replaceState({}, '', '/');
+      setPath('/');
+    }
+  }, [auth, path]);
+
   const handleLogout = async () => {
     setLogoutError('');
     try {
@@ -190,26 +199,6 @@ export default function App() {
         </>
       );
     }
-  } else if (isAdminRoute && auth.role !== 'admin') {
-    // Gate /admin if currently logged in only as student
-    content = (
-      <StudioShell
-        currentPath={effectivePath}
-        role={auth.role}
-        studentId={auth.studentId}
-        onNavigate={navigate}
-        onSignOut={handleLogout}
-        banner={banner}
-      >
-        <AdminPasswordGate
-          embedded
-          localDevPinEnabled={localDevPinEnabled}
-          initialError={authError}
-          onAuthenticated={onAuthenticated}
-          onBackHome={() => navigate('/')}
-        />
-      </StudioShell>
-    );
   } else if (sessionMatch) {
     // Quiet Exam Room — drop the Oat Studio sidebar completely during active sessions
     content = (
@@ -231,11 +220,12 @@ export default function App() {
         currentPath={effectivePath}
         role={auth.role}
         studentId={auth.studentId}
+        email={auth.email}
         onNavigate={navigate}
         onSignOut={handleLogout}
         banner={banner}
       >
-        {isAdminRoute ? (
+        {isAdminRoute && auth.role === 'admin' ? (
           <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
         ) : effectivePath.startsWith('/progress') ? (
           <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />

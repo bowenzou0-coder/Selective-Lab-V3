@@ -331,8 +331,29 @@ table.data-table td {
   font-size: 15.5px;
   font-weight: 500;
   margin: 6px 0 12px;
-  white-space: pre-wrap;
 }
+.stem-box {
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-hairline);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 8px 0 14px;
+  font-size: 14.5px;
+  color: var(--text-primary);
+}
+.stem-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.fmt-blocks p { margin: 0 0 10px; }
+.fmt-blocks p:last-child { margin-bottom: 0; }
+.fmt-blocks ul, .fmt-blocks ol { margin: 0 0 10px; padding-left: 20px; }
+.fmt-blocks li { margin-bottom: 5px; }
+.fmt-blocks li:last-child { margin-bottom: 0; }
 
 .options-list {
   display: flex;
@@ -421,7 +442,7 @@ table.data-table td {
   letter-spacing: 0.04em;
   color: var(--text-secondary);
 }
-.worked-text { white-space: pre-wrap; margin: 0 0 10px; }
+.worked-text { margin: 0 0 10px; }
 .rationales { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); }
 .rationales li { margin-bottom: 4px; }
 .evidence-quote {
@@ -511,6 +532,51 @@ function renderPassage(text) {
   return esc(text).replace(/\\{\\{(gap:\\d+)\\}\\}/g, (_, g) => '<span class="gap-pill">' + g.toUpperCase() + '</span>');
 }
 
+function renderFormattedText(text, isBoxed) {
+  const norm = String(text ?? '').replace(/\\r\\n/g, '\\n').trim();
+  if (!norm) return '';
+  const chunks = norm.split(/\\n\\s*\\n/);
+  const html = [];
+  let firstChunk = true;
+  for (const chunk of chunks) {
+    const lines = chunk.split('\\n').map(l => l.replace(/[ \\t]+$/g, '')).filter(l => l.trim());
+    let i = 0;
+    if (isBoxed && firstChunk && /^Boxed rules(?:\\s*[—–-]\\s*[^:]+)?:\\s*$/i.test(lines[0] || '')) {
+      html.push('<div class="stem-heading">' + esc(lines[0].trim()) + '</div>');
+      i = 1;
+    }
+    firstChunk = false;
+    while (i < lines.length) {
+      if (/^\\s*(?:•\\s*|[-*]\\s+)/.test(lines[i])) {
+        const items = [];
+        while (i < lines.length && /^\\s*(?:•\\s*|[-*]\\s+)/.test(lines[i])) {
+          items.push('<li>' + esc(lines[i].replace(/^\\s*(?:•\\s*|[-*]\\s+)/, '').trim()) + '</li>');
+          i++;
+        }
+        html.push('<ul>' + items.join('') + '</ul>');
+      } else if (/^\\s*\\d+[.)]\\s+/.test(lines[i])) {
+        const items = [];
+        while (i < lines.length && /^\\s*\\d+[.)]\\s+/.test(lines[i])) {
+          items.push('<li>' + esc(lines[i].replace(/^\\s*\\d+[.)]\\s+/, '').trim()) + '</li>');
+          i++;
+        }
+        html.push('<ol>' + items.join('') + '</ol>');
+      } else {
+        const pLines = [];
+        while (i < lines.length && !/^\\s*(?:•\\s*|[-*]\\s+|\\d+[.)]\\s+)/.test(lines[i])) {
+          const ln = lines[i].trimStart();
+          const spk = ln.match(/^([A-Z][A-Za-z'’ -]{1,24}:)\\s+(["“‘'].+)$/);
+          pLines.push(spk ? '<strong>' + esc(spk[1]) + '</strong> ' + esc(spk[2]) : esc(ln));
+          i++;
+        }
+        const style = pLines.some(l => / {2,}/.test(l)) || pLines.length > 1 ? ' style="white-space:pre-wrap"' : '';
+        html.push('<p' + style + '>' + pLines.join('<br/>') + '</p>');
+      }
+    }
+  }
+  return '<div class="fmt-blocks">' + html.join('') + '</div>';
+}
+
 function renderNav() {
   const strip = document.getElementById('nav-strip');
   strip.innerHTML = MANIFEST.questions.map((q, idx) => {
@@ -559,7 +625,7 @@ function render() {
 
   let rightHtml = '<section class="card">';
   rightHtml += '<div class="part-meta"><span class="pill sec">' + esc(q.section) + ' · ' + esc(q.formatType) + '</span><span class="mono">' + esc(q.questionId) + '</span><span class="pill">' + esc(q.qcStatus || MANIFEST.defaultQcStatus) + '</span></div>';
-  if (q.stemPrefix) rightHtml += '<p style="margin:8px 0 12px;color:var(--text-secondary);white-space:pre-wrap">' + esc(q.stemPrefix) + '</p>';
+  if (q.stemPrefix) rightHtml += '<div class="stem-box">' + renderFormattedText(q.stemPrefix, true) + '</div>';
 
   if (q.writingSpec) {
     const ws = q.writingSpec;
@@ -609,7 +675,7 @@ function render() {
       const evHtml = Array.isArray(p.evidenceRefs) && p.evidenceRefs.length
         ? p.evidenceRefs.map(r => '<div class="evidence-quote"><strong>Evidence (' + esc(r.targetKind) + (r.extractLabel ? ' ' + esc(r.extractLabel) : '') + ' [' + r.startOffset + '..' + r.endOffset + ']):</strong> "' + esc(r.quote) + '"</div>').join('')
         : '';
-      solHtml = '<div class="solution-box"><h4>' + (p.correctAnswerKey ? 'Answer: ' + esc(p.correctAnswerKey) + ' · ' : '') + 'Year 6 Worked Solution</h4><div class="worked-text">' + esc(p.workedExplanation) + '</div>' + drHtml + evHtml + '</div>';
+      solHtml = '<div class="solution-box"><h4>' + (p.correctAnswerKey ? 'Answer: ' + esc(p.correctAnswerKey) + ' · ' : '') + 'Year 6 Worked Solution</h4><div class="worked-text">' + renderFormattedText(p.workedExplanation, false) + '</div>' + drHtml + evHtml + '</div>';
     }
 
     return '<div class="part-block">'
@@ -618,7 +684,7 @@ function render() {
       + '<span class="mono">' + esc(p.skillId) + '</span>'
       + '<span>Diff ' + esc(p.difficultyInitial) + ' · ' + esc(p.targetTimeSec) + 's · ' + esc(p.cognitiveDemand) + '</span>'
       + '</div>'
-      + '<div class="prompt">' + esc(p.promptText) + '</div>'
+      + '<div class="prompt">' + renderFormattedText(p.promptText, false) + '</div>'
       + optsHtml
       + solHtml
       + '</div>';

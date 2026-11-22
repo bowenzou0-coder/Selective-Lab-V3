@@ -22,12 +22,16 @@ interface DataAndDesignPanelProps {
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
   onDataMutated?: () => void;
+  monitoredStudentId?: string | null;
+  monitoredLearner?: import('../../api').AdminLearnerSummary | null;
 }
 
 export function DataAndDesignPanel({
   onNotice,
   onError,
   onDataMutated,
+  monitoredStudentId,
+  monitoredLearner = null,
 }: DataAndDesignPanelProps) {
   const { t } = useI18n();
   const [counts, setCounts] = useState<ProgressCountsResponse | null>(null);
@@ -46,11 +50,13 @@ export function DataAndDesignPanel({
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsResponse | null>(null);
   const [loadingDiag, setLoadingDiag] = useState(false);
 
-  const loadData = async () => {
+  const loadData = async (targetStudentId = monitoredStudentId) => {
     setLoadingCounts(true);
     try {
       const [c, f] = await Promise.all([
-        api.getProgressCounts(),
+        targetStudentId === null
+          ? api.getProgressCounts('__none__')
+          : api.getProgressCounts(targetStudentId || undefined),
         api.getAdminFlags().catch(() => ({ flags: [] })),
       ]);
       setCounts(c);
@@ -63,7 +69,6 @@ export function DataAndDesignPanel({
   };
 
   useEffect(() => {
-    void loadData();
     fetch('/docs/frontend-design.md')
       .then((res) => (res.ok ? res.text() : Promise.reject(new Error('Spec not found'))))
       .then((txt) => setSpecText(txt))
@@ -72,11 +77,16 @@ export function DataAndDesignPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    void loadData(monitoredStudentId);
+  }, [monitoredStudentId]);
+
   const handleConfirmReset = async () => {
+    if (monitoredStudentId === null) return;
     if (confirmText.trim().toUpperCase() !== 'RESET') return;
     setResetting(true);
     try {
-      const res = await api.resetStudentProgress();
+      const res = await api.resetStudentProgress(monitoredStudentId || undefined);
       setConfirmOpen(false);
       setConfirmText('');
       onNotice(
@@ -186,14 +196,31 @@ export function DataAndDesignPanel({
               <span>{t('data.exportBackup')}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{t('data.resetProgressBtn')}</span>
-            </button>
+            <div className="space-y-1.5">
+              {monitoredLearner ? (
+                <p className="text-xs text-[#4A5955]">
+                  {t('data.scopedToLearner', {
+                    name:
+                      monitoredLearner.displayName ||
+                      monitoredLearner.email ||
+                      monitoredLearner.uid,
+                  })}
+                </p>
+              ) : monitoredStudentId === null ? (
+                <p className="text-xs text-[#78756E]">
+                  {t('data.selectLearnerToReset')}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                disabled={monitoredStudentId === null}
+                onClick={() => setConfirmOpen(true)}
+                className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-45 disabled:pointer-events-none"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{t('data.resetProgressBtn')}</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="rounded-[14px] bg-[#FDECEB] border border-[#B83A28]/30 p-4 space-y-3">
@@ -202,6 +229,13 @@ export function DataAndDesignPanel({
               <div className="space-y-1">
                 <div className="font-sans-display font-semibold">
                   {t('data.resetConfirmTitle')}
+                  {monitoredLearner
+                    ? ` — ${
+                        monitoredLearner.displayName ||
+                        monitoredLearner.email ||
+                        monitoredLearner.uid
+                      }`
+                    : ''}
                 </div>
                 <p className="leading-relaxed">
                   {t('data.resetConfirmPrefix')}{' '}

@@ -23,6 +23,8 @@ const SKILL_NAME_MAP = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s.displayN
 interface AutoCalibrateConfigPanelProps {
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
+  monitoredStudentId?: string | null;
+  monitoredLearner?: import('../../api').AdminLearnerSummary | null;
 }
 
 function NumericInput({
@@ -93,6 +95,8 @@ function NumericInput({
 export function AutoCalibrateConfigPanel({
   onNotice,
   onError,
+  monitoredStudentId,
+  monitoredLearner = null,
 }: AutoCalibrateConfigPanelProps) {
   const { t, sectionShortLabel, skillName, formatDate } = useI18n();
   const [loading, setLoading] = useState(true);
@@ -112,7 +116,12 @@ export function AutoCalibrateConfigPanel({
     try {
       const [cfgRes, dashRes] = await Promise.all([
         api.getAdminConfig(),
-        api.getDashboard().catch(() => null),
+        monitoredStudentId === null
+          ? Promise.resolve({ dailyFocusPlan: undefined })
+          : api
+              .getAdminDailyPlan(monitoredStudentId || undefined)
+              .then((r) => ({ dailyFocusPlan: r.plan ?? undefined }))
+              .catch(() => ({ dailyFocusPlan: undefined })),
       ]);
       const loaded = cfgRes.active.config;
       setConfig({
@@ -186,11 +195,39 @@ export function AutoCalibrateConfigPanel({
     }
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    if (monitoredStudentId === null) {
+      setTodayPlan(null);
+      return;
+    }
+    api
+      .getAdminDailyPlan(monitoredStudentId || undefined)
+      .then((res) => {
+        if (!cancelled) {
+          setTodayPlan(res.plan);
+        }
+      })
+      .catch(() => {
+        // ignore plan refresh errors on learner switch
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [monitoredStudentId]);
+
   const handleRecalibrateNow = async () => {
+    if (monitoredStudentId === null) {
+      onError(t('cfg.selectLearnerBeforeRecalibrate'));
+      return;
+    }
     setRecalibrating(true);
     try {
       await api.saveAdminConfig(config, 'Auto-Calibrate refresh');
-      const res = await api.recalibrateDailyPlan(config);
+      const res = await api.recalibrateDailyPlan(
+        config,
+        monitoredStudentId || undefined,
+      );
       if (res.plan) {
         setTodayPlan(res.plan);
       }
@@ -286,9 +323,14 @@ export function AutoCalibrateConfigPanel({
 
         {autoCal.enabled ? (
           <div className="space-y-5">
-            <p className="text-xs text-[#4A5955] leading-relaxed">
-              {t('cfg.autoDesc')}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-[#4A5955] leading-relaxed max-w-2xl">
+                {t('cfg.autoDesc')}
+              </p>
+              <span className="px-2.5 py-1 rounded-full bg-white border border-[#C5DDD1] text-[11px] font-sans-display font-semibold text-[#113C36] whitespace-nowrap">
+                {t('cfg.sharedRulesBadge')}
+              </span>
+            </div>
 
             {/* Flexible Question Volume Guardrails */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -335,63 +377,85 @@ export function AutoCalibrateConfigPanel({
             </div>
 
             {/* Live Today's Decided Plan Box */}
-            <div className="rounded-[14px] bg-white border border-[#C5DDD1] p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="space-y-0.5 min-w-0">
-                  <div className="text-xs font-sans-display font-semibold text-[#113C36]">
-                    {t('cfg.decidedMixTitle', {
-                      total: decidedTotal,
-                      minutes: todayPlan?.dailyGoalMinutes ?? config.sessionDefaults.dailyGoalMinutes,
-                    })}
+            {monitoredLearner ? (
+              <div className="rounded-[14px] bg-white border border-[#C5DDD1] p-4 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="space-y-1 min-w-0">
+                    <div className="text-xs font-sans-display font-semibold text-[#113C36]">
+                      {t('cfg.learnerDecidedMixTitle', {
+                        name:
+                          monitoredLearner.displayName ||
+                          monitoredLearner.email ||
+                          monitoredLearner.uid,
+                        total: decidedTotal,
+                        minutes:
+                          todayPlan?.dailyGoalMinutes ?? config.sessionDefaults.dailyGoalMinutes,
+                      })}
+                    </div>
+                    <p className="text-[11px] text-[#4A5955] leading-relaxed">
+                      {t('cfg.personalPlanHint')}
+                    </p>
+                    {todayPlan?.modelId && (
+                      <div className="text-[11px] text-[#78756E] font-mono-code">
+                        {todayPlan.source === 'gemini' ? todayPlan.modelId : 'deterministic-fallback'}
+                      </div>
+                    )}
                   </div>
-                  {todayPlan?.modelId && (
-                    <div className="text-[11px] text-[#78756E] font-mono-code">
-                      {todayPlan.source === 'gemini' ? todayPlan.modelId : 'deterministic-fallback'}
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    disabled={recalibrating}
+                    onClick={handleRecalibrateNow}
+                    className="px-3.5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${recalibrating ? 'animate-spin' : ''}`} />
+                    <span>{recalibrating ? t('cfg.recalibratingBtn') : t('cfg.recalibrateBtn')}</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  disabled={recalibrating}
-                  onClick={handleRecalibrateNow}
-                  className="px-3.5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${recalibrating ? 'animate-spin' : ''}`} />
-                  <span>{recalibrating ? t('cfg.recalibratingBtn') : t('cfg.recalibrateBtn')}</span>
-                </button>
-              </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => (
-                  <div key={sec} className="rounded-[10px] bg-[#FAF8F5] border border-[#E5DFD5] px-3 py-2 min-w-0">
-                    <div className="text-[11px] text-[#78756E]">
-                      {sectionShortLabel(sec)}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => (
+                    <div key={sec} className="rounded-[10px] bg-[#FAF8F5] border border-[#E5DFD5] px-3 py-2 min-w-0">
+                      <div className="text-[11px] text-[#78756E]">
+                        {sectionShortLabel(sec)}
+                      </div>
+                      <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
+                        {decidedLimits[sec] ?? 0}
+                      </div>
                     </div>
-                    <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
-                      {decidedLimits[sec] ?? 0}
-                    </div>
+                  ))}
+                </div>
+
+                {todayPlan && (
+                  <div className="space-y-2 pt-1">
+                    {todayPlan.focusSkillIds.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {todayPlan.focusSkillIds.map((sid) => (
+                          <span
+                            key={sid}
+                            className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#113C36]"
+                          >
+                            {skillName(sid)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-[#4A5955] leading-relaxed">{todayPlan.rationale}</p>
                   </div>
-                ))}
+                )}
               </div>
-
-              {todayPlan && (
-                <div className="space-y-2 pt-1">
-                  {todayPlan.focusSkillIds.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {todayPlan.focusSkillIds.map((sid) => (
-                        <span
-                          key={sid}
-                          className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-xs font-medium text-[#113C36]"
-                        >
-                          {skillName(sid)}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-xs text-[#4A5955] leading-relaxed">{todayPlan.rationale}</p>
+            ) : (
+              <div className="rounded-[14px] bg-white border border-[#C5DDD1] p-4 space-y-1.5">
+                <div className="text-xs font-sans-display font-semibold text-[#113C36]">
+                  {t('cfg.perStudentPreviewTitle')}
                 </div>
-              )}
-            </div>
+                <p className="text-xs text-[#4A5955] leading-relaxed">
+                  {t('cfg.perStudentPreviewEmpty', {
+                    min: autoCal.minDailyQuestions,
+                    max: autoCal.maxDailyQuestions,
+                  })}
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">

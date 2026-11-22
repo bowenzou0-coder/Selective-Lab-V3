@@ -39,6 +39,7 @@ import type {
   StimulusGroup,
 } from '../../../shared/contracts';
 import { SKILLS_TAXONOMY } from '../../../shared/skills';
+import { FormattedText } from '../FormattedText';
 import { FORMAT_LABELS, QuestionWorkspace } from '../QuestionWorkspace';
 
 interface QuestionBankStudioProps {
@@ -48,6 +49,9 @@ interface QuestionBankStudioProps {
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
   onDataMutated?: () => void;
+  monitoredStudentId?: string | null;
+  monitoredLearner?: import('../../api').AdminLearnerSummary | null;
+  studentCount?: number;
 }
 
 const SECTION_VALUES: ('' | SectionCode)[] = ['', 'READ', 'MATH', 'THINK', 'WRIT'];
@@ -102,6 +106,9 @@ export function QuestionBankStudio({
   onNotice,
   onError,
   onDataMutated,
+  monitoredStudentId,
+  monitoredLearner = null,
+  studentCount = 0,
 }: QuestionBankStudioProps) {
   const {
     t,
@@ -193,6 +200,10 @@ export function QuestionBankStudio({
         missingVisual,
         missingExplanation,
         includeHistorical,
+        studentId:
+          monitoredStudentId === undefined
+            ? undefined
+            : monitoredStudentId ?? 'none',
         page,
         pageSize,
       });
@@ -229,6 +240,7 @@ export function QuestionBankStudio({
     missingVisual,
     missingExplanation,
     includeHistorical,
+    monitoredStudentId,
     page,
     pageSize,
     onError,
@@ -529,7 +541,11 @@ export function QuestionBankStudio({
                 {t('bank.poolHealthTitle')}
               </h2>
               <p className="text-xs text-[#4A5955] max-w-2xl leading-relaxed break-words">
-                {poolHealth.refreshAdvice}
+                {monitoredLearner === null && monitoredStudentId === null
+                  ? t('bank.catalogModeAdvice', {
+                      total: poolHealth.liveCount,
+                    })
+                  : poolHealth.refreshAdvice}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -543,12 +559,25 @@ export function QuestionBankStudio({
                 <span>{t('bank.glossaryBtn')}</span>
               </button>
               <span className={`px-3 py-1 rounded-full border text-xs font-medium tabular-nums whitespace-nowrap ${urgencyStyles}`}>
-                {t('bank.unseenRunwayBadge', {
-                  pct: poolHealth.unseenLivePercent,
-                  days: poolHealth.estimatedRunwayDays,
-                })}
+                {monitoredLearner
+                  ? t('bank.learnerRunwayBadge', {
+                      name:
+                        monitoredLearner.displayName ||
+                        monitoredLearner.email ||
+                        monitoredLearner.uid,
+                      pct: poolHealth.unseenLivePercent,
+                      days: poolHealth.estimatedRunwayDays,
+                    })
+                  : monitoredStudentId === null
+                    ? t('bank.catalogInventoryBadge', {
+                        count: poolHealth.liveCount,
+                      })
+                    : t('bank.unseenRunwayBadge', {
+                        pct: poolHealth.unseenLivePercent,
+                        days: poolHealth.estimatedRunwayDays,
+                      })}
               </span>
-              {masteredLiveIds.length > 0 && (
+              {monitoredLearner && studentCount <= 1 && masteredLiveIds.length > 0 && (
                 <button
                   type="button"
                   disabled={bulkBusy}
@@ -594,20 +623,42 @@ export function QuestionBankStudio({
                 {poolHealth.liveCount}
               </div>
               <div className="text-[11px] text-[#78756E] tabular-nums break-words leading-snug">
-                {t('bank.cardHoldoutSub', { count: poolHealth.holdoutCount })}
+                {poolHealth.holdoutCount > 0
+                  ? t('bank.cardHoldoutSub', { count: poolHealth.holdoutCount })
+                  : t('bank.cardAllActiveSub')}
               </div>
             </div>
             <div className="min-w-0 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E] truncate">{t('bank.cardUnseen')}</div>
+              <div className="text-xs text-[#78756E] truncate">
+                {monitoredStudentId === null
+                  ? t('bank.cardCatalogActive')
+                  : monitoredLearner
+                    ? `${t('bank.cardUnseen')} · ${
+                        monitoredLearner.displayName ||
+                        monitoredLearner.email ||
+                        monitoredLearner.uid
+                      }`
+                    : t('bank.cardUnseen')}
+              </div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#113C36] tabular-nums">
-                {poolHealth.unseenLiveCount}
+                {monitoredStudentId === null
+                  ? '—'
+                  : poolHealth.unseenLiveCount}
               </div>
               <div className="text-[11px] text-[#78756E] tabular-nums break-words leading-snug">
                 R {poolHealth.bySectionLive.READ.unseen} · M {poolHealth.bySectionLive.MATH.unseen} · T {poolHealth.bySectionLive.THINK.unseen}
               </div>
             </div>
             <div className="min-w-0 rounded-[12px] bg-white border border-[#E5DFD5] px-3.5 py-2.5">
-              <div className="text-xs text-[#78756E] truncate">{t('bank.cardDone')}</div>
+              <div className="text-xs text-[#78756E] truncate">
+                {monitoredLearner
+                  ? `${t('bank.cardDone')} · ${
+                      monitoredLearner.displayName ||
+                      monitoredLearner.email ||
+                      monitoredLearner.uid
+                    }`
+                  : t('bank.cardDone')}
+              </div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[24px] leading-tight text-[#1F7A4C] tabular-nums">
                 {poolHealth.doneLiveCount}
               </div>
@@ -1371,7 +1422,7 @@ export function QuestionBankStudio({
                           </span>
                         </div>
                         {part.workedExplanation && (
-                          <p className="leading-relaxed break-words">{part.workedExplanation}</p>
+                          <FormattedText text={part.workedExplanation} variant="explanation" className="break-words" />
                         )}
                       </div>
                     ))}

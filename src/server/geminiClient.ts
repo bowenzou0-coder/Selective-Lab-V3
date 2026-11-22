@@ -8,11 +8,11 @@ import { GoogleGenAI } from '@google/genai';
 export const GEMINI_DECISION_MODEL = 'gemini-decision-1';
 
 /**
- * Gemini 4 Hydrogen ('gemini-4-hydrogen'): LLM used alongside gemini-decision-1
- * for the separate writing assessment: rubric scores, coaching feedback, quotes,
- * and priority fixes. It is not used for practice selection decisions.
+ * Gemini 3.5 Flash Lite ('gemini-3.5-flash-lite'): LLM used alongside gemini-decision-1
+ * for text-generation tasks such as writing assessment (rubric scores, inline critique,
+ * and Band A exemplars). It is not used for practice selection decisions.
  */
-export const GEMINI_WRITING_MODEL = 'gemini-4-hydrogen';
+export const GEMINI_WRITING_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_WRITING_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 
 export function getGeminiWritingModel(): string {

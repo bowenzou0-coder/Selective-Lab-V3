@@ -9,6 +9,7 @@ import type {
   StudentQuestionView,
 } from '../../shared/contracts';
 import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../optionLayout';
+import { FormattedText } from './FormattedText';
 import { VisualRenderer } from './VisualRenderer';
 
 type WorkspaceQuestion = StudentQuestionView | (QuestionItem & { stimulus?: StimulusGroup });
@@ -450,7 +451,7 @@ export function ReadingStimulusPane({
       )}
 
       {stim.preamble && (
-        <p className="text-sm italic text-[var(--text-secondary)] bg-[var(--bg-surface)] px-4 py-3 rounded-[var(--radius-sm)] border border-[var(--border-hairline)]">
+        <p className="text-sm italic text-[var(--text-secondary)] bg-[var(--bg-surface)] px-4 py-3 rounded-[var(--radius-sm)] border border-[var(--border-hairline)] whitespace-pre-line">
           {stim.preamble}
         </p>
       )}
@@ -869,9 +870,11 @@ export function ReadingRightAnswerPane({
 
   return (
     <div className="space-y-4">
-      <div className="font-sans-display font-semibold text-[16px] text-[#113C36] leading-snug">
-        {part.promptText}
-      </div>
+      <FormattedText
+        text={part.promptText}
+        variant="prompt"
+        className="!font-sans-display !font-semibold !leading-snug"
+      />
       {shouldUseVisualOptionGrid(part.options) ? (
         <div className="grid grid-cols-2 gap-3" data-testid="reading-visual-options-grid">
           {part.options.map((opt) => {
@@ -1002,7 +1005,7 @@ export function ReadingRightAnswerPane({
                   </span>
                   <div className="flex-1 min-w-0 space-y-2">
                     {opt.text && (
-                      <span className={`block text-sm text-[var(--text-primary)] leading-relaxed ${isElim ? 'line-through' : ''}`}>
+                      <span className={`block text-sm text-[var(--text-primary)] leading-relaxed whitespace-pre-line ${isElim ? 'line-through' : ''}`}>
                         {opt.text}
                       </span>
                     )}

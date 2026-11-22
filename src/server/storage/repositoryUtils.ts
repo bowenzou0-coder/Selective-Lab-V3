@@ -45,7 +45,7 @@ function summarizeBatches(
   const labels = {
     PT1: 'Official Practice Test 1',
     PT2: 'Official Practice Test 2',
-    PT3: 'Official Practice Test 3 (Holdout)',
+    PT3: 'Official Practice Test 3',
     SMOKE: 'Built-in Starter Pack',
     CUSTOM: 'Built-in Starter Pack',
   };

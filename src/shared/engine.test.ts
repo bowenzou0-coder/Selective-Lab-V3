@@ -131,7 +131,7 @@ test('selectPracticeSession never leaks benchmark_holdout into non-benchmark mod
   assert.deepEqual(bench.map((q) => q.questionId), ['q_off_pt3_read_q01_v1']);
 });
 
-test('selectMockTestQuestions returns fixed canonical order and respects PT3 holdout boundary', () => {
+test('selectMockTestQuestions returns fixed canonical order for PT1 and unified or holdout PT3', () => {
   const pt1a: QuestionItem = {
     ...SAMPLE_Q,
     questionId: 'q_off_pt1_math_q02_v1',
@@ -146,19 +146,26 @@ test('selectMockTestQuestions returns fixed canonical order and respects PT3 hol
     section: 'MATH',
     poolType: 'official_calibration',
   };
-  const pt3: QuestionItem = {
+  const pt3Calib: QuestionItem = {
     ...SAMPLE_Q,
     questionId: 'q_off_pt3_math_q01_v1',
     questionFamilyId: 'f3',
     section: 'MATH',
+    poolType: 'official_calibration',
+  };
+  const pt3Holdout: QuestionItem = {
+    ...SAMPLE_Q,
+    questionId: 'q_off_pt3_math_q02_v1',
+    questionFamilyId: 'f4',
+    section: 'MATH',
     poolType: 'benchmark_holdout',
   };
 
-  const pickedPt1 = selectMockTestQuestions({ batch: 'PT1', questions: [pt1a, pt1b, pt3] });
+  const pickedPt1 = selectMockTestQuestions({ batch: 'PT1', questions: [pt1a, pt1b, pt3Calib, pt3Holdout] });
   assert.deepEqual(pickedPt1.map((q) => q.questionId), ['q_off_pt1_math_q01_v1', 'q_off_pt1_math_q02_v1']);
 
-  const pickedPt3 = selectMockTestQuestions({ batch: 'PT3', questions: [pt1a, pt1b, pt3] });
-  assert.deepEqual(pickedPt3.map((q) => q.questionId), ['q_off_pt3_math_q01_v1']);
+  const pickedPt3 = selectMockTestQuestions({ batch: 'PT3', questions: [pt1a, pt1b, pt3Calib, pt3Holdout] });
+  assert.deepEqual(pickedPt3.map((q) => q.questionId), ['q_off_pt3_math_q01_v1', 'q_off_pt3_math_q02_v1']);
 });
 
 test('selectAdminCalibrationQuestions filters by skill, format, pool, and limit', () => {

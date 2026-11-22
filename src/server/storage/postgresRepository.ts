@@ -4,6 +4,7 @@ import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerAccountRecord,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -317,6 +318,48 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     const { rows } = await this.pool.query('SELECT role FROM users WHERE uid = $1', [uid]);
     return rows[0]?.role === 'admin';
+  }
+
+  async listUsers(): Promise<LearnerAccountRecord[]> {
+    await this.ensureSchema();
+    const [usersRes, orphanRes] = await Promise.all([
+      this.pool.query<{
+        uid: string;
+        role: 'student' | 'admin';
+        display_name: string;
+        email: string | null;
+        updated_at: Date | string | null;
+      }>('SELECT uid, role, display_name, email, updated_at FROM users ORDER BY updated_at DESC NULLS LAST'),
+      this.pool.query<{ student_id: string }>(`
+        SELECT DISTINCT student_id FROM (
+          SELECT student_id FROM sessions
+          UNION
+          SELECT student_id FROM question_evidence
+          UNION
+          SELECT student_id FROM question_memory
+        ) AS active_ids
+      `),
+    ]);
+    const byUid = new Map<string, LearnerAccountRecord>();
+    for (const r of usersRes.rows) {
+      byUid.set(r.uid, {
+        uid: r.uid,
+        role: r.role === 'admin' ? 'admin' : 'student',
+        displayName: r.display_name || r.email || r.uid,
+        email: r.email || undefined,
+        updatedAtIso: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+      });
+    }
+    for (const r of orphanRes.rows) {
+      if (r.student_id && !byUid.has(r.student_id)) {
+        byUid.set(r.student_id, {
+          uid: r.student_id,
+          role: 'student',
+          displayName: r.student_id,
+        });
+      }
+    }
+    return Array.from(byUid.values());
   }
 
   async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {

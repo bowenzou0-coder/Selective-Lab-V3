@@ -3,6 +3,7 @@ import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerAccountRecord,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -55,7 +56,10 @@ const DEFAULT_STUDENT_ID = 'default-student';
 export class MemoryRepository implements AppRepository {
   readonly backendName = 'memory_preview' as const;
 
-  private users = new Map<string, { uid: string; role: 'student' | 'admin'; displayName: string; email?: string }>();
+  private users = new Map<
+    string,
+    { uid: string; role: 'student' | 'admin'; displayName: string; email?: string; updatedAtIso?: string }
+  >();
   private admins = new Set<string>();
   private stimuli = new Map<string, StimulusGroup>();
   private questions = new Map<string, QuestionItem>();
@@ -111,12 +115,40 @@ export class MemoryRepository implements AppRepository {
       role,
       displayName: input.displayName || input.email.split('@')[0] || 'Learner',
       email: input.email,
+      updatedAtIso: new Date().toISOString(),
     });
     return { role };
   }
 
   async isUserAdmin(uid: string): Promise<boolean> {
     return this.admins.has(uid) || this.users.get(uid)?.role === 'admin';
+  }
+
+  async listUsers(): Promise<LearnerAccountRecord[]> {
+    const byUid = new Map<string, LearnerAccountRecord>();
+    for (const u of this.users.values()) {
+      byUid.set(u.uid, {
+        uid: u.uid,
+        role: this.admins.has(u.uid) || u.role === 'admin' ? 'admin' : 'student',
+        displayName: u.displayName || u.email || u.uid,
+        email: u.email,
+        updatedAtIso: u.updatedAtIso,
+      });
+    }
+    const extraIds = new Set<string>();
+    for (const s of this.sessions.values()) extraIds.add(s.studentId || DEFAULT_STUDENT_ID);
+    for (const id of this.questionEvidenceByStudent.keys()) extraIds.add(id);
+    for (const id of this.questionMemoryByStudent.keys()) extraIds.add(id);
+    for (const id of extraIds) {
+      if (id && !byUid.has(id)) {
+        byUid.set(id, {
+          uid: id,
+          role: this.admins.has(id) ? 'admin' : 'student',
+          displayName: id,
+        });
+      }
+    }
+    return Array.from(byUid.values());
   }
 
   async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {

@@ -72,7 +72,9 @@ Selective Lab (`optionLayout.ts` + `VisualRenderer.tsx`) activates a compact **2
   - Landscape charts / grids / geometry: `viewBox="0 0 560 320"` to `640 360`
   - Compact figures / scales / 3D blocks: `viewBox="0 0 480 320"` or `480 340`
   - Keep vertical `viewBox` height `<= 420` so stem + diagram + options fit comfortably on a laptop screen.
-- **Raster `image_asset` (if used):** `800×480` to `1200×720` px (landscape) or `720×720` px (square). Never embed huge base64 PNGs inside JSON manifests (Firestore 1 MiB document ceiling).
+- **Raster `image_asset` (if used):**
+  - **Writing image prompts (~50% of Writing tasks when image generation is available; ignore if unsupported by the model):** Landscape 16:9 or 3:2 (`960×540` to `1024×576` px) WebP compressed to `< 95 KB` (`data:image/webp;base64,...`, strictly under 100 KB so manifests validate cleanly). Zero embedded text, signs, letters, or numbers in the artwork; always include both descriptive `altText` and a 1-sentence `caption`.
+  - **Maths / Thinking raster (avoid if inline_svg works):** `800×480` to `1200×720` px (landscape) or `720×720` px (square). Never embed huge >100 KB base64 PNGs inside JSON manifests.
 
 ---
 

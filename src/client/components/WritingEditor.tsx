@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronDown, ChevronRight, AlertCircle } from 'lucide-rea
 import { useI18n } from '../i18n';
 import type { StudentQuestionView } from '../../shared/contracts';
 import { computeWritingMetrics } from '../../shared/engine';
+import { FormattedText } from './FormattedText';
 import { VisualRenderer } from './VisualRenderer';
 
 interface WritingEditorProps {
@@ -17,6 +18,8 @@ export function WritingStimulusPane({ question }: { question: StudentQuestionVie
   const { t } = useI18n();
   const stim = question.stimulus;
   const spec = question.writingSpec;
+  const bodyMarkdown =
+    stim?.mainTextMarkdown?.trim() || question.parts[0]?.promptText?.trim() || '';
 
   return (
     <div className="space-y-5 max-w-[65ch]">
@@ -39,10 +42,8 @@ export function WritingStimulusPane({ question }: { question: StudentQuestionVie
         )}
       </div>
 
-      {stim?.mainTextMarkdown && (
-        <div className="reading-prose text-[#113C36] whitespace-pre-line">
-          {stim.mainTextMarkdown}
-        </div>
+      {bodyMarkdown && (
+        <FormattedText text={bodyMarkdown} variant="prose" />
       )}
 
       {spec?.bulletSuggestions && spec.bulletSuggestions.length > 0 && (

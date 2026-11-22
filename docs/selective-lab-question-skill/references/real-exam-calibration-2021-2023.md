@@ -3,6 +3,8 @@
 Structural, distributional, and craft patterns extracted from the **actual 2021, 2022, and 2023 NSW Selective High School Placement Test (SHSPT)** papers prepared by Cambridge University Press & Assessment for the NSW Department of Education (distinct from the 2022 Sample Test).
 
 > **Authoring rule:** Use these patterns purely for structural fidelity, timing, format coverage, and reasoning authenticity. Never copy, adapt, or echo real exam passages, scenarios, diagrams, or wording.
+>
+> **Locked format & syllabus (No Web Lookup):** The current **2025+ computer-based NSW Selective test format** (Reading 45 min / 5 parts / 17 Qs / 38 slots; Mathematical Reasoning 40 min / 35 Qs A–E; Thinking Skills 40 min / 40 Qs A–D; Writing 30 min / 1 task = **93 Qs total**) and Stage 3 Year 6 Maths scope are already verified and locked in `SKILL.md` — **do NOT run web searches against `education.nsw.gov.au` or `curriculum.nsw.edu.au` (NESA) to re-check them.**
 
 ---
 
@@ -21,7 +23,7 @@ The **current official computer-based NSW Selective Reading test (2025+ via Jani
 ### Reading Calibration Takeaways
 - **Poetry set size:** Target **6 questions** for full exam-style poetry sets (shorter 2–4 question micro-sets only if the user explicitly asks for a quick drill).
 - **Part 1 variety:** Alternate between single literary extracts and **paired `Text A` + `Text B` extracts** (`genreOrTextType: "paired_extracts"`).
-- **Part 3 variety:** Alternate between **removed-sentence gapped texts** and **paragraph-summary matching** (both use `READ_GAPPED_TEXT`, `slotRef: "gap:1"`–`"gap:6"`, 7 extracts A–G with 1 `isDecoy: true`).
+- **Part 4 variety:** Alternate between **removed-sentence gapped texts** and **paragraph-summary matching** (both use `READ_GAPPED_TEXT`, `slotRef: "gap:1"`–`"gap:6"`, 7 extracts A–G with 1 `isDecoy: true`).
 - **Reading distractors:** Use plausible motives, reversed cause/effect, half-true details from the wrong paragraph, or literal readings of figurative language.
 
 ---

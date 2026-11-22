@@ -9,6 +9,7 @@ import type {
   BankImportManifest,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerAccountRecord,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -124,6 +125,7 @@ export interface QuestionQueryResult {
   poolHealth?: PoolHealthSummary;
   masteredLiveQuestionIds?: string[];
   batchSummaries?: BatchDirectorySummary[];
+  monitoredStudentId?: string | null;
 }
 
 export interface QuestionVersionSummary {
@@ -269,6 +271,7 @@ export interface AppRepository {
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }>;
   isUserAdmin(uid: string): Promise<boolean>;
+  listUsers(): Promise<LearnerAccountRecord[]>;
   getProgressCounts?(studentId: string): Promise<ProgressCountsResponse>;
   resetStudentProgress?(studentId: string): Promise<ProgressResetResponse>;
 

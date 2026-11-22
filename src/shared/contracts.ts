@@ -242,6 +242,27 @@ export interface LearningConfig {
   masteryPolicy?: MasteryPolicyConfig;
   autoCalibrate?: AutoCalibrateConfig;
   poolPolicy?: PoolPolicyConfig;
+  primaryMonitoredStudentId?: string;
+}
+
+export interface LearnerAccountRecord {
+  uid: string;
+  role: 'student' | 'admin';
+  displayName: string;
+  email?: string;
+  updatedAtIso?: string;
+}
+
+export interface AdminLearnerSummary extends LearnerAccountRecord {
+  sessionsCount: number;
+  attemptsCount: number;
+  lastActiveAtIso?: string;
+  unseenLiveCount: number;
+  doneLiveCount: number;
+  needsRepairLiveCount: number;
+  inReviewLiveCount: number;
+  unseenLivePercent: number;
+  estimatedRunwayDays: number;
 }
 
 export interface SkillState {
@@ -376,18 +397,31 @@ export interface WritingDeterministicMetrics {
 
 export type WritingBandLetter = 'A' | 'B' | 'C' | 'D' | 'E';
 
-export const WRITING_CRITERION_MAX_MARKS = 5;
-export const WRITING_MAX_TOTAL_MARKS = 30;
+export const WRITING_CRITERION_MAX_MARKS = 4;
+export const WRITING_MAX_TOTAL_MARKS = 20;
+
+export const WRITING_CRITERION_MAX_MARKS_BY_SKILL: Record<string, number> = {
+  'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE': 4,
+  'WRIT.CRIT.IDEAS_CREATIVITY': 4,
+  'WRIT.CRIT.PURPOSE_AUDIENCE_VOICE': 3,
+  'WRIT.CRIT.STRUCTURE_LAYOUT': 3,
+  'WRIT.CRIT.STYLE_VOCABULARY': 3,
+  'WRIT.CRIT.GRAMMAR_SPELLING_PUNCT': 3,
+};
+
+export function getWritingCriterionMaxMarks(skillId: string): number {
+  return WRITING_CRITERION_MAX_MARKS_BY_SKILL[skillId] ?? 3;
+}
 
 export const WRITING_BAND_DESCRIPTORS: Record<
   WritingBandLetter,
   { label: string; minMarks: number; maxMarks: number }
 > = {
-  A: { label: 'Extensive — Top Selective Band', minMarks: 25, maxMarks: 30 },
-  B: { label: 'Thorough — Strong', minMarks: 19, maxMarks: 24 },
-  C: { label: 'Sound — Solid', minMarks: 13, maxMarks: 18 },
-  D: { label: 'Basic — Developing', minMarks: 7, maxMarks: 12 },
-  E: { label: 'Elementary — Emerging', minMarks: 0, maxMarks: 6 },
+  A: { label: 'Extensive — Top Selective Band', minMarks: 17, maxMarks: 20 },
+  B: { label: 'Thorough — Strong', minMarks: 13, maxMarks: 16 },
+  C: { label: 'Sound — Solid', minMarks: 9, maxMarks: 12 },
+  D: { label: 'Basic — Developing', minMarks: 5, maxMarks: 8 },
+  E: { label: 'Elementary — Emerging', minMarks: 0, maxMarks: 4 },
 };
 
 export interface WritingCriterionScore {
@@ -399,6 +433,30 @@ export interface WritingCriterionScore {
   comment: string;
 }
 
+export interface WritingTextAnnotation {
+  id: string;
+  kind: 'strength' | 'issue' | 'suggestion';
+  quote: string;
+  tag: string;
+  comment: string;
+  rewrite?: string;
+  criterionSkillId?: string;
+}
+
+export interface WritingExemplarAnnotation {
+  id: string;
+  quote: string;
+  tag: string;
+  explanation: string;
+}
+
+export interface WritingExemplarResponse {
+  title?: string;
+  text: string;
+  keyTakeaway?: string;
+  annotations: WritingExemplarAnnotation[];
+}
+
 export interface WritingEvaluationRecord {
   evaluationId: string;
   submissionId: string;
@@ -408,12 +466,15 @@ export interface WritingEvaluationRecord {
   overallBandEstimate: 'developing' | 'solid' | 'strong' | 'top_band';
   overallBand?: WritingBandLetter;
   overallBandDescriptor?: string;
+  overallVerdict?: string;
   totalMarks?: number;
   maxTotalMarks?: number;
   bandCappedByTopicAdherence?: boolean;
   criteriaScores: WritingCriterionScore[];
   topStrengths: string[];
   priorityFixes: string[];
+  annotations?: WritingTextAnnotation[];
+  exemplar?: WritingExemplarResponse;
   createdAt: string;
 }
 
@@ -494,6 +555,8 @@ export interface SessionSubmissionPayload {
     questionId: string;
     metrics: WritingDeterministicMetrics;
     evaluations: WritingEvaluationRecord[];
+    responseText?: string;
+    planNotes?: string;
   }[];
 }
 

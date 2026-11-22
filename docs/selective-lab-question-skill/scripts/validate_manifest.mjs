@@ -131,7 +131,7 @@ function checkVisual(visual, location, isOptionTile, errors, warnings) {
     if (!visual.imageUrl || typeof visual.imageUrl !== 'string') {
       errors.push(`${location}: image_asset missing imageUrl.`);
     } else if (visual.imageUrl.startsWith('data:') && visual.imageUrl.length > 100_000) {
-      warnings.push(`${location}: large data URI (${Math.round(visual.imageUrl.length / 1024)} KB) risks Firestore 1 MiB ceiling; prefer inline_svg.`);
+      warnings.push(`${location}: large data URI (${Math.round(visual.imageUrl.length / 1024)} KB) exceeds 95 KB target; compress WebP < 95 KB or prefer inline_svg.`);
     }
   }
 }
@@ -296,7 +296,7 @@ export function validateManifestObject(raw) {
       errors.push(`${qLoc}: stimulusId "${q.stimulusId}" does not resolve inside manifest.stimuli.`);
     }
     if (
-      ['READ_FICTION_MCQ', 'READ_POETRY_MCQ', 'READ_VOCAB_CLOZE', 'READ_GAPPED_TEXT', 'READ_MULTIPLE_MATCH'].includes(
+      ['READ_FICTION_MCQ', 'READ_POETRY_MCQ', 'READ_VOCAB_CLOZE', 'READ_GAPPED_TEXT', 'READ_MULTIPLE_MATCH', 'WRIT_TYPED_TASK'].includes(
         q.formatType
       ) &&
       !q.stimulusId
@@ -316,6 +316,24 @@ export function validateManifestObject(raw) {
 
     // Format-level checks
     if (q.formatType === 'WRIT_TYPED_TASK') {
+      if (stim) {
+        const titleTrim = typeof stim.title === 'string' ? stim.title.trim() : '';
+        if (!titleTrim || titleTrim.toLowerCase() === 'writing task') {
+          errors.push(`${qLoc}: WRIT_TYPED_TASK stimulus "${stim.stimulusId}" requires a non-empty, descriptive title.`);
+        }
+        if (typeof stim.mainTextMarkdown !== 'string' || !stim.mainTextMarkdown.trim()) {
+          errors.push(`${qLoc}: WRIT_TYPED_TASK stimulus "${stim.stimulusId}" requires non-empty mainTextMarkdown.`);
+        }
+        const attachedVisual =
+          stim.visual && stim.visual.visualType !== 'none'
+            ? stim.visual
+            : q.visual && q.visual.visualType !== 'none'
+              ? q.visual
+              : null;
+        if (attachedVisual && (typeof attachedVisual.caption !== 'string' || !attachedVisual.caption.trim())) {
+          errors.push(`${qLoc}: WRIT_TYPED_TASK visual requires a non-empty caption.`);
+        }
+      }
       if (!q.writingSpec) {
         errors.push(`${qLoc}: WRIT_TYPED_TASK requires writingSpec.`);
       } else {
@@ -371,6 +389,61 @@ export function validateManifestObject(raw) {
       }
       if (typeof p.promptText !== 'string' || !p.promptText.trim()) {
         errors.push(`${pLoc}: missing non-empty promptText.`);
+      } else {
+        if (p.promptText.includes('\\n')) {
+          errors.push(`${pLoc}: promptText contains literal "\\\\n" (double-escaped newline); use real line breaks.`);
+        }
+        if (/[^\s\n][ \t]+•\s/.test(p.promptText)) {
+          errors.push(`${pLoc}: promptText contains an inline bullet mid-line; put each bullet on its own line.`);
+        }
+        if (/(?:^|\n)[^\n]*?[ \t]1\.\s+[^\n]*?[ \t]2\.\s+/.test(p.promptText)) {
+          errors.push(`${pLoc}: promptText contains an inline numbered list on one line; put each item on its own line.`);
+        }
+        if (/\*\*[^*\n]+\*\*/.test(p.promptText)) {
+          warnings.push(`${pLoc}: promptText contains raw "**bold**" Markdown; use plain text or ALL-CAPS emphasis.`);
+        }
+        const ptLines = p.promptText.split('\n');
+        const isBul = (l) => /^\s*•\s/.test(l);
+        const isNum = (l) => /^\s*\d+\.\s/.test(l);
+        const isLbl = (l) => /^\s*(?:Statement|Rule|Clue|Condition|Step)\s+\d+:\s/.test(l);
+        let warnedListSpacing = false;
+        for (let li = 0; li < ptLines.length - 1; li++) {
+          const cur = ptLines[li];
+          const nxt = ptLines[li + 1];
+          if (!cur.trim() || !nxt.trim()) continue;
+          if (!warnedListSpacing && (isBul(cur) !== isBul(nxt) || isNum(cur) !== isNum(nxt) || isLbl(cur) !== isLbl(nxt))) {
+            warnings.push(`${pLoc}: list or labelled statement block in promptText should be separated from prose by blank lines (\\n\\n).`);
+            warnedListSpacing = true;
+          }
+        }
+        if ((q.section === 'MATH' || q.section === 'THINK') && !p.promptText.includes('\n') && p.promptText.length > 260) {
+          const sentCount = p.promptText.split(/(?<=[.!?])\s+(?=[A-Z"“])/).filter(Boolean).length;
+          if (sentCount >= 3) {
+            warnings.push(`${pLoc}: MATH/THINK promptText is a single unbroken paragraph (${p.promptText.length} chars); add \\n\\n breaks for readability.`);
+          }
+        }
+        if (
+          q.section === 'THINK' &&
+          pIdx === 0 &&
+          (/information in the box/i.test(p.promptText) || /whose reasoning is correct/i.test(p.promptText)) &&
+          (!q.stemPrefix || !String(q.stemPrefix).trim())
+        ) {
+          warnings.push(`${qLoc}: Thinking Skills boxed-reasoning question should place boxed rules in stemPrefix.`);
+        }
+      }
+      if (pIdx === 0 && typeof q.stemPrefix === 'string' && q.stemPrefix.trim()) {
+        if (q.stemPrefix.includes('\\n')) {
+          errors.push(`${qLoc}: stemPrefix contains literal "\\\\n" (double-escaped newline); use real line breaks.`);
+        }
+        if (/[^\s\n][ \t]+•\s/.test(q.stemPrefix)) {
+          errors.push(`${qLoc}: stemPrefix contains an inline bullet mid-line; put each bullet on its own line.`);
+        }
+        if (/(?:^|\n)[^\n]*?[ \t]1\.\s+[^\n]*?[ \t]2\.\s+/.test(q.stemPrefix)) {
+          errors.push(`${qLoc}: stemPrefix contains an inline numbered list on one line; put each item on its own line.`);
+        }
+        if (/\*\*[^*\n]+\*\*/.test(q.stemPrefix)) {
+          warnings.push(`${qLoc}: stemPrefix contains raw "**bold**" Markdown; use plain text or ALL-CAPS emphasis.`);
+        }
       }
       if (!p.skillId || !VALID_SKILLS.has(p.skillId)) {
         errors.push(`${pLoc}: unknown canonical skillId "${String(p.skillId)}".`);
@@ -521,6 +594,12 @@ export function validateManifestObject(raw) {
       } else {
         if (p.workedExplanation.includes('\\n')) {
           errors.push(`${pLoc}: workedExplanation contains literal "\\\\n" (double-escaped newline); use real line breaks in the string.`);
+        }
+        if (/[^\s\n][ \t]+•\s/.test(p.workedExplanation)) {
+          errors.push(`${pLoc}: workedExplanation contains an inline bullet mid-line; put each bullet on its own line.`);
+        }
+        if (/\*\*[^*\n]+\*\*/.test(p.workedExplanation)) {
+          warnings.push(`${pLoc}: workedExplanation contains raw "**bold**" Markdown; use plain text or ALL-CAPS emphasis.`);
         }
         if (q.formatType !== 'WRIT_TYPED_TASK' && p.workedExplanation.trim().length < 60) {
           warnings.push(`${pLoc}: workedExplanation is very short (${p.workedExplanation.trim().length} chars); ensure full Year 6 reasoning.`);

@@ -3,7 +3,7 @@ import { useI18n } from '../i18n';
 import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
 import { api, type ProgressResponse } from '../api';
 import {
-  WRITING_CRITERION_MAX_MARKS,
+  WRITING_MAX_TOTAL_MARKS,
   type SectionCode,
   type WritingBandLetter,
   type WritingEvaluationRecord,
@@ -154,11 +154,16 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
                 {t('prog.eligibleBankSuffix')}
               </div>
               <div className="text-[11px] text-[#78756E]">
-                {t('prog.separateMeta', {
-                  holdout: ms.excludedHoldoutCount,
-                  writing: ms.excludedWritingCount,
-                  inactive: ms.excludedInactiveCount,
-                })}
+                {ms.excludedHoldoutCount > 0
+                  ? t('prog.separateMeta', {
+                      holdout: ms.excludedHoldoutCount,
+                      writing: ms.excludedWritingCount,
+                      inactive: ms.excludedInactiveCount,
+                    })
+                  : t('prog.separateMetaNoHoldout', {
+                      writing: ms.excludedWritingCount,
+                      inactive: ms.excludedInactiveCount,
+                    })}
               </div>
             </div>
           </div>
@@ -263,22 +268,30 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
           </div>
 
           {/* Separate Excluded Benchmark / Writing / Legacy Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-            <div className="p-4 rounded-[12px] border border-[#E5DFD5] bg-white space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-sans-display font-semibold text-[#113C36]">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#1D6346] shrink-0" />
-                <span>{t('prog.pt3BenchmarkTitle')}</span>
+          <div
+            className={`grid grid-cols-1 ${
+              ms.excludedHoldoutCount > 0 || ms.holdoutSummary.attemptedQuestions > 0
+                ? 'md:grid-cols-3'
+                : 'md:grid-cols-2'
+            } gap-4 pt-1`}
+          >
+            {(ms.excludedHoldoutCount > 0 || ms.holdoutSummary.attemptedQuestions > 0) && (
+              <div className="p-4 rounded-[12px] border border-[#E5DFD5] bg-white space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-sans-display font-semibold text-[#113C36]">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#1D6346] shrink-0" />
+                  <span>{t('prog.pt3BenchmarkTitle')}</span>
+                </div>
+                <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
+                  {ms.holdoutSummary.accuracyDisplay}
+                </div>
+                <div className="text-xs text-[#78756E] tabular-nums">
+                  {t('prog.pt3BenchmarkSub', {
+                    attempted: ms.holdoutSummary.attemptedQuestions,
+                    total: ms.holdoutSummary.totalQuestions,
+                  })}
+                </div>
               </div>
-              <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
-                {ms.holdoutSummary.accuracyDisplay}
-              </div>
-              <div className="text-xs text-[#78756E] tabular-nums">
-                {t('prog.pt3BenchmarkSub', {
-                  attempted: ms.holdoutSummary.attemptedQuestions,
-                  total: ms.holdoutSummary.totalQuestions,
-                })}
-              </div>
-            </div>
+            )}
 
             <div className="p-4 rounded-[12px] border border-[#E5DFD5] bg-white space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-sans-display font-semibold text-[#113C36]">
@@ -442,7 +455,7 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
                 ? latestEval.totalMarks ?? latestEval.criteriaScores.reduce((sum, c) => sum + Math.round(c.score), 0)
                 : null;
               const evalMax = latestEval
-                ? latestEval.maxTotalMarks ?? latestEval.criteriaScores.length * WRITING_CRITERION_MAX_MARKS
+                ? latestEval.maxTotalMarks ?? WRITING_MAX_TOTAL_MARKS
                 : null;
               return (
                 <div

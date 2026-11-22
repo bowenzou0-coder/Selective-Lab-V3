@@ -50,10 +50,16 @@ import {
   type QuestionQueryParams,
   type SyncHydratePayload,
 } from './src/server/storage/repository.ts';
-import { deriveQuestionProgressMeta } from './src/shared/bankStatus.ts';
+import {
+  computePoolHealth,
+  deriveQuestionProgressMeta,
+} from './src/shared/bankStatus.ts';
+import { selectLatestByFamily } from './src/server/storage/repositoryUtils.ts';
 import {
   DEFAULT_LEARNING_CONFIG,
+  type AdminLearnerSummary,
   type BankImportManifest,
+  type LearnerAccountRecord,
   type LearningConfig,
   type MarkingResult,
   type MockTestBatch,
@@ -341,6 +347,8 @@ async function finalizeSessionRecord(input: {
     questionId: string;
     metrics: WritingDeterministicMetrics;
     evaluations: WritingEvaluationRecord[];
+    responseText?: string;
+    planNotes?: string;
   }[] = [];
 
   let totalObjectiveSlots = 0;
@@ -392,6 +400,8 @@ async function finalizeSessionRecord(input: {
         questionId: question.questionId,
         metrics,
         evaluations: [],
+        responseText,
+        planNotes,
       });
       continue;
     }
@@ -565,6 +575,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const repo = options.repo ?? createRepository();
   const { backendName } = repo;
   let seedPromise: Promise<void> | null = null;
+  const inFlightWritingEvaluations = new Map<string, Promise<WritingEvaluationRecord>>();
 
   async function ensureSeeded(): Promise<void> {
     if (options.skipSeed) return;
@@ -1018,14 +1029,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         const batchLabel = selected[0]?.batchLabel || batchId;
         title = `${batchLabel}${sectionFilter ? ` (${sectionFilter})` : ''}`;
       } else if (mockBatch) {
-        if (mockBatch === 'PT3') {
-          effectiveMode = 'benchmark_exam';
-        }
         selected = selectMockTestQuestions({
           batch: mockBatch,
           sectionFilter,
           questions: allQuestions,
         });
+        if (mockBatch === 'PT3') {
+          effectiveMode = selected.some((q) => q.poolType === 'benchmark_holdout')
+            ? 'benchmark_exam'
+            : 'section_drill';
+        }
         const baseSec = getOfficialTimeLimitSec(sectionFilter);
         if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)) {
           timeLimitSec = Math.max(0, Math.round(customTimeLimitSec));
@@ -1214,6 +1227,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
             questionId: string;
             metrics: WritingDeterministicMetrics;
             evaluations: WritingEvaluationRecord[];
+            responseText?: string;
+            planNotes?: string;
+            evaluatingInProgress?: boolean;
           }[]
         | undefined;
 
@@ -1240,9 +1256,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
             questionId: s.questionId,
             metrics: JSON.parse(s.deterministicMetricsJson) as WritingDeterministicMetrics,
             evaluations: s.evaluations,
+            responseText: s.responseText,
+            planNotes: s.planNotes,
+            evaluatingInProgress: inFlightWritingEvaluations.has(s.submissionId),
           }));
         } else if (session.submissionSummary?.writingReview) {
-          writingReview = session.submissionSummary.writingReview;
+          writingReview = session.submissionSummary.writingReview.map((wr) => ({
+            ...wr,
+            responseText:
+              wr.responseText ?? session.checkpoint?.writingDraft?.responseText ?? '',
+            planNotes:
+              wr.planNotes ?? session.checkpoint?.writingDraft?.planNotes ?? '',
+            evaluatingInProgress: inFlightWritingEvaluations.has(wr.submissionId),
+          }));
         }
       }
 
@@ -1455,16 +1481,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           res.status(404).json({ error: 'Question not found.' });
           return;
         }
-        const metrics = JSON.parse(sub.deterministicMetricsJson) as WritingDeterministicMetrics;
-        const evaluation = await evaluateWritingWithGemini({
-          submissionId: sub.submissionId,
-          question: pair.question,
-          stimulus: pair.stimulus,
-          planNotes: sub.planNotes,
-          responseText: sub.responseText,
-          metrics,
-        });
-        await repo.saveWritingEvaluation(evaluation, studentId);
+        let evalPromise = inFlightWritingEvaluations.get(sub.submissionId);
+        if (!evalPromise) {
+          const metrics = JSON.parse(sub.deterministicMetricsJson) as WritingDeterministicMetrics;
+          evalPromise = (async () => {
+            const evaluation = await evaluateWritingWithGemini({
+              submissionId: sub.submissionId,
+              question: pair.question,
+              stimulus: pair.stimulus,
+              planNotes: sub.planNotes,
+              responseText: sub.responseText,
+              metrics,
+            });
+            await repo.saveWritingEvaluation(evaluation, studentId);
+            return evaluation;
+          })().finally(() => {
+            inFlightWritingEvaluations.delete(sub.submissionId);
+          });
+          inFlightWritingEvaluations.set(sub.submissionId, evalPromise);
+        }
+        const evaluation = await evalPromise;
         const updated = await repo.getWritingSubmission(sub.submissionId, studentId);
         res.json({ evaluation, evaluations: updated?.evaluations || [evaluation] });
       } catch (err) {
@@ -1706,7 +1742,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         res.status(501).json({ error: 'Study progress counts are unavailable for this repository.' });
         return;
       }
-      res.json(await repo.getProgressCounts(req.auth!.studentId));
+      const requestedId = req.query.studentId ? String(req.query.studentId).trim() : '';
+      const targetStudentId = requestedId && requestedId !== 'none' ? requestedId : req.auth!.studentId;
+      const counts = await repo.getProgressCounts(targetStudentId);
+      res.json({ ...counts, studentId: targetStudentId });
     } catch (err) {
       console.error('GET /api/admin/study-progress error:', err);
       res.status(500).json({ error: 'Unable to load study progress counts.' });
@@ -1720,17 +1759,208 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         res.status(501).json({ error: 'Study progress reset is unavailable for this repository.' });
         return;
       }
-      res.json(await repo.resetStudentProgress(req.auth!.studentId));
+      const requestedId = typeof req.body?.studentId === 'string' ? req.body.studentId.trim() : '';
+      const targetStudentId = requestedId && requestedId !== 'none' ? requestedId : req.auth!.studentId;
+      const result = await repo.resetStudentProgress(targetStudentId);
+      res.json({ ...result, studentId: targetStudentId });
     } catch (err) {
       console.error('POST /api/admin/study-progress/reset error:', err);
       res.status(500).json({ error: 'Unable to reset study progress.' });
     }
   });
 
+  async function resolveDefaultMonitoredStudentId(
+    config: LearningConfig,
+    users?: LearnerAccountRecord[]
+  ): Promise<string | null> {
+    const allUsers = users ?? (await repo.listUsers());
+    if (
+      config.primaryMonitoredStudentId &&
+      allUsers.some((u) => u.uid === config.primaryMonitoredStudentId)
+    ) {
+      return config.primaryMonitoredStudentId;
+    }
+    const studentUsers = allUsers.filter((u) => u.role === 'student');
+    if (studentUsers.length === 0) return null;
+    if (studentUsers.length === 1) return studentUsers[0].uid;
+
+    const activity = await Promise.all(
+      studentUsers.map(async (u) => {
+        const attempts = await repo.listPartAttempts(5000, u.uid, false);
+        let latestMs = Date.parse(u.updatedAtIso || '') || 0;
+        for (const a of attempts) {
+          const ts = Date.parse(a.createdAt) || 0;
+          if (ts > latestMs) latestMs = ts;
+        }
+        return { uid: u.uid, attemptsCount: attempts.length, latestMs };
+      })
+    );
+    activity.sort((a, b) => {
+      if (b.attemptsCount !== a.attemptsCount) return b.attemptsCount - a.attemptsCount;
+      return b.latestMs - a.latestMs;
+    });
+    return activity[0].uid;
+  }
+
+  app.get('/api/admin/learners', requireAdmin, async (_req, res) => {
+    try {
+      await ensureSeeded();
+      const [users, allQuestions, configData] = await Promise.all([
+        repo.listUsers(),
+        repo.listQuestions(),
+        repo.getActiveConfig(),
+      ]);
+      const latestQuestions = selectLatestByFamily(allQuestions);
+      const dailyLimits = configData.config.sessionDefaults.dailyQuestionLimitBySection;
+      const dailyQuestionTarget = Math.max(
+        1,
+        (dailyLimits.READ || 0) + (dailyLimits.MATH || 0) + (dailyLimits.THINK || 0)
+      );
+      const baseHealth = computePoolHealth({
+        questions: latestQuestions,
+        evidenceMap: {},
+        questionMemory: {},
+        dailyQuestionTarget,
+      });
+
+      const summaries: AdminLearnerSummary[] = await Promise.all(
+        users.map(async (u) => {
+          const [sessions, attempts, evidenceMap, questionMemory] = await Promise.all([
+            repo.listSessions(500, u.uid, false),
+            repo.listPartAttempts(5000, u.uid, false),
+            repo.getQuestionEvidence(u.uid),
+            repo.getQuestionMemory(u.uid),
+          ]);
+          const health = computePoolHealth({
+            questions: latestQuestions,
+            evidenceMap,
+            questionMemory,
+            dailyQuestionTarget,
+          });
+          let latestMs = Date.parse(u.updatedAtIso || '') || 0;
+          for (const s of sessions) {
+            const ts = Date.parse(s.completedAt || s.startedAt) || 0;
+            if (ts > latestMs) latestMs = ts;
+          }
+          for (const a of attempts) {
+            const ts = Date.parse(a.createdAt) || 0;
+            if (ts > latestMs) latestMs = ts;
+          }
+          return {
+            ...u,
+            sessionsCount: sessions.length,
+            attemptsCount: attempts.length,
+            lastActiveAtIso: latestMs > 0 ? new Date(latestMs).toISOString() : undefined,
+            unseenLiveCount: health.unseenLiveCount,
+            doneLiveCount: health.doneLiveCount,
+            needsRepairLiveCount: health.needsRepairLiveCount,
+            inReviewLiveCount: health.inReviewLiveCount,
+            unseenLivePercent: health.unseenLivePercent,
+            estimatedRunwayDays: health.estimatedRunwayDays,
+          };
+        })
+      );
+
+      const primaryId = configData.config.primaryMonitoredStudentId || null;
+      summaries.sort((a, b) => {
+        if (primaryId) {
+          if (a.uid === primaryId && b.uid !== primaryId) return -1;
+          if (b.uid === primaryId && a.uid !== primaryId) return 1;
+        }
+        if (a.role !== b.role) return a.role === 'student' ? -1 : 1;
+        if (b.attemptsCount !== a.attemptsCount) return b.attemptsCount - a.attemptsCount;
+        const ta = Date.parse(a.lastActiveAtIso || a.updatedAtIso || '') || 0;
+        const tb = Date.parse(b.lastActiveAtIso || b.updatedAtIso || '') || 0;
+        if (tb !== ta) return tb - ta;
+        return a.displayName.localeCompare(b.displayName);
+      });
+
+      const defaultMonitoredStudentId = await resolveDefaultMonitoredStudentId(configData.config, users);
+      res.json({
+        learners: summaries,
+        primaryMonitoredStudentId:
+          primaryId && users.some((u) => u.uid === primaryId) ? primaryId : null,
+        defaultMonitoredStudentId,
+        totalLiveQuestions: baseHealth.liveCount,
+      });
+    } catch (err) {
+      console.error('GET /api/admin/learners error:', err);
+      res.status(500).json({ error: 'Unable to load learner accounts.' });
+    }
+  });
+
+  app.post('/api/admin/learners/primary', requireAdmin, async (req, res) => {
+    try {
+      await ensureSeeded();
+      const rawId = req.body?.studentId;
+      if (rawId !== null && (typeof rawId !== 'string' || !rawId.trim() || rawId.trim().length > 255)) {
+        res.status(400).json({ error: 'Provide a valid studentId string or null.' });
+        return;
+      }
+      const targetId = rawId === null ? null : rawId.trim();
+      if (targetId !== null) {
+        const users = await repo.listUsers();
+        if (!users.some((u) => u.uid === targetId)) {
+          res.status(404).json({ error: 'Learner account not found.' });
+          return;
+        }
+      }
+      const configData = await repo.getActiveConfig();
+      const nextConfig: LearningConfig = {
+        ...configData.config,
+        primaryMonitoredStudentId: targetId || undefined,
+      };
+      await repo.saveConfigVersion(
+        nextConfig,
+        targetId ? `Pinned primary monitored learner: ${targetId}` : 'Cleared primary monitored learner'
+      );
+      res.json({ ok: true, primaryMonitoredStudentId: targetId });
+    } catch (err) {
+      console.error('POST /api/admin/learners/primary error:', err);
+      res.status(500).json({ error: 'Unable to update primary monitored learner.' });
+    }
+  });
+
+  app.get('/api/admin/daily-plan', requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ensureSeeded();
+      const requestedId = req.query.studentId ? String(req.query.studentId).trim() : '';
+      if (requestedId === 'none') {
+        res.json({ studentId: null, plan: null });
+        return;
+      }
+      const configData = await repo.getActiveConfig();
+      const targetStudentId =
+        requestedId ||
+        (await resolveDefaultMonitoredStudentId(configData.config)) ||
+        req.auth!.studentId;
+      const [questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
+        repo.listQuestions({ qcStatus: 'active' }),
+        repo.getSkillStates(targetStudentId),
+        repo.getQuestionEvidence(targetStudentId),
+        repo.getQuestionMemory(targetStudentId),
+      ]);
+      const { plan } = await getOrCreateDailyFocusPlan({
+        repo,
+        studentId: targetStudentId,
+        skillStates,
+        evidenceMap,
+        questionMemory,
+        questions,
+        config: configData.config,
+      });
+      res.json({ studentId: targetStudentId, plan });
+    } catch (err) {
+      console.error('GET /api/admin/daily-plan error:', err);
+      res.status(500).json({ error: 'Unable to load daily focus plan.' });
+    }
+  });
+
   app.post('/api/admin/recalibrate-daily-plan', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const studentId = req.auth!.studentId;
+      const requestedId = typeof req.body?.studentId === 'string' ? req.body.studentId.trim() : '';
+      const studentId = requestedId && requestedId !== 'none' ? requestedId : req.auth!.studentId;
       const [configData, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
         repo.getActiveConfig(),
         repo.listQuestions({ qcStatus: 'active' }),
@@ -1751,7 +1981,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         },
       });
       await repo.saveDailyFocusPlan(studentId, result.plan);
-      res.json(result);
+      res.json({ ...result, studentId });
     } catch (err) {
       console.error('POST /api/admin/recalibrate-daily-plan error:', err);
       res.status(500).json({ error: 'Unable to recalibrate the daily focus plan.' });
@@ -1811,12 +2041,20 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.get('/api/admin/questions', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ensureSeeded();
-      const studentId = req.auth!.studentId;
-      const [evidence, memory, { config }] = await Promise.all([
-        repo.getQuestionEvidence(studentId),
-        repo.getQuestionMemory(studentId),
-        repo.getActiveConfig(),
-      ]);
+      const { config } = await repo.getActiveConfig();
+      const requestedStudentId = req.query.studentId ? String(req.query.studentId).trim() : undefined;
+      const monitoredStudentId =
+        requestedStudentId === 'none'
+          ? null
+          : requestedStudentId || (await resolveDefaultMonitoredStudentId(config));
+
+      const [evidence, memory] = monitoredStudentId
+        ? await Promise.all([
+            repo.getQuestionEvidence(monitoredStudentId),
+            repo.getQuestionMemory(monitoredStudentId),
+          ])
+        : [{}, {}];
+
       const dailyLimits = config.sessionDefaults.dailyQuestionLimitBySection;
       const dailyQuestionTarget = Math.max(1, (dailyLimits.READ || 0) + (dailyLimits.MATH || 0) + (dailyLimits.THINK || 0));
       const result = await repo.listQuestionsPaginated({
@@ -1839,7 +2077,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         page: req.query.page ? Number(req.query.page) : 1,
         pageSize: req.query.pageSize ? Number(req.query.pageSize) : 50,
       });
-      res.json(result);
+      res.json({ ...result, monitoredStudentId });
     } catch (err) {
       console.error('GET /api/admin/questions error:', err);
       res.status(500).json({ error: 'Failed to load admin questions.' });

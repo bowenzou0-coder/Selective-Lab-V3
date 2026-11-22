@@ -11,6 +11,7 @@ import type {
   VisualSpec,
 } from '../../shared/contracts';
 import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../optionLayout';
+import { FormattedText } from './FormattedText';
 import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
 import { VisualRenderer } from './VisualRenderer';
 import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
@@ -197,9 +198,7 @@ export function QuestionWorkspace({
             )}
 
             {primaryExplanation && (
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed whitespace-pre-line">
-                {primaryExplanation}
-              </p>
+              <FormattedText text={primaryExplanation} variant="explanation" />
             )}
 
             {mode === 'review' && primaryRes?.distractorRationale && (
@@ -294,7 +293,7 @@ export function QuestionWorkspace({
                       </div>
                     )}
                     {explanation && (
-                      <p className="text-[var(--text-secondary)] whitespace-pre-line">{explanation}</p>
+                      <FormattedText text={explanation} variant="explanation" />
                     )}
                     {res?.distractorRationale && (
                       <p className="text-[var(--status-warn)] whitespace-pre-line">
@@ -427,14 +426,12 @@ export function QuestionWorkspace({
           {!isReading && !isWriting && (
             <div className="space-y-5 max-w-[65ch]">
               {question.stemPrefix && (
-                <p className="text-[15px] text-[#113C36] leading-relaxed bg-[#FAF8F5] p-4 rounded-[12px] border border-[#E5DFD5]">
-                  {question.stemPrefix}
-                </p>
+                <div className="bg-[#FAF8F5] p-4 rounded-[12px] border border-[#E5DFD5]">
+                  <FormattedText text={question.stemPrefix} variant="boxedRules" />
+                </div>
               )}
               {activePart && (
-                <div className="text-[16px] font-medium text-[#113C36] leading-[1.65]">
-                  {activePart.promptText}
-                </div>
+                <FormattedText text={activePart.promptText} variant="prompt" />
               )}
               <VisualRenderer visual={question.visual} />
             </div>
@@ -686,7 +683,7 @@ export function QuestionWorkspace({
                             <div className="flex-1 min-w-0 space-y-2">
                               {opt.text && (
                                 <div
-                                  className={`text-[14px] font-medium text-[#113C36] ${
+                                  className={`text-[14px] font-medium text-[#113C36] whitespace-pre-line ${
                                     elim ? 'line-through text-[#78756E]' : ''
                                   }`}
                                 >

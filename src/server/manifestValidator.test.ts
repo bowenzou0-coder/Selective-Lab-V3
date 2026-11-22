@@ -162,3 +162,89 @@ test('validateAndDryRunManifest rejects object or empty workedExplanation on non
     'Line 1: Add the integers.\nLine 2: Result is 4.'
   );
 });
+
+test('validateAndDryRunManifest warns on WRIT_TYPED_TASK missing stimulus/caption and passes cleanly when complete', () => {
+  const missingStimPayload = {
+    manifestVersion: '1.0',
+    batchLabel: 'writ_warn_test',
+    questions: [
+      {
+        questionId: 'q_writ_no_stim_v1',
+        section: 'WRIT',
+        formatType: 'WRIT_TYPED_TASK',
+        writingSpec: {
+          genre: 'narrative',
+          audience: 'Readers your age',
+          purpose: 'Tell a story',
+          recommendedWordRange: [250, 480],
+          timeLimitSec: 1800,
+        },
+        parts: [
+          {
+            partId: 'q_writ_no_stim_p1',
+            partIndex: 0,
+            promptText: 'Write a story about a missing key.',
+            skillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE',
+            options: [],
+            correctAnswerKey: '',
+          },
+        ],
+      },
+    ],
+  };
+
+  const warnRes = validateAndDryRunManifest(missingStimPayload, []);
+  assert.equal(warnRes.report.valid, true, warnRes.report.errors.join('; '));
+  assert.ok(warnRes.report.warnings.some((w) => w.includes('has no stimulusId')));
+
+  const completePayload = {
+    manifestVersion: '1.0',
+    batchLabel: 'writ_complete_test',
+    stimuli: [
+      {
+        stimulusId: 's_writ_complete_v1',
+        stimulusFamilyId: 's_writ_complete',
+        version: 1,
+        section: 'WRIT',
+        genreOrTextType: 'diary_entry',
+        title: 'The Greenhouse on Platform 4',
+        mainTextMarkdown: 'Sunlight pours onto an unexpected glasshouse beside the disused railway platform.',
+        visual: {
+          visualType: 'image_asset',
+          imageUrl: 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=',
+          altText: 'A small timber-and-glass greenhouse on a sunlit railway platform',
+          caption: 'A timber-and-glass greenhouse stands quietly beside Platform 4.',
+        },
+      },
+    ],
+    questions: [
+      {
+        questionId: 'q_writ_complete_v1',
+        section: 'WRIT',
+        formatType: 'WRIT_TYPED_TASK',
+        stimulusId: 's_writ_complete_v1',
+        writingSpec: {
+          genre: 'diary_entry',
+          audience: 'Your future self',
+          purpose: 'Reflect on a surprising discovery',
+          recommendedWordRange: [250, 480],
+          timeLimitSec: 1800,
+        },
+        parts: [
+          {
+            partId: 'q_writ_complete_p1',
+            partIndex: 0,
+            promptText: 'Write your diary entry after discovering the greenhouse.',
+            skillId: 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE',
+            options: [],
+            correctAnswerKey: '',
+          },
+        ],
+      },
+    ],
+  };
+
+  const okRes = validateAndDryRunManifest(completePayload, []);
+  assert.equal(okRes.report.valid, true, okRes.report.errors.join('; '));
+  assert.deepEqual(okRes.report.warnings, []);
+});

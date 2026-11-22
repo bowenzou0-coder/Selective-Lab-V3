@@ -1,4 +1,5 @@
 import type {
+  AdminLearnerSummary,
   BankImportManifest,
   BankMasterySummary,
   DailyFocusPlan,
@@ -20,6 +21,7 @@ import type {
   WritingDeterministicMetrics,
   WritingEvaluationRecord,
 } from '../shared/contracts';
+export type { AdminLearnerSummary };
 import type {
   BankPoolStatus,
   BatchDirectorySummary,
@@ -93,6 +95,9 @@ export interface SessionDetailResponse {
     questionId: string;
     metrics: WritingDeterministicMetrics;
     evaluations: WritingEvaluationRecord[];
+    responseText?: string;
+    planNotes?: string;
+    evaluatingInProgress?: boolean;
   }[];
 }
 
@@ -146,6 +151,13 @@ import type { RuntimeDiagnostics as RuntimeDiagnosticsResponse } from '../server
 
 export type { BatchDirectorySummary } from '../shared/bankStatus';
 
+export interface AdminLearnersResponse {
+  learners: AdminLearnerSummary[];
+  primaryMonitoredStudentId: string | null;
+  defaultMonitoredStudentId: string | null;
+  totalLiveQuestions: number;
+}
+
 export interface PaginatedQuestionsResponse {
   questions: QuestionItem[];
   stimuliById: Record<string, StimulusGroup>;
@@ -158,6 +170,7 @@ export interface PaginatedQuestionsResponse {
   poolHealth?: PoolHealthSummary;
   masteredLiveQuestionIds?: string[];
   batchSummaries?: BatchDirectorySummary[];
+  monitoredStudentId?: string | null;
 }
 
 export interface ProgressCountsResponse {
@@ -386,6 +399,7 @@ export const api = {
   getAdminDiagnostics: () =>
     request<RuntimeDiagnosticsResponse>('/api/admin/diagnostics'),
   getAdminQuestions: (params?: {
+    studentId?: string;
     search?: string;
     section?: string;
     poolType?: string;
@@ -405,6 +419,7 @@ export const api = {
     pageSize?: number;
   }) => {
     const qs = new URLSearchParams();
+    if (params?.studentId) qs.set('studentId', params.studentId);
     if (params?.search) qs.set('search', params.search);
     if (params?.section) qs.set('section', params.section);
     if (params?.poolType) qs.set('poolType', params.poolType);
@@ -424,6 +439,17 @@ export const api = {
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return request<PaginatedQuestionsResponse>(`/api/admin/questions${suffix}`);
+  },
+  getAdminLearners: () =>
+    request<AdminLearnersResponse>('/api/admin/learners'),
+  setPrimaryMonitoredLearner: (studentId: string | null) =>
+    request<{ ok: boolean; primaryMonitoredStudentId: string | null }>('/api/admin/learners/primary', {
+      method: 'POST',
+      body: JSON.stringify({ studentId }),
+    }),
+  getAdminDailyPlan: (studentId?: string) => {
+    const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
+    return request<{ studentId: string | null; plan: DailyFocusPlan | null }>(`/api/admin/daily-plan${suffix}`);
   },
   getQuestionVersions: (questionId: string) =>
     request<{
@@ -451,14 +477,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ questionIds }),
     }),
-  recalibrateDailyPlan: (configOverride?: LearningConfig) =>
-    request<{ plan: DailyFocusPlan; error?: string }>('/api/admin/recalibrate-daily-plan', {
+  recalibrateDailyPlan: (configOverride?: LearningConfig, studentId?: string) =>
+    request<{ plan: DailyFocusPlan; studentId?: string; error?: string }>('/api/admin/recalibrate-daily-plan', {
       method: 'POST',
-      body: JSON.stringify({ config: configOverride }),
+      body: JSON.stringify({ config: configOverride, studentId }),
     }),
-  getProgressCounts: () => request<ProgressCountsResponse>('/api/admin/study-progress'),
-  resetStudentProgress: () =>
-    request<ProgressResetResponse>('/api/admin/study-progress/reset', { method: 'POST' }),
+  getProgressCounts: (studentId?: string) => {
+    const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
+    return request<ProgressCountsResponse & { studentId?: string }>(`/api/admin/study-progress${suffix}`);
+  },
+  resetStudentProgress: (studentId?: string) =>
+    request<ProgressResetResponse & { studentId?: string }>('/api/admin/study-progress/reset', {
+      method: 'POST',
+      body: JSON.stringify({ studentId }),
+    }),
   attachQuestionVisual: (
     questionId: string,
     payload: { altText: string; caption?: string; imageBase64?: string; filename?: string; visual?: VisualSpec }
