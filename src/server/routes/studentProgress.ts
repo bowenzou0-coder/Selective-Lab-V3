@@ -5,6 +5,9 @@ import { GeminiServiceError } from '../geminiClient.ts';
 import { evaluateWritingWithGemini } from '../geminiWriting.ts';
 import type { QuestionFlagRecord, WritingDeterministicMetrics } from '../../shared/contracts.ts';
 import { SKILLS_TAXONOMY } from '../../shared/skills.ts';
+import { buildBenchmarkReportRecord } from '../../shared/nswBenchmark.ts';
+import { gradeSubmission } from '../../shared/engine.ts';
+import { resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
 import type { AppContext } from '../context.ts';
 
 
@@ -28,7 +31,17 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
           return;
         }
 
-        const pair = await repo.getQuestionWithStimulus(sub.questionId);
+        let pair: { question: import('../../shared/contracts.ts').QuestionItem; stimulus?: import('../../shared/contracts.ts').StimulusGroup } | null = null;
+        if (sub.sessionId) {
+          const snapshots = await repo.getSessionSnapshots(studentId, sub.sessionId);
+          const snap = snapshots.find((s) => s.questionId === sub.questionId);
+          if (snap) {
+            pair = { question: snap.question, stimulus: snap.stimulus };
+          }
+        }
+        if (!pair) {
+          pair = await repo.getQuestionWithStimulus(sub.questionId);
+        }
         if (!pair) {
           res.status(404).json({ error: 'Question not found.' });
           return;
@@ -54,6 +67,44 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         }
         const evaluation = await evalPromise;
         const updated = await repo.getWritingSubmission(sub.submissionId, studentId);
+
+        // If this writing submission belongs to a benchmark exam, refresh its saved official report
+        if (sub.sessionId) {
+          try {
+            const session = await repo.getSession(sub.sessionId, studentId);
+            if (session && session.status === 'submitted' && !session.isSandbox && session.mode === 'benchmark_exam') {
+              const { pairs } = await resolveSessionQuestionPairs(repo, session);
+              const reviewResults = session.submissionSummary?.reviewResults || (() => {
+                const out: Record<string, import('../../shared/contracts.ts').MarkingResult[]> = {};
+                const answers = session.checkpoint?.answersByPartId ?? {};
+                for (const p of pairs) {
+                  out[p.question.questionId] =
+                    p.question.formatType === 'WRIT_TYPED_TASK'
+                      ? []
+                      : gradeSubmission(p.question, answers).results;
+                }
+                return out;
+              })();
+              const refreshedReport = buildBenchmarkReportRecord({
+                session,
+                questions: pairs.map((p) => p.question),
+                reviewResults,
+                writingReview: [
+                  {
+                    submissionId: sub.submissionId,
+                    evaluations: updated?.evaluations || [evaluation],
+                  },
+                ],
+                // Clear stale pre-grading AI narrative so it regenerates with the graded essay
+                existingAiCoaching: undefined,
+              });
+              await repo.saveBenchmarkReport(refreshedReport);
+            }
+          } catch (reportErr) {
+            console.error('Failed to update benchmark report after writing grade:', reportErr);
+          }
+        }
+
         res.json({ evaluation, evaluations: updated?.evaluations || [evaluation] });
       } catch (err) {
         console.error('POST /api/student/writing/:submissionId/evaluate error:', err);

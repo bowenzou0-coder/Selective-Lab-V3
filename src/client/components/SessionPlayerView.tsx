@@ -104,6 +104,9 @@ export function SessionPlayerView({
     planNotes: '',
     responseText: '',
   });
+  const [writingDraftsByQuestionId, setWritingDraftsByQuestionId] = useState<
+    Record<string, { planNotes: string; responseText: string }>
+  >({});
 
   // Concurrency + recoverable unsent draft UI state
   const checkpointRevisionRef = useRef<number>(1);
@@ -157,6 +160,7 @@ export function SessionPlayerView({
     eliminatedOptionsByPartId: {},
     passageHighlightsByStimulusId: {},
     writingDraft: { planNotes: '', responseText: '' },
+    writingDraftsByQuestionId: {},
   });
 
   const applyCheckpointToState = useCallback(
@@ -168,6 +172,7 @@ export function SessionPlayerView({
       setEliminatedByPartId(cp.eliminatedOptionsByPartId || {});
       setHighlightsByStimulusId(cp.passageHighlightsByStimulusId || {});
       setWritingDraft(cp.writingDraft || { planNotes: '', responseText: '' });
+      setWritingDraftsByQuestionId(cp.writingDraftsByQuestionId || {});
       checkpointRef.current = cp;
     },
     [clock]
@@ -182,6 +187,7 @@ export function SessionPlayerView({
       eliminatedOptionsByPartId: eliminatedByPartId,
       passageHighlightsByStimulusId: highlightsByStimulusId,
       writingDraft,
+      writingDraftsByQuestionId,
     };
   }, [
     currentIndex,
@@ -191,6 +197,7 @@ export function SessionPlayerView({
     eliminatedByPartId,
     highlightsByStimulusId,
     writingDraft,
+    writingDraftsByQuestionId,
   ]);
 
   // Load authoritative session from server
@@ -280,11 +287,18 @@ export function SessionPlayerView({
         if (res.session.status === 'in_progress') {
           const localDraft = readLocalDraft(draftStorageKey);
           if (localDraft) {
-            const serverAnswers = JSON.stringify(cp?.answersByPartId || {});
-            const localAnswers = JSON.stringify(localDraft.checkpoint.answersByPartId || {});
-            const serverWriting = cp?.writingDraft?.responseText || '';
-            const localWriting = localDraft.checkpoint.writingDraft?.responseText || '';
-            if (serverAnswers !== localAnswers || serverWriting !== localWriting) {
+            const normCp = (c?: SessionCheckpoint) =>
+              JSON.stringify({
+                currentIndex: c?.currentIndex ?? 0,
+                answersByPartId: c?.answersByPartId || {},
+                flaggedQuestionIds: [...(c?.flaggedQuestionIds || [])].sort(),
+                eliminatedOptionsByPartId: c?.eliminatedOptionsByPartId || {},
+                passageHighlightsByStimulusId: c?.passageHighlightsByStimulusId || {},
+                planNotes: c?.writingDraft?.planNotes || '',
+                responseText: c?.writingDraft?.responseText || '',
+                writingDraftsByQuestionId: c?.writingDraftsByQuestionId || {},
+              });
+            if (normCp(cp) !== normCp(localDraft.checkpoint)) {
               setRecoverableDraft(localDraft);
               setSaveStatus('unsent');
             } else {
@@ -369,57 +383,67 @@ export function SessionPlayerView({
 
   const currentQuestion = questions[currentIndex];
 
-  const markLocalDirty = useCallback(() => {
-    dirtyRef.current = true;
-    saveQueueRef.current?.markDirty();
-    setSaveStatus('unsent');
-    writeLocalDraft(draftStorageKey, { ...checkpointRef.current, elapsedSec: clock.getElapsedSec() });
-  }, [draftStorageKey, clock]);
-
-  const handleSelectAnswer = useCallback(
-    (partId: string, key: string | null) => {
+  const persistDraftPatch = useCallback(
+    (patch: Partial<SessionCheckpoint>) => {
       dirtyRef.current = true;
       saveQueueRef.current?.markDirty();
       setSaveStatus('unsent');
+      const nextCp: SessionCheckpoint = {
+        ...checkpointRef.current,
+        ...patch,
+        elapsedSec: clock.getElapsedSec(),
+      };
+      checkpointRef.current = nextCp;
+      writeLocalDraft(draftStorageKey, nextCp);
+    },
+    [draftStorageKey, clock]
+  );
+
+  const handleSelectAnswer = useCallback(
+    (partId: string, key: string | null) => {
       setAnswersByPartId((prev) => {
         const next = { ...prev, [partId]: key };
-        writeLocalDraft(draftStorageKey, { ...checkpointRef.current, answersByPartId: next });
+        persistDraftPatch({ answersByPartId: next });
         return next;
       });
     },
-    [draftStorageKey]
+    [persistDraftPatch]
   );
 
   const handleToggleEliminate = useCallback(
     (partId: string, key: string) => {
-      markLocalDirty();
       setEliminatedByPartId((prev) => {
         const list = prev[partId] || [];
-        const next = list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
-        return { ...prev, [partId]: next };
+        const nextList = list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+        const next = { ...prev, [partId]: nextList };
+        persistDraftPatch({ eliminatedOptionsByPartId: next });
+        return next;
       });
     },
-    [markLocalDirty]
+    [persistDraftPatch]
   );
 
   const handleToggleFlag = useCallback(
     (questionId: string) => {
-      markLocalDirty();
-      setFlaggedQuestionIds((prev) =>
-        prev.includes(questionId) ? prev.filter((id) => id !== questionId) : [...prev, questionId]
-      );
+      setFlaggedQuestionIds((prev) => {
+        const next = prev.includes(questionId)
+          ? prev.filter((id) => id !== questionId)
+          : [...prev, questionId];
+        persistDraftPatch({ flaggedQuestionIds: next });
+        return next;
+      });
     },
-    [markLocalDirty]
+    [persistDraftPatch]
   );
 
   const handleGoIndex = useCallback(
     (nextIdx: number) => {
       const bounded = Math.max(0, Math.min(questions.length - 1, nextIdx));
-      markLocalDirty();
+      persistDraftPatch({ currentIndex: bounded });
       setCurrentIndex(bounded);
       setActiveGapIndex(0);
     },
-    [questions.length, markLocalDirty]
+    [questions.length, persistDraftPatch]
   );
 
   const isLockedStudentSession = Boolean(
@@ -556,10 +580,16 @@ export function SessionPlayerView({
     setSubmitting(true);
     setError('');
     try {
-      const res = await api.submitSession(session.sessionId, {
-        ...checkpointRef.current,
-        elapsedSec: clock.getElapsedSec(),
-      });
+      const expectedRev = saveQueueRef.current?.getRevision() ?? checkpointRevisionRef.current;
+      const res = await api.submitSession(
+        session.sessionId,
+        {
+          ...checkpointRef.current,
+          elapsedSec: clock.getElapsedSec(),
+        },
+        false,
+        session.isSandbox ? undefined : expectedRev
+      );
       clearLocalDraft(draftStorageKey);
       setSession((prev) =>
         prev
@@ -576,7 +606,17 @@ export function SessionPlayerView({
       setWritingReview(res.writingReview);
       onActiveSessionClearedRef.current?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('session.unableSubmit'));
+      const apiErr = err as { status?: number; currentRevision?: number; serverCheckpoint?: SessionCheckpoint };
+      if (apiErr.status === 409 && typeof apiErr.currentRevision === 'number' && apiErr.serverCheckpoint) {
+        setConflictState({
+          currentRevision: apiErr.currentRevision,
+          serverCheckpoint: apiErr.serverCheckpoint,
+        });
+        setSaveStatus('conflict');
+        setError('');
+      } else {
+        setError(err instanceof Error ? err.message : t('session.unableSubmit'));
+      }
       if (isTimeUp) {
         window.setTimeout(() => {
           autoSubmittedRef.current = false;
@@ -668,6 +708,8 @@ export function SessionPlayerView({
     return (
       <PostSubmissionReview
         sessionId={session.sessionId}
+        sessionTitle={session.title}
+        sessionMode={session.mode}
         correctSlots={session.correctSlots}
         totalSlots={session.totalSlots}
         elapsedSec={clock.getElapsedSec()}
@@ -676,6 +718,7 @@ export function SessionPlayerView({
         writingReview={writingReview}
         onDoneHome={() => onNavigate('/')}
         onViewProgress={() => onNavigate('/progress')}
+        onViewBenchmarks={() => onNavigate('/benchmarks')}
       />
     );
   }
@@ -977,24 +1020,46 @@ export function SessionPlayerView({
         onSelectAnswer={handleSelectAnswer}
         onToggleEliminate={handleToggleEliminate}
         onAddHighlight={(text) => {
-          markLocalDirty();
-          setHighlightsByStimulusId((prev) => ({
-            ...prev,
-            [currentStimId]: Array.from(new Set([...(prev[currentStimId] || []), text])),
-          }));
+          setHighlightsByStimulusId((prev) => {
+            const next = {
+              ...prev,
+              [currentStimId]: Array.from(new Set([...(prev[currentStimId] || []), text])),
+            };
+            persistDraftPatch({ passageHighlightsByStimulusId: next });
+            return next;
+          });
         }}
         onClearHighlights={() => {
-          markLocalDirty();
-          setHighlightsByStimulusId((prev) => ({ ...prev, [currentStimId]: [] }));
+          setHighlightsByStimulusId((prev) => {
+            const next = { ...prev, [currentStimId]: [] };
+            persistDraftPatch({ passageHighlightsByStimulusId: next });
+            return next;
+          });
         }}
-        writingDraft={writingDraft}
+        writingDraft={
+          writingDraftsByQuestionId[currentQuestion.questionId] ?? writingDraft
+        }
         onChangeWritingPlan={(val) => {
-          markLocalDirty();
-          setWritingDraft((prev) => ({ ...prev, planNotes: val }));
+          const qid = currentQuestion.questionId;
+          setWritingDraftsByQuestionId((prev) => {
+            const cur = prev[qid] ?? writingDraft;
+            const updatedEntry = { ...cur, planNotes: val };
+            const nextMap = { ...prev, [qid]: updatedEntry };
+            setWritingDraft(updatedEntry);
+            persistDraftPatch({ writingDraft: updatedEntry, writingDraftsByQuestionId: nextMap });
+            return nextMap;
+          });
         }}
         onChangeWritingResponse={(val) => {
-          markLocalDirty();
-          setWritingDraft((prev) => ({ ...prev, responseText: val }));
+          const qid = currentQuestion.questionId;
+          setWritingDraftsByQuestionId((prev) => {
+            const cur = prev[qid] ?? writingDraft;
+            const updatedEntry = { ...cur, responseText: val };
+            const nextMap = { ...prev, [qid]: updatedEntry };
+            setWritingDraft(updatedEntry);
+            persistDraftPatch({ writingDraft: updatedEntry, writingDraftsByQuestionId: nextMap });
+            return nextMap;
+          });
         }}
         footerNav={
           <div className="pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-3">

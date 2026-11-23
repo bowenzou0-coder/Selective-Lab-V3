@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
 import { api, type ProgressResponse } from '../api';
+import { OFFICIAL_SECTION_MAX_MARKS } from '../../shared/nswBenchmark';
+import { NswBenchmarkEstimator } from './NswBenchmarkEstimator';
 import {
   WRITING_MAX_TOTAL_MARKS,
   type SectionCode,
@@ -36,7 +38,7 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
         if (active) setData(res);
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : t('prog.loadError'));
+        if (active) setError(err instanceof Error ? err.message : 'Unable to load progress.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -44,7 +46,7 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
     return () => {
       active = false;
     };
-  }, [t]);
+  }, []);
 
   const filteredSkills = useMemo(() => {
     if (!data) return [];
@@ -64,6 +66,50 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
     }
     return Array.from(map.entries());
   }, [filteredSkills]);
+
+  const benchmarkSeed = useMemo(() => {
+    if (!data) return null;
+    const projectSection = (sec: 'READ' | 'MATH' | 'THINK') => {
+      const st = data.sectionStats[sec];
+      const maxScore = OFFICIAL_SECTION_MAX_MARKS[sec];
+      if (st.attempts > 0) {
+        return {
+          score: Math.round((st.correct / st.attempts) * maxScore),
+          maxScore,
+          source: 'actual' as const,
+        };
+      }
+      return { score: Math.round(maxScore * 0.78), maxScore, source: 'assumed' as const };
+    };
+    const readP = projectSection('READ');
+    const mathP = projectSection('MATH');
+    const thinkP = projectSection('THINK');
+    const latestGradedWriting = data.writingSubmissions.find((w) => w.evaluations.length > 0)?.evaluations[0];
+    const writMax = latestGradedWriting?.maxTotalMarks ?? OFFICIAL_SECTION_MAX_MARKS.WRIT;
+    const writScore = latestGradedWriting
+      ? latestGradedWriting.totalMarks ??
+        latestGradedWriting.criteriaScores.reduce((sum, c) => sum + Math.round(c.score), 0)
+      : 15;
+    const writSource = latestGradedWriting ? ('actual' as const) : ('assumed' as const);
+    const actualCount = [readP.source, mathP.source, thinkP.source, writSource].filter(
+      (s) => s === 'actual'
+    ).length;
+    return {
+      scores: {
+        read: { score: readP.score, maxScore: readP.maxScore },
+        math: { score: mathP.score, maxScore: mathP.maxScore },
+        think: { score: thinkP.score, maxScore: thinkP.maxScore },
+        writ: { score: Math.min(writMax, Math.max(0, Math.round(writScore))), maxScore: writMax },
+      },
+      sectionSources: {
+        READ: readP.source,
+        MATH: mathP.source,
+        THINK: thinkP.source,
+        WRIT: writSource,
+      },
+      actualCount,
+    };
+  }, [data]);
 
   if (loading) {
     return (
@@ -323,6 +369,22 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
             </div>
           </div>
         </section>
+      )}
+
+      {/* NSW Selective School Benchmark & Cutoff Estimator */}
+      {benchmarkSeed && (
+        <NswBenchmarkEstimator
+          initialScores={benchmarkSeed.scores}
+          sectionSources={benchmarkSeed.sectionSources}
+          initialDifficulty="selective_lab_timed"
+          sourceNote={
+            benchmarkSeed.actualCount === 4
+              ? t('bench.seededFromProgress')
+              : benchmarkSeed.actualCount > 0
+                ? t('bench.seededPartial', { count: benchmarkSeed.actualCount })
+                : t('bench.seededDefault')
+          }
+        />
       )}
 
       {/* Section Accuracy & Pace vs Target */}

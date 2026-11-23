@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import type {
   BankImportManifest,
+  BenchmarkReportRecord,
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
@@ -98,7 +99,7 @@ type ManifestImportResult = Awaited<ReturnType<AppRepository['importManifest']>>
 const schemaReadyByPool = new WeakMap<Pool, Promise<void>>();
 const bankCacheByPool = new WeakMap<Pool, QuestionBankCache>();
 // Bump with the newest object created by runSchemaInit so cold starts skip the DDL transaction.
-const SCHEMA_MARKER = 'sessions_student_status_idx';
+const SCHEMA_MARKER = 'benchmark_reports_student_completed_idx';
 
 function manifestBatchId(manifest: object): string {
   const canonical = JSON.stringify(manifest, (key, value: unknown) => {
@@ -295,6 +296,12 @@ export class PostgresRepository implements AppRepository {
         data JSONB NOT NULL,
         PRIMARY KEY (student_id, plan_date)
       );
+      CREATE TABLE IF NOT EXISTS benchmark_reports (
+        session_id TEXT PRIMARY KEY,
+        student_id TEXT NOT NULL DEFAULT 'default-student',
+        completed_at TIMESTAMPTZ NOT NULL,
+        data JSONB NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS questions_family_version_idx ON questions (question_family_id, version DESC);
       CREATE INDEX IF NOT EXISTS sessions_student_started_idx ON sessions (student_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS part_attempts_student_created_idx ON part_attempts (student_id, created_at DESC);
@@ -305,6 +312,7 @@ export class PostgresRepository implements AppRepository {
       CREATE INDEX IF NOT EXISTS questions_batch_idx ON questions ((data->>'batchId'));
       CREATE INDEX IF NOT EXISTS question_flags_status_idx ON question_flags (status);
       CREATE INDEX IF NOT EXISTS sessions_student_status_idx ON sessions (student_id, status, is_sandbox, started_at DESC);
+      CREATE INDEX IF NOT EXISTS benchmark_reports_student_completed_idx ON benchmark_reports (student_id, completed_at DESC);
     `;
     try {
       const ready = await this.pool.query<{ ready: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ready', [SCHEMA_MARKER]);
@@ -437,6 +445,7 @@ export class PostgresRepository implements AppRepository {
         WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [studentId]);
       const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [studentId]);
       const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [studentId]);
+      await client.query('DELETE FROM benchmark_reports WHERE student_id = $1', [studentId]);
       const bank = await client.query<{ count: number }>('SELECT count(DISTINCT question_family_id)::int AS count FROM questions');
       return {
         ok: true,
@@ -1293,68 +1302,104 @@ export class PostgresRepository implements AppRepository {
           submissionSummary: existing.submissionSummary,
         };
       }
+      const currentRev = existing.checkpointRevision ?? 1;
+      if (input.expectedRevision !== undefined && input.expectedRevision !== currentRev) {
+        throw new RevisionConflictError(
+          `Session checkpoint revision mismatch (expected ${input.expectedRevision}, current ${currentRev}).`,
+          currentRev,
+          existing.checkpoint || {
+            currentIndex: 0,
+            elapsedSec: 0,
+            answersByPartId: {},
+            flaggedQuestionIds: [],
+          }
+        );
+      }
 
-      for (const a of input.attempts) {
+      if (input.attempts.length > 0) {
         await client.query(
           `INSERT INTO part_attempts (attempt_id, student_id, session_id, question_id, part_id, skill_id, is_correct, is_sandbox, data, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           SELECT * FROM unnest(
+             $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
+             $6::text[], $7::boolean[], $8::boolean[], $9::jsonb[], $10::timestamptz[]
+           )
            ON CONFLICT (attempt_id) DO NOTHING`,
           [
-            a.attemptId,
-            input.studentId,
-            a.sessionId,
-            a.questionId,
-            a.partId,
-            a.skillId,
-            a.isCorrect,
-            Boolean(a.isSandbox),
-            JSON.stringify({ ...a, studentId: input.studentId }),
-            a.createdAt,
+            input.attempts.map((a) => a.attemptId),
+            input.attempts.map(() => input.studentId),
+            input.attempts.map((a) => a.sessionId),
+            input.attempts.map((a) => a.questionId),
+            input.attempts.map((a) => a.partId),
+            input.attempts.map((a) => a.skillId),
+            input.attempts.map((a) => a.isCorrect),
+            input.attempts.map((a) => Boolean(a.isSandbox)),
+            input.attempts.map((a) => JSON.stringify({ ...a, studentId: input.studentId })),
+            input.attempts.map((a) => a.createdAt),
           ]
         );
       }
 
-      for (const s of input.skillStates) {
+      if (input.skillStates.length > 0) {
         await client.query(
-          `INSERT INTO skill_states (student_id, skill_id, data) VALUES ($1, $2, $3)
+          `INSERT INTO skill_states (student_id, skill_id, data)
+           SELECT $1, skill_id, data
+           FROM unnest($2::text[], $3::jsonb[]) AS t(skill_id, data)
            ON CONFLICT (student_id, skill_id) DO UPDATE SET data = EXCLUDED.data`,
-          [input.studentId, s.skillId, JSON.stringify(s)]
+          [
+            input.studentId,
+            input.skillStates.map((s) => s.skillId),
+            input.skillStates.map((s) => JSON.stringify(s)),
+          ]
         );
       }
 
-      for (const m of input.questionMemory) {
+      if (input.questionMemory.length > 0) {
         await client.query(
-          `INSERT INTO question_memory (student_id, question_family_id, data) VALUES ($1, $2, $3)
+          `INSERT INTO question_memory (student_id, question_family_id, data)
+           SELECT $1, question_family_id, data
+           FROM unnest($2::text[], $3::jsonb[]) AS t(question_family_id, data)
            ON CONFLICT (student_id, question_family_id) DO UPDATE SET data = EXCLUDED.data`,
-          [input.studentId, m.questionFamilyId, JSON.stringify(m)]
+          [
+            input.studentId,
+            input.questionMemory.map((m) => m.questionFamilyId),
+            input.questionMemory.map((m) => JSON.stringify(m)),
+          ]
         );
       }
 
-      for (const ev of input.evidenceUpdates) {
+      if (input.evidenceUpdates.length > 0) {
         await client.query(
-          `INSERT INTO question_evidence (student_id, evidence_key, data) VALUES ($1, $2, $3)
+          `INSERT INTO question_evidence (student_id, evidence_key, data)
+           SELECT $1, evidence_key, data
+           FROM unnest($2::text[], $3::jsonb[]) AS t(evidence_key, data)
            ON CONFLICT (student_id, evidence_key) DO UPDATE SET data = EXCLUDED.data`,
-          [input.studentId, ev.evidenceKey, JSON.stringify(ev)]
+          [
+            input.studentId,
+            input.evidenceUpdates.map((ev) => ev.evidenceKey),
+            input.evidenceUpdates.map((ev) => JSON.stringify(ev)),
+          ]
         );
       }
 
-      for (const sub of input.writingSubmissions) {
+      if (input.writingSubmissions.length > 0) {
         await client.query(
           `INSERT INTO writing_submissions (submission_id, student_id, session_id, question_id, data, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
+           SELECT * FROM unnest(
+             $1::text[], $2::text[], $3::text[], $4::text[], $5::jsonb[], $6::timestamptz[]
+           )
            ON CONFLICT (submission_id) DO NOTHING`,
           [
-            sub.submissionId,
-            input.studentId,
-            sub.sessionId,
-            sub.questionId,
-            JSON.stringify({ ...sub, studentId: input.studentId }),
-            sub.submittedAt,
+            input.writingSubmissions.map((sub) => sub.submissionId),
+            input.writingSubmissions.map(() => input.studentId),
+            input.writingSubmissions.map((sub) => sub.sessionId),
+            input.writingSubmissions.map((sub) => sub.questionId),
+            input.writingSubmissions.map((sub) => JSON.stringify({ ...sub, studentId: input.studentId })),
+            input.writingSubmissions.map((sub) => sub.submittedAt),
           ]
         );
       }
 
-      const nextRev = (existing.checkpointRevision ?? 1) + 1;
+      const nextRev = currentRev + 1;
       const updatedSession: SessionRecord = {
         ...existing,
         status: 'submitted',
@@ -1734,5 +1779,36 @@ export class PostgresRepository implements AppRepository {
        ON CONFLICT (student_id, plan_date) DO UPDATE SET data = EXCLUDED.data`,
       [sid, plan.planDate, JSON.stringify(plan)]
     );
+  }
+
+  async saveBenchmarkReport(report: BenchmarkReportRecord): Promise<void> {
+    await this.ensureSchema();
+    const sid = report.studentId || DEFAULT_STUDENT_ID;
+    await this.pool.query(
+      `INSERT INTO benchmark_reports (session_id, student_id, completed_at, data)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (session_id) DO UPDATE SET completed_at = EXCLUDED.completed_at, data = EXCLUDED.data`,
+      [report.sessionId, sid, report.completedAtIso, JSON.stringify({ ...report, studentId: sid })]
+    );
+  }
+
+  async getBenchmarkReport(sessionId: string, studentId?: string): Promise<BenchmarkReportRecord | null> {
+    await this.ensureSchema();
+    const { rows } = studentId
+      ? await this.pool.query('SELECT data FROM benchmark_reports WHERE session_id = $1 AND student_id = $2', [
+          sessionId,
+          studentId,
+        ])
+      : await this.pool.query('SELECT data FROM benchmark_reports WHERE session_id = $1', [sessionId]);
+    return rows.length ? (rows[0].data as BenchmarkReportRecord) : null;
+  }
+
+  async listBenchmarkReports(studentId: string, limit = 50): Promise<BenchmarkReportRecord[]> {
+    await this.ensureSchema();
+    const { rows } = await this.pool.query(
+      `SELECT data FROM benchmark_reports WHERE student_id = $1 ORDER BY completed_at DESC LIMIT $2`,
+      [studentId || DEFAULT_STUDENT_ID, limit]
+    );
+    return rows.map((r) => r.data as BenchmarkReportRecord);
   }
 }

@@ -2,6 +2,7 @@ import type {
   AdminLearnerSummary,
   BankImportManifest,
   BankMasterySummary,
+  BenchmarkReportRecord,
   DailyFocusPlan,
   ImportBatchRecord,
   LearningConfig,
@@ -79,6 +80,7 @@ export interface DashboardResponse {
   poolCounts?: Record<SectionCode, { live: number; unseen: number }>;
   batchCounts: Record<MockTestBatch, Record<SectionCode, number>>;
   customBatches?: CustomBatchOption[];
+  benchmarkBatches?: CustomBatchOption[];
   activeSession: SessionRecord | null;
   recentSessions: SessionRecord[];
   dailyFocusPlan?: DailyFocusPlan;
@@ -99,6 +101,11 @@ export interface SessionDetailResponse {
     planNotes?: string;
     evaluatingInProgress?: boolean;
   }[];
+}
+
+export interface BenchmarkHubResponse {
+  benchmarkBatches: CustomBatchOption[];
+  reports: BenchmarkReportRecord[];
 }
 
 export interface ProgressResponse {
@@ -333,6 +340,18 @@ export const api = {
 
   getDashboard: () =>
     request<DashboardResponse>('/api/student/dashboard'),
+  getBenchmarks: () =>
+    request<BenchmarkHubResponse>('/api/student/benchmarks'),
+  getBenchmarkReport: (sessionId: string) =>
+    request<{ report: BenchmarkReportRecord }>(`/api/student/benchmarks/${encodeURIComponent(sessionId)}`),
+  analyzeBenchmarkReport: (sessionId: string, force = false) =>
+    request<{ report: BenchmarkReportRecord }>(
+      `/api/student/benchmarks/${encodeURIComponent(sessionId)}/analyze`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ force }),
+      }
+    ),
   createSession: (payload: {
     mode: SessionMode;
     sectionFilter?: SectionCode;
@@ -370,13 +389,14 @@ export const api = {
   submitSession: (
     id: string,
     checkpoint?: SessionRecord['checkpoint'],
-    assisted?: boolean
+    assisted?: boolean,
+    expectedRevision?: number
   ) =>
     request<SessionSubmissionPayload & { alreadySubmitted?: boolean }>(
       `/api/student/sessions/${encodeURIComponent(id)}/submit`,
       {
         method: 'POST',
-        body: JSON.stringify({ checkpoint, assisted }),
+        body: JSON.stringify({ checkpoint, assisted, expectedRevision }),
       }
     ),
   evaluateWriting: (submissionId: string) =>

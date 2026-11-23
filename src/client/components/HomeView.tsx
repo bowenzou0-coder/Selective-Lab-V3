@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, Clock, Play, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Award, Clock, Play, RotateCcw } from 'lucide-react';
 import { api, type DashboardResponse } from '../api';
 import { getLocalizedSectionMixParts, useI18n, type MessageKey } from '../i18n';
 import type { MockTestBatch, SectionCode, SessionMode } from '../../shared/contracts';
@@ -59,7 +59,8 @@ interface PendingLaunchSpec {
 
 function getOfficialSectionMinutes(scope: 'ALL' | SectionCode): number {
   if (scope === 'WRIT') return 30;
-  if (scope === 'ALL') return 150;
+  if (scope === 'READ') return 45;
+  if (scope === 'ALL') return 155;
   return 40;
 }
 
@@ -97,13 +98,13 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
     THINK: 10,
   });
 
-  // Mock Test Simulator controls (Fresh Pool Mock is default!)
+  // Mock Test Simulator controls (Fresh Pool Mock is default; Official Benchmarks live on /benchmarks)
   const [mockMode, setMockMode] = useState<'pool' | 'batch'>('pool');
   const [mockScope, setMockScope] = useState<'ALL' | SectionCode>('MATH');
   const [poolMockCount, setPoolMockCount] = useState<string>('20');
   const [selectedPaperKey, setSelectedPaperKey] = useState<string>('PT1');
   const [paperSearch, setPaperSearch] = useState('');
-  const [timerPreset, setTimerPreset] = useState<'1.0' | '0.75' | '1.25' | '1.5' | 'custom' | '0'>('1.0');
+  const [timerPreset, setTimerPreset] = useState<'1.0' | '0.75' | '1.25' | '1.5' | 'custom'>('1.0');
   const [customMinutes, setCustomMinutes] = useState('40');
 
   useEffect(() => {
@@ -126,7 +127,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         }
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : t('home.unableLoadDash'));
+        if (active) setError(err instanceof Error ? err.message : 'Unable to load dashboard.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -134,7 +135,19 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
     return () => {
       active = false;
     };
-  }, [onOpenSession, t]);
+  }, [onOpenSession]);
+
+  // Dismiss Ready modal on Escape
+  useEffect(() => {
+    if (!pendingLaunch) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !launching) {
+        setPendingLaunch(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingLaunch, launching]);
 
   const launch = async (
     key: string,
@@ -180,6 +193,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
 
   // Build unified list of official papers + custom imported batches (scales to 100+)
   const customBatches = data?.customBatches ?? [];
+  const benchmarkBatches = data?.benchmarkBatches ?? [];
   const allPaperOptions: {
     key: string;
     label: string;
@@ -233,12 +247,21 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       : selectedPaper.counts[mockScope]
     : 0;
 
+  const canonicalFullPoolCount = data?.poolCounts
+    ? Math.min(17, data.poolCounts.READ.live) +
+      Math.min(35, data.poolCounts.MATH.live) +
+      Math.min(40, data.poolCounts.THINK.live) +
+      Math.min(1, data.poolCounts.WRIT.live)
+    : 0;
+
   const resolvedPoolCount =
     mockScope === 'WRIT'
       ? Math.min(1, poolLiveForScope)
-      : poolMockCount === 'ALL'
-        ? poolLiveForScope
-        : Math.min(poolLiveForScope, Math.max(1, Number(poolMockCount) || 20));
+      : mockScope === 'ALL' && poolMockCount === 'OFFICIAL'
+        ? canonicalFullPoolCount
+        : poolMockCount === 'ALL'
+          ? poolLiveForScope
+          : Math.min(poolLiveForScope, Math.max(1, Number(poolMockCount) || 20));
 
   const mockQuestionCount = mockMode === 'pool' ? resolvedPoolCount : batchQuestionCount;
 
@@ -317,7 +340,10 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             mode: 'section_drill',
             mockSource: 'pool',
             sectionFilter,
-            questionCount: mockScope === 'WRIT' ? 1 : resolvedPoolCount,
+            // Omit questionCount for Official Full so server uses canonical 17/35/40/1 section mix
+            ...(mockScope === 'ALL' && poolMockCount === 'OFFICIAL'
+              ? {}
+              : { questionCount: mockScope === 'WRIT' ? 1 : resolvedPoolCount }),
           }
         : selectedPaper.isOfficial && selectedPaper.officialBatch
           ? {
@@ -735,33 +761,45 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             </p>
           </div>
 
-          <div
-            className="inline-flex items-center p-1 rounded-[12px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit max-w-full flex-wrap"
-            role="group"
-            aria-label={t('home.mockSectionTitle')}
-          >
-            <button
-              type="button"
-              onClick={() => setMockMode('pool')}
-              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
-                mockMode === 'pool'
-                  ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
-                  : 'text-[#4A5955] hover:text-[#113C36]'
-              }`}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <div
+              className="inline-flex items-center p-1 rounded-[12px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit shrink-0"
+              role="group"
+              aria-label={t('home.mockSectionTitle')}
             >
-              {t('home.freshPoolMock')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMockMode('batch')}
-              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
-                mockMode === 'batch'
-                  ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
-                  : 'text-[#4A5955] hover:text-[#113C36]'
-              }`}
-            >
-              {t('home.specificPaperBatch')}
-            </button>
+              <button
+                type="button"
+                onClick={() => setMockMode('pool')}
+                className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
+                  mockMode === 'pool'
+                    ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
+                    : 'text-[#4A5955] hover:text-[#113C36]'
+                }`}
+              >
+                {t('home.freshPoolMock')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMockMode('batch')}
+                className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
+                  mockMode === 'batch'
+                    ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
+                    : 'text-[#4A5955] hover:text-[#113C36]'
+                }`}
+              >
+                {t('home.specificPaperBatch')}
+              </button>
+            </div>
+            {benchmarkBatches.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onNavigate('/benchmarks')}
+                className="px-3.5 py-2 rounded-[10px] border border-[#C5DDD1] bg-[#E5F0EA]/65 hover:bg-[#E5F0EA] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap text-[#1D6346] inline-flex items-center gap-1.5"
+              >
+                <Award className="w-3.5 h-3.5 shrink-0" />
+                <span>{t('home.goBenchmarks')}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -787,7 +825,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                   <>
                     <option value="30">{t('home.quickFullMock')}</option>
                     <option value="60">{t('home.halfMock')}</option>
-                    <option value="105">{t('home.officialFullMock')}</option>
+                    <option value="OFFICIAL">{t('home.officialFullMock')}</option>
                     <option value="ALL">{t('home.allAvailable', { count: poolLiveForScope })}</option>
                   </>
                 ) : (
@@ -849,7 +887,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                 setMockScope(next);
                 if (next === 'ALL' && ['10', '20', '35', '40'].includes(poolMockCount)) {
                   setPoolMockCount('30');
-                } else if (next !== 'ALL' && next !== 'WRIT' && ['60', '105'].includes(poolMockCount)) {
+                } else if (next !== 'ALL' && next !== 'WRIT' && ['60', 'OFFICIAL', '93', '105'].includes(poolMockCount)) {
                   setPoolMockCount('20');
                 }
               }}
@@ -882,7 +920,6 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
                 <option value="1.25">{t('home.timer125')}</option>
                 <option value="1.5">{t('home.timer15')}</option>
                 <option value="custom">{t('home.timerCustom')}</option>
-                <option value="0">{t('home.timerUntimed')}</option>
               </select>
               {timerPreset === 'custom' && (
                 <input

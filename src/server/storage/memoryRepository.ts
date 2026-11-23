@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type {
   BankImportManifest,
+  BenchmarkReportRecord,
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
@@ -97,6 +98,7 @@ export class MemoryRepository implements AppRepository {
   private activeLocksByStudent = new Map<string, string>();
   private snapshotsBySessionId = new Map<string, SessionQuestionSnapshot[]>();
   private dailyPlansByStudent = new Map<string, DailyFocusPlan>();
+  private benchmarkReportsBySession = new Map<string, BenchmarkReportRecord>();
   private attempts: PartAttemptRecord[] = [];
   private writingSubmissions = new Map<string, WritingSubmissionRecord>();
   private writingEvaluations: WritingEvaluationRecord[] = [];
@@ -180,6 +182,7 @@ export class MemoryRepository implements AppRepository {
       if ((session.studentId || DEFAULT_STUDENT_ID) === studentId) {
         this.sessions.delete(id);
         this.snapshotsBySessionId.delete(id);
+        this.benchmarkReportsBySession.delete(id);
         clearedSessions++;
       }
     }
@@ -661,21 +664,38 @@ export class MemoryRepository implements AppRepository {
       string,
       { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
     >();
+    const benchmarkBatchMap = new Map<
+      string,
+      { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
+    >();
     for (const q of questions) {
       const tag = getQuestionBatchTag(q);
       if (tag === 'PT1' || tag === 'PT2' || tag === 'PT3') {
         batchCounts[tag][q.section] += 1;
       }
-      if (q.poolType !== 'benchmark_holdout') {
-        const prog = deriveQuestionProgressMeta(q, evidenceMap, questionMemory);
-        if (!(autoRetireMastered && prog.completionStatus === 'done')) {
-          poolCounts[q.section].live += 1;
-          if (prog.completionStatus === 'unseen') {
-            poolCounts[q.section].unseen += 1;
-          }
+      if (q.poolType === 'benchmark_holdout') {
+        if (q.batchId) {
+          const batchMeta = batchById.get(q.batchId);
+          const entry = benchmarkBatchMap.get(q.batchId) || {
+            batchId: q.batchId,
+            batchLabel: batchMeta?.batchLabel || q.batchLabel || q.batchId,
+            counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+            total: 0,
+          };
+          entry.counts[q.section] += 1;
+          entry.total += 1;
+          benchmarkBatchMap.set(q.batchId, entry);
+        }
+        continue;
+      }
+      const prog = deriveQuestionProgressMeta(q, evidenceMap, questionMemory);
+      if (!(autoRetireMastered && prog.completionStatus === 'done')) {
+        poolCounts[q.section].live += 1;
+        if (prog.completionStatus === 'unseen') {
+          poolCounts[q.section].unseen += 1;
         }
       }
-      if (q.batchId && tag !== 'PT1' && tag !== 'PT2' && tag !== 'PT3' && q.poolType !== 'benchmark_holdout') {
+      if (q.batchId && tag !== 'PT1' && tag !== 'PT2' && tag !== 'PT3') {
         const batchMeta = batchById.get(q.batchId);
         if (batchMeta?.importedBy !== 'system_seed') {
           const entry = customBatchMap.get(q.batchId) || {
@@ -694,6 +714,7 @@ export class MemoryRepository implements AppRepository {
       batchCounts,
       poolCounts,
       customBatches: Array.from(customBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
+      benchmarkBatches: Array.from(benchmarkBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
     };
   }
 
@@ -987,6 +1008,21 @@ export class MemoryRepository implements AppRepository {
         session: structuredClone(s),
         submissionSummary: structuredClone(s.submissionSummary),
       };
+    }
+    const currentRev = s.checkpointRevision ?? 1;
+    if (input.expectedRevision !== undefined && input.expectedRevision !== currentRev) {
+      throw new RevisionConflictError(
+        `Session checkpoint revision mismatch (expected ${input.expectedRevision}, current ${currentRev}).`,
+        currentRev,
+        structuredClone(
+          s.checkpoint || {
+            currentIndex: 0,
+            elapsedSec: 0,
+            answersByPartId: {},
+            flaggedQuestionIds: [],
+          }
+        )
+      );
     }
 
     const existingAttemptIds = new Set(this.attempts.map((a) => a.attemptId));
@@ -1442,5 +1478,26 @@ export class MemoryRepository implements AppRepository {
       mediaNeedsUploadCount: mediaManifest.needsUploadCount,
       mediaMissingFilesCount: mediaManifest.missingFilesCount,
     };
+  }
+
+  async saveBenchmarkReport(report: BenchmarkReportRecord): Promise<void> {
+    const sid = report.studentId || DEFAULT_STUDENT_ID;
+    this.benchmarkReportsBySession.set(report.sessionId, structuredClone({ ...report, studentId: sid }));
+  }
+
+  async getBenchmarkReport(sessionId: string, studentId?: string): Promise<BenchmarkReportRecord | null> {
+    const found = this.benchmarkReportsBySession.get(sessionId);
+    if (!found) return null;
+    if (studentId && (found.studentId || DEFAULT_STUDENT_ID) !== studentId) return null;
+    return structuredClone(found);
+  }
+
+  async listBenchmarkReports(studentId: string, limit = 50): Promise<BenchmarkReportRecord[]> {
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    return Array.from(this.benchmarkReportsBySession.values())
+      .filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid)
+      .sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso))
+      .slice(0, limit)
+      .map((r) => structuredClone(r));
   }
 }

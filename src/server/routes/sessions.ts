@@ -4,9 +4,9 @@ import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { decidePracticeQuestionOrderWithGemini, getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
 import { ForbiddenError, NotFoundError, RevisionConflictError, type QuestionSelectionItem } from '../storage/repository.ts';
 import type { MarkingResult, MockTestBatch, QuestionItem, SectionCode, SessionCheckpoint, SessionMode, SessionRecord, SessionSelectionDecision, WritingDeterministicMetrics, WritingEvaluationRecord } from '../../shared/contracts.ts';
-import { gradeSubmission, selectBatchMockQuestions, selectMockTestQuestions, selectPoolMockQuestions, selectPracticeSession, toStudentQuestionView } from '../../shared/engine.ts';
+import { gradeSubmission, selectBatchMockQuestions, selectBenchmarkHoldoutQuestions, selectMockTestQuestions, selectPoolMockQuestions, selectPracticeSession, toStudentQuestionView } from '../../shared/engine.ts';
 import type { AppContext } from '../context.ts';
-import { getOfficialTimeLimitSec, buildQuestionSnapshots, resolveSessionQuestionPairs, SessionValidationError, getEffectiveDeadlineMs, SUBMIT_GRACE_MS, isSessionExpired, resolveSessionForCaller, finalizeSessionRecord, resolveOrExpireSession } from '../sessionLifecycle.ts';
+import { getOfficialTimeLimitSec, buildQuestionSnapshots, resolveSessionQuestionPairs, SessionValidationError, getEffectiveDeadlineMs, SUBMIT_GRACE_MS, isSessionExpired, isSessionPastGrace, resolveSessionForCaller, finalizeSessionRecord, resolveOrExpireSession } from '../sessionLifecycle.ts';
 
 /** Session lifecycle: create, load, checkpoint, submit (/api/student/sessions/*). */
 export function registerSessionRoutes(app: Express, ctx: AppContext): void {
@@ -35,14 +35,16 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
       }
 
       const selectionFilter =
-        mockSource === 'pool'
-          ? { qcStatus: 'active', section: sectionFilter }
-          : batchId
-            ? { qcStatus: 'active', batchId, section: sectionFilter }
-            : mockBatch
-              ? { qcStatus: 'active', batchTag: mockBatch, section: sectionFilter }
-              : mode === 'benchmark_exam'
-                ? { qcStatus: 'active', batchTag: 'PT3', section: sectionFilter }
+        mode === 'benchmark_exam'
+          ? batchId
+            ? { qcStatus: 'active', poolType: 'benchmark_holdout', batchId, section: sectionFilter }
+            : { qcStatus: 'active', section: sectionFilter }
+          : mockSource === 'pool'
+            ? { qcStatus: 'active', section: sectionFilter }
+            : batchId
+              ? { qcStatus: 'active', batchId, section: sectionFilter }
+              : mockBatch
+                ? { qcStatus: 'active', batchTag: mockBatch, section: sectionFilter }
                 : { qcStatus: 'active', section: mode === 'writing_sprint' ? ('WRIT' as SectionCode) : sectionFilter };
 
       const [existingSessions, configData, candidateQuestions, skillStates, questionMemory, evidenceMap] =
@@ -75,7 +77,23 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
       let effectiveMode: SessionMode = mode;
       let timeLimitSec = 1500;
 
-      if (mockSource === 'pool') {
+      if (mode === 'benchmark_exam') {
+        effectiveMode = 'benchmark_exam';
+        // Official Benchmark Exams are strictly locked to full 4-section 1.0x NSW timing (155 min)
+        selectedMeta = selectBenchmarkHoldoutQuestions({
+          batchId,
+          questions: candidateQuestions,
+        });
+        if (selectedMeta.length === 0 && !batchId) {
+          selectedMeta = selectMockTestQuestions({
+            batch: 'PT3',
+            questions: candidateQuestions,
+          });
+        }
+        timeLimitSec = getOfficialTimeLimitSec(undefined); // 9300s (155m) locked
+        const label = selectedMeta[0]?.batchLabel || 'Official Benchmark';
+        title = `Benchmark: ${label} (Full Exam)`;
+      } else if (mockSource === 'pool') {
         effectiveMode = 'section_drill';
         selectedMeta = selectPoolMockQuestions({
           questions: candidateQuestions,
@@ -87,10 +105,11 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           seed: Date.now() & 0xfffffff,
         });
         const baseSec = getOfficialTimeLimitSec(sectionFilter);
-        if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)) {
-          timeLimitSec = Math.max(0, Math.round(customTimeLimitSec));
+        if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec) && customTimeLimitSec > 0) {
+          timeLimitSec = Math.max(60, Math.round(customTimeLimitSec));
         } else {
-          timeLimitSec = timeMultiplier <= 0 ? 0 : Math.round(baseSec * timeMultiplier);
+          // Enforce strictly timed student exams (no untimed loophole)
+          timeLimitSec = Math.max(60, Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1)));
         }
         title = `Fresh Pool Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Exam)'}`;
       } else if (batchId) {
@@ -102,11 +121,9 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         });
         const baseSec = getOfficialTimeLimitSec(sectionFilter);
         timeLimitSec =
-          customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)
-            ? Math.max(0, Math.round(customTimeLimitSec))
-            : timeMultiplier <= 0
-              ? 0
-              : Math.round(baseSec * timeMultiplier);
+          customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec) && customTimeLimitSec > 0
+            ? Math.max(60, Math.round(customTimeLimitSec))
+            : Math.max(60, Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1)));
         const batchLabel = selectedMeta[0]?.batchLabel || batchId;
         title = `${batchLabel}${sectionFilter ? ` (${sectionFilter})` : ''}`;
       } else if (mockBatch) {
@@ -121,24 +138,12 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
             : 'section_drill';
         }
         const baseSec = getOfficialTimeLimitSec(sectionFilter);
-        if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)) {
-          timeLimitSec = Math.max(0, Math.round(customTimeLimitSec));
+        if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec) && customTimeLimitSec > 0) {
+          timeLimitSec = Math.max(60, Math.round(customTimeLimitSec));
         } else {
-          timeLimitSec = timeMultiplier <= 0 ? 0 : Math.round(baseSec * timeMultiplier);
+          timeLimitSec = Math.max(60, Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1)));
         }
         title = `${mockBatch} Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Test)'}`;
-      } else if (mode === 'benchmark_exam') {
-        selectedMeta = selectMockTestQuestions({
-          batch: 'PT3',
-          sectionFilter,
-          questions: candidateQuestions,
-        });
-        const baseSec = getOfficialTimeLimitSec(sectionFilter);
-        timeLimitSec =
-          customTimeLimitSec !== undefined
-            ? Math.max(0, Math.round(customTimeLimitSec))
-            : Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1));
-        title = `PT3 Benchmark Holdout${sectionFilter ? ` (${sectionFilter})` : ''}`;
       } else {
         const effectiveSection: SectionCode | undefined =
           mode === 'writing_sprint' ? 'WRIT' : sectionFilter;
@@ -266,7 +271,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
       };
 
       let reserved = await repo.reserveAndCreateSession(session, snapshots);
-      if (!reserved.created && reserved.conflictSession && isSessionExpired(reserved.conflictSession)) {
+      if (!reserved.created && reserved.conflictSession && isSessionPastGrace(reserved.conflictSession)) {
         await resolveOrExpireSession(repo, reserved.conflictSession);
         reserved = await repo.reserveAndCreateSession(session, snapshots);
       }
@@ -520,16 +525,56 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           }
         : baseCp;
 
+      const rawExpectedRev = req.body?.expectedRevision;
+      const expectedRevision =
+        rawExpectedRev !== undefined && rawExpectedRev !== null && !Number.isNaN(Number(rawExpectedRev))
+          ? Number(rawExpectedRev)
+          : undefined;
+
       const assisted = Boolean(req.body?.assisted);
-      const finalResult = await finalizeSessionRecord({
-        repo,
-        session,
-        checkpoint: cp,
-        assisted,
-        completedAtIso,
-        expiredAutoSubmitted: expired,
-        rejectValidationErrors: !expired,
-      });
+      let finalResult;
+      try {
+        finalResult = await finalizeSessionRecord({
+          repo,
+          session,
+          checkpoint: cp,
+          expectedRevision: !expired || withinGrace ? expectedRevision : session.checkpointRevision ?? 1,
+          assisted,
+          completedAtIso,
+          expiredAutoSubmitted: expired,
+          rejectValidationErrors: !expired,
+        });
+      } catch (err) {
+        if (err instanceof RevisionConflictError && expired && !withinGrace) {
+          const fresh = await repo.getSession(session.sessionId, req.auth!.studentId);
+          if (fresh && fresh.status === 'submitted' && fresh.submissionSummary) {
+            finalResult = {
+              alreadySubmitted: true,
+              session: fresh,
+              submissionSummary: fresh.submissionSummary,
+            };
+          } else if (fresh) {
+            const freshCp: SessionCheckpoint = {
+              ...(fresh.checkpoint || fallbackCp),
+              elapsedSec: fresh.timeLimitSec ?? fresh.checkpoint?.elapsedSec ?? 0,
+            };
+            finalResult = await finalizeSessionRecord({
+              repo,
+              session: fresh,
+              checkpoint: freshCp,
+              expectedRevision: fresh.checkpointRevision ?? 1,
+              assisted,
+              completedAtIso,
+              expiredAutoSubmitted: true,
+              rejectValidationErrors: false,
+            });
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
 
       res.json({
         ...finalResult.submissionSummary,
@@ -537,6 +582,14 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         expiredAutoSubmitted: Boolean(finalResult.session.expiredAutoSubmitted),
       });
     } catch (err) {
+      if (err instanceof RevisionConflictError) {
+        res.status(409).json({
+          error: err.message,
+          currentRevision: err.currentRevision,
+          serverCheckpoint: err.serverCheckpoint,
+        });
+        return;
+      }
       if (err instanceof SessionValidationError) {
         res.status(400).json({ error: err.message });
         return;

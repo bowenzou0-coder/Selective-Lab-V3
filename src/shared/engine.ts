@@ -286,8 +286,8 @@ function findFamilyEvidence(
 ): QuestionMasteryEvidence | undefined {
   if (!evidenceMap) return undefined;
   if (q.evidenceRevision) {
-    const exact = evidenceMap[`${q.questionFamilyId}__${q.evidenceRevision}`];
-    if (exact) return exact;
+    // Exact revision match: never let an older revision's retained status retire a revised question
+    return evidenceMap[`${q.questionFamilyId}__${q.evidenceRevision}`];
   }
   const prefix = `${q.questionFamilyId}__`;
   for (const [k, ev] of Object.entries(evidenceMap)) {
@@ -589,12 +589,14 @@ export function selectMockTestQuestions<T extends SelectionQuestion = QuestionIt
   batch: 'PT1' | 'PT2' | 'PT3';
   sectionFilter?: SectionCode;
   questions: T[];
+  allowHoldout?: boolean;
 }): T[] {
-  const { batch, sectionFilter, questions } = input;
+  const { batch, sectionFilter, questions, allowHoldout = batch === 'PT3' } = input;
   const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
   return questions
     .filter((q) => {
       if (q.qcStatus !== 'active') return false;
+      if (!allowHoldout && q.poolType === 'benchmark_holdout') return false;
       if (getQuestionBatchTag(q) !== batch) return false;
       if (sectionFilter && q.section !== sectionFilter) return false;
       return true;
@@ -616,6 +618,7 @@ export function selectBatchMockQuestions<T extends SelectionQuestion = QuestionI
   return questions
     .filter((q) => {
       if (q.qcStatus !== 'active') return false;
+      if (q.poolType === 'benchmark_holdout') return false;
       if (q.batchId !== batchId) return false;
       if (sectionFilter && q.section !== sectionFilter) return false;
       return true;
@@ -627,8 +630,49 @@ export function selectBatchMockQuestions<T extends SelectionQuestion = QuestionI
     });
 }
 
+export function selectBenchmarkHoldoutQuestions<T extends SelectionQuestion = QuestionItem>(input: {
+  batchId?: string;
+  sectionFilter?: SectionCode;
+  questions: T[];
+}): T[] {
+  const { batchId, sectionFilter, questions } = input;
+  const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
+  const holdouts = questions.filter((q) => {
+    if (q.qcStatus !== 'active') return false;
+    if (q.poolType !== 'benchmark_holdout') return false;
+    if (sectionFilter && q.section !== sectionFilter) return false;
+    return true;
+  });
+  if (holdouts.length === 0) return [];
+
+  let scoped = holdouts;
+  if (batchId) {
+    scoped = holdouts.filter((q) => q.batchId === batchId);
+  } else {
+    // If multiple holdout batches exist, select one cohesive batch (latest batchLabel first)
+    const batchLabels = new Map<string, string>();
+    for (const q of holdouts) {
+      if (q.batchId && !batchLabels.has(q.batchId)) {
+        batchLabels.set(q.batchId, q.batchLabel || q.batchId);
+      }
+    }
+    if (batchLabels.size > 1) {
+      const [chosenBatchId] = Array.from(batchLabels.entries()).sort((a, b) =>
+        b[1].localeCompare(a[1])
+      )[0];
+      scoped = holdouts.filter((q) => q.batchId === chosenBatchId);
+    }
+  }
+
+  return scoped.sort((a, b) => {
+    const secDiff = sectionOrder[a.section] - sectionOrder[b.section];
+    if (secDiff !== 0) return secDiff;
+    return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
+  });
+}
+
 export const CANONICAL_POOL_MOCK_COUNTS: Record<SectionCode, number> = {
-  READ: 15,
+  READ: 17,
   MATH: 35,
   THINK: 40,
   WRIT: 1,

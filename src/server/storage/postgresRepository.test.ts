@@ -1009,6 +1009,7 @@ test('Postgres SQL-first pagination, search, status aggregates, progress stats, 
   const normDash = (d: Awaited<ReturnType<typeof pgRepo.getStudentDashboardBankSummary>>) => ({
     ...d,
     customBatches: d.customBatches.map(({ batchId: _id, ...rest }) => rest),
+    benchmarkBatches: d.benchmarkBatches.map(({ batchId: _id, ...rest }) => rest),
   });
   assert.deepEqual(
     normDash(await pgRepo.getStudentDashboardBankSummary(studentId, false)),

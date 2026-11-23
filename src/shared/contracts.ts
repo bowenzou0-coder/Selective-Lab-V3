@@ -517,6 +517,65 @@ export interface SessionCheckpoint {
   eliminatedOptionsByPartId?: Record<string, string[]>;
   passageHighlightsByStimulusId?: Record<string, string[]>;
   writingDraft?: { planNotes: string; responseText: string };
+  writingDraftsByQuestionId?: Record<string, { planNotes: string; responseText: string }>;
+}
+
+export interface BenchmarkReportSectionSnapshot {
+  section: SectionCode;
+  correct: number;
+  total: number;
+  unanswered: number;
+  accuracyPct: number;
+  band: 'top_10' | 'next_15' | 'next_25' | 'lowest_50';
+  estimatedPercentile: number;
+  isAssumed?: boolean;
+}
+
+export interface BenchmarkAiCoaching {
+  source: 'hybrid_gemini' | 'deterministic';
+  decisionModelId?: string;
+  textModelId?: string;
+  generatedAtIso: string;
+  rankedPriorities: {
+    skillId: string;
+    section: SectionCode;
+    label: string;
+    reasonEn: string;
+    reasonZh: string;
+    severityScore: number;
+  }[];
+  parentSummaryEn: string;
+  parentSummaryZh: string;
+  actionPlanEn: string[];
+  actionPlanZh: string[];
+}
+
+export interface BenchmarkReportRecord {
+  reportId: string;
+  sessionId: string;
+  studentId: string;
+  batchLabel: string;
+  title: string;
+  completedAtIso: string;
+  elapsedSec: number;
+  timeLimitSec: number;
+  difficulty: 'official_sample' | 'real_exam' | 'selective_lab_timed' | 'selective_lab_hard';
+  scaledScore120: number;
+  uncertaintyHalfWidth120: number;
+  estimatedPercentile: number;
+  estimatedStateRank: number;
+  estimatedApplicantPool: number;
+  writingStatus: 'graded' | 'pending' | 'missing';
+  writingSubmissionId?: string;
+  sections: Record<SectionCode, BenchmarkReportSectionSnapshot>;
+  weakSkillStats: {
+    skillId: string;
+    section: SectionCode;
+    missed: number;
+    total: number;
+    unanswered: number;
+  }[];
+  aiCoaching?: BenchmarkAiCoaching;
 }
 
 export interface SessionQuestionSnapshot {

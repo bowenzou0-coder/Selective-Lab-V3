@@ -3,7 +3,7 @@ import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
 import type { SessionRecord } from '../../shared/contracts.ts';
 import type { AppContext } from '../context.ts';
-import { computeSessionStreak, isSessionExpired, resolveOrExpireSession } from '../sessionLifecycle.ts';
+import { computeSessionStreak, isSessionPastGrace, resolveOrExpireSession } from '../sessionLifecycle.ts';
 
 /** Student dashboard (/api/student/dashboard). */
 export function registerStudentRoutes(app: Express, ctx: AppContext): void {
@@ -22,7 +22,7 @@ export function registerStudentRoutes(app: Express, ctx: AppContext): void {
       let anyExpired = false;
       const sessions: SessionRecord[] = [];
       for (const s of rawSessions) {
-        if (isSessionExpired(s)) {
+        if (isSessionPastGrace(s)) {
           anyExpired = true;
           sessions.push(await resolveOrExpireSession(repo, s));
         } else {
@@ -76,6 +76,7 @@ export function registerStudentRoutes(app: Express, ctx: AppContext): void {
         poolCounts: bankSummary.poolCounts,
         batchCounts: bankSummary.batchCounts,
         customBatches: bankSummary.customBatches,
+        benchmarkBatches: bankSummary.benchmarkBatches,
         activeSession: activeInProgress,
         recentSessions: sessions
           .filter((s) => !s.isSandbox)

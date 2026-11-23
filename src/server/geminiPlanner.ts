@@ -421,7 +421,7 @@ const ITEM_SELECTION_LEVELS = [
   'Immediate top pick: needs-repair item, overdue 24h/7d confirmation check, or urgent review.',
 ];
 
-async function runDecisionsApi(
+export async function runDecisionsApi(
   inputText: string,
   questions: Record<string, DecisionQuestionSpec>,
   decideFn?: DecisionsExecutor

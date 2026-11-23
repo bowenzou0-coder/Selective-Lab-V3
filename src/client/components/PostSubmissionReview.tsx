@@ -27,6 +27,8 @@ import {
   type WritingTextAnnotation,
 } from '../../shared/contracts';
 import { buildAnnotatedParagraphs } from '../writingHighlight';
+import { extractBenchmarkScoresFromSession } from '../../shared/nswBenchmark';
+import { NswBenchmarkEstimator } from './NswBenchmarkEstimator';
 import { QuestionWorkspace } from './QuestionWorkspace';
 import { WritingStimulusPane } from './WritingEditor';
 
@@ -58,6 +60,8 @@ function bandBadgeClass(band: WritingBandLetter): string {
 
 interface PostSubmissionReviewProps {
   sessionId: string;
+  sessionTitle?: string;
+  sessionMode?: string;
   correctSlots: number;
   totalSlots: number;
   elapsedSec: number;
@@ -66,6 +70,7 @@ interface PostSubmissionReviewProps {
   writingReview?: SessionDetailResponse['writingReview'];
   onDoneHome: () => void;
   onViewProgress: () => void;
+  onViewBenchmarks?: () => void;
 }
 
 type ReviewFilter = 'all' | 'incorrect' | 'unanswered';
@@ -138,6 +143,8 @@ function scrollAttrIntoView(attrName: string, id: string): void {
 
 export function PostSubmissionReview({
   sessionId,
+  sessionTitle,
+  sessionMode,
   correctSlots,
   totalSlots,
   elapsedSec,
@@ -146,6 +153,7 @@ export function PostSubmissionReview({
   writingReview: initialWritingReview,
   onDoneHome,
   onViewProgress,
+  onViewBenchmarks,
 }: PostSubmissionReviewProps) {
   const { t, isZh, skillName } = useI18n();
   const [writingReview, setWritingReview] = useState(initialWritingReview || []);
@@ -166,6 +174,8 @@ export function PostSubmissionReview({
   const [flaggingQid, setFlaggingQid] = useState<string | null>(null);
   const [flagReason, setFlagReason] = useState('Unclear wording or diagram');
   const [flagNotes, setFlagNotes] = useState('');
+  const [flagBusy, setFlagBusy] = useState(false);
+  const [flagError, setFlagError] = useState('');
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
 
   const resumedIdsRef = useRef<Set<string>>(new Set());
@@ -223,6 +233,27 @@ export function PostSubmissionReview({
       return true;
     });
   }, [questions, filter, itemStatusMap]);
+
+  const questionNumberById = useMemo(() => {
+    const map = new Map<string, number>();
+    questions.forEach((q, idx) => map.set(q.questionId, idx + 1));
+    return map;
+  }, [questions]);
+
+  const sessionBenchmark = useMemo(
+    () =>
+      extractBenchmarkScoresFromSession({
+        questions,
+        reviewResults,
+        writingReview,
+        sessionTitle,
+      }),
+    [questions, reviewResults, writingReview, sessionTitle]
+  );
+
+  const showSessionBenchmark =
+    sessionMode === 'benchmark_exam' ||
+    (sessionBenchmark.hasObjectiveMultiSection && questions.length >= 20);
 
   const activeIndex = Math.max(
     0,
@@ -364,13 +395,17 @@ export function PostSubmissionReview({
   }, [sessionId, writingReview]);
 
   const handleSubmitFlag = async (questionId: string) => {
+    setFlagBusy(true);
+    setFlagError('');
     try {
       await api.flagQuestion({ questionId, sessionId, reason: flagReason, notes: flagNotes });
       setFlaggedIds((prev) => new Set(prev).add(questionId));
       setFlaggingQid(null);
       setFlagNotes('');
-    } catch {
-      // ignore
+    } catch (err) {
+      setFlagError(err instanceof Error ? err.message : t('rev.flagError'));
+    } finally {
+      setFlagBusy(false);
     }
   };
 
@@ -1144,6 +1179,15 @@ export function PostSubmissionReview({
 
           <div className="flex flex-wrap items-center gap-2">
             <LanguageToggle compact />
+            {sessionMode === 'benchmark_exam' && onViewBenchmarks && (
+              <button
+                type="button"
+                onClick={onViewBenchmarks}
+                className="px-3.5 py-1.5 rounded-[10px] border border-[#1D6346]/40 bg-[#E5F0EA] hover:bg-[#d8e9df] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-colors whitespace-nowrap"
+              >
+                {t('rev.openBenchmarkReport')}
+              </button>
+            )}
             <button
               type="button"
               onClick={onViewProgress}
@@ -1166,7 +1210,7 @@ export function PostSubmissionReview({
           <div className="max-w-[1440px] mx-auto mt-2.5">
             <div className="flex flex-wrap gap-1.5 max-w-[840px] max-h-[92px] overflow-y-auto pr-1">
               {filteredQuestions.map((q) => {
-                const globalNum = questions.findIndex((item) => item.questionId === q.questionId) + 1;
+                const globalNum = questionNumberById.get(q.questionId) ?? 1;
                 const st = itemStatusMap.get(q.questionId);
                 const isSelected = activeQuestion?.questionId === q.questionId;
                 return (
@@ -1195,6 +1239,31 @@ export function PostSubmissionReview({
           </div>
         )}
       </header>
+
+      {/* Benchmark School Cutoff Summary (for full mocks & benchmark exams) */}
+      {showSessionBenchmark && (
+        <div className="shrink-0 border-b border-[#E5DFD5] bg-[#FAF8F5] px-4 sm:px-6 py-3">
+          <div className="max-w-[1440px] mx-auto">
+            <NswBenchmarkEstimator
+              compact
+              defaultOpen={false}
+              initialScores={{
+                read: sessionBenchmark.read,
+                math: sessionBenchmark.math,
+                think: sessionBenchmark.think,
+                writ: sessionBenchmark.writ,
+              }}
+              sectionSources={sessionBenchmark.sectionSources}
+              initialDifficulty={sessionBenchmark.suggestedDifficulty}
+              sourceNote={
+                sessionBenchmark.writingEvaluated
+                  ? t('bench.seededFromSession')
+                  : t('bench.seededFromSessionNoWrit')
+              }
+            />
+          </div>
+        </div>
+      )}
 
       {/* Main Review Workspace */}
       {filteredQuestions.length === 0 ? (
@@ -1328,11 +1397,17 @@ export function PostSubmissionReview({
                 />
                 <button
                   type="button"
+                  disabled={flagBusy}
                   onClick={() => handleSubmitFlag(activeQuestion.questionId)}
-                  className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap"
+                  className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-50"
                 >
-                  {t('rev.submitReport')}
+                  {flagBusy ? '...' : t('rev.submitReport')}
                 </button>
+                {flagError && (
+                  <p role="alert" className="w-full text-xs text-[#B42318]">
+                    {flagError}
+                  </p>
+                )}
               </div>
             )}
           </div>

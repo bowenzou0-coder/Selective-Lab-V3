@@ -1,12 +1,14 @@
-import type { AppRepository } from './storage/repository.ts';
+import { RevisionConflictError, type AppRepository } from './storage/repository.ts';
 import type { MarkingResult, PartAttemptRecord, QuestionItem, QuestionMasteryEvidence, QuestionMemoryState, SectionCode, SessionCheckpoint, SessionQuestionSnapshot, SessionRecord, SessionSubmissionPayload, SkillState, StimulusGroup, WritingDeterministicMetrics, WritingEvaluationRecord } from '../shared/contracts.ts';
 import { computeWritingMetrics, detectPlateauStatus, gradeSubmission, updateFamilyMemoryOnce, updateSkillState } from '../shared/engine.ts';
 import { advanceQuestionEvidence, buildEvidenceKey, computeEvidenceRevision } from '../shared/mastery.ts';
+import { buildBenchmarkReportRecord } from '../shared/nswBenchmark.ts';
 
 export function getOfficialTimeLimitSec(sectionFilter?: SectionCode): number {
-  if (sectionFilter === 'WRIT') return 1800;
-  if (sectionFilter === 'READ' || sectionFilter === 'MATH' || sectionFilter === 'THINK') return 2400;
-  return 9000;
+  if (sectionFilter === 'WRIT') return 1800; // 30 min
+  if (sectionFilter === 'READ') return 2700; // 45 min (2025+ NSW Selective)
+  if (sectionFilter === 'MATH' || sectionFilter === 'THINK') return 2400; // 40 min
+  return 9300; // 45 + 40 + 40 + 30 = 155 min
 }
 
 export function computeSessionStreak(sessions: SessionRecord[]): number {
@@ -69,18 +71,24 @@ export async function resolveSessionQuestionPairs(
     };
   }
 
-  const livePairs = await Promise.all(
-    session.plannedQuestionIds.map((qid) => repo.getQuestionWithStimulus(qid))
+  const liveQuestions = await repo.listQuestionsByIds(session.plannedQuestionIds);
+  const qById = new Map(liveQuestions.map((q) => [q.questionId, q]));
+  const orderedQuestions = session.plannedQuestionIds
+    .map((qid) => qById.get(qid))
+    .filter((q): q is QuestionItem => Boolean(q));
+  const stimIds = Array.from(
+    new Set(orderedQuestions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
   );
-  const valid = livePairs.filter(
-    (p): p is { question: QuestionItem; stimulus?: StimulusGroup } => p !== null
-  );
+  const stimuliById = await repo.listStimuliByIds(stimIds);
   return {
-    pairs: valid.map((p) => ({
-      question: p.question,
-      stimulus: p.stimulus,
-      evidenceRevision: p.question.evidenceRevision || computeEvidenceRevision(p.question, p.stimulus),
-    })),
+    pairs: orderedQuestions.map((q) => {
+      const stim = q.stimulusId ? stimuliById[q.stimulusId] : undefined;
+      return {
+        question: q,
+        stimulus: stim,
+        evidenceRevision: q.evidenceRevision || computeEvidenceRevision(q, stim),
+      };
+    }),
     usedLegacyLiveBank: true,
   };
 }
@@ -110,6 +118,17 @@ export function isSessionExpired(session: SessionRecord, nowMs = Date.now()): bo
   return deadlineMs !== null && nowMs >= deadlineMs;
 }
 
+/**
+ * True only after the server submit grace window has elapsed.
+ * Background/read auto-expiry MUST use this so in-flight checkpoint/submit requests
+ * within the grace window are never overwritten with stale answers.
+ */
+export function isSessionPastGrace(session: SessionRecord, nowMs = Date.now()): boolean {
+  if (session.status !== 'in_progress' || session.isSandbox) return false;
+  const deadlineMs = getEffectiveDeadlineMs(session);
+  return deadlineMs !== null && nowMs > deadlineMs + SUBMIT_GRACE_MS;
+}
+
 export async function findActiveSessionId(repo: AppRepository, studentId: string): Promise<string | null> {
   for (const s of await repo.listActiveSessions(studentId)) {
     const resolved = await resolveOrExpireSession(repo, s);
@@ -137,6 +156,7 @@ export async function finalizeSessionRecord(input: {
   repo: AppRepository;
   session: SessionRecord;
   checkpoint: SessionCheckpoint;
+  expectedRevision?: number;
   assisted: boolean;
   completedAtIso: string;
   expiredAutoSubmitted?: boolean;
@@ -150,6 +170,7 @@ export async function finalizeSessionRecord(input: {
     repo,
     session,
     checkpoint,
+    expectedRevision,
     assisted,
     completedAtIso,
     expiredAutoSubmitted = false,
@@ -233,8 +254,9 @@ export async function finalizeSessionRecord(input: {
 
   for (const { question, evidenceRevision } of pairs) {
     if (question.formatType === 'WRIT_TYPED_TASK') {
-      const responseText = checkpoint.writingDraft?.responseText || '';
-      const planNotes = checkpoint.writingDraft?.planNotes || '';
+      const keyedDraft = checkpoint.writingDraftsByQuestionId?.[question.questionId];
+      const responseText = keyedDraft?.responseText ?? checkpoint.writingDraft?.responseText ?? '';
+      const planNotes = keyedDraft?.planNotes ?? checkpoint.writingDraft?.planNotes ?? '';
       const spec = question.writingSpec || {
         genre: 'essay',
         audience: 'General',
@@ -316,7 +338,7 @@ export async function finalizeSessionRecord(input: {
         createdAt: completedAtIso,
       });
 
-      if (!session.isSandbox) {
+      if (!session.isSandbox && question.poolType !== 'benchmark_holdout') {
         const prevSkill = updatedSkillsMap.get(part.skillId) || skillStates[part.skillId];
         const nextSkillState = updateSkillState({
           prevSkillState: prevSkill,
@@ -340,9 +362,9 @@ export async function finalizeSessionRecord(input: {
       }
     }
 
-    if (!session.isSandbox) {
+    if (!session.isSandbox && question.poolType !== 'benchmark_holdout') {
       let nextEv: QuestionMasteryEvidence | undefined;
-      if (question.poolType !== 'benchmark_holdout' && question.qcStatus === 'active') {
+      if (question.qcStatus === 'active') {
         const evKey = buildEvidenceKey(question.questionFamilyId, evidenceRevision);
         const prevEv = updatedEvidenceMap.get(evKey) || evidenceMap[evKey];
         nextEv = advanceQuestionEvidence({
@@ -390,10 +412,11 @@ export async function finalizeSessionRecord(input: {
     writingReview,
   };
 
-  return repo.finalizeSessionAtomically({
+  const finalized = await repo.finalizeSessionAtomically({
     sessionId: session.sessionId,
     studentId: ownerId,
     checkpoint,
+    expectedRevision,
     correctSlots: correctObjectiveSlots,
     totalSlots: totalObjectiveSlots,
     completedAtIso,
@@ -405,37 +428,78 @@ export async function finalizeSessionRecord(input: {
     evidenceUpdates: savedEvidence,
     writingSubmissions: writingSubmissionsToSave,
   });
+
+  // Automatically persist the official BenchmarkReportRecord for completed benchmark exams
+  if (!session.isSandbox && finalized.session.mode === 'benchmark_exam') {
+    try {
+      const existingReport = await repo.getBenchmarkReport(finalized.session.sessionId, ownerId);
+      if (!existingReport) {
+        const report = buildBenchmarkReportRecord({
+          session: finalized.session,
+          questions: pairs.map((p) => p.question),
+          reviewResults,
+          writingReview: writingReview.map((w) => ({
+            submissionId: w.submissionId,
+            evaluations: w.evaluations,
+          })),
+        });
+        await repo.saveBenchmarkReport(report);
+      }
+    } catch (err) {
+      console.error('Failed to persist benchmark report on finalize:', err);
+    }
+  }
+
+  return finalized;
 }
 
 export async function resolveOrExpireSession(
   repo: AppRepository,
   session: SessionRecord
 ): Promise<SessionRecord> {
-  if (!isSessionExpired(session)) return session;
-  const deadlineMs = getEffectiveDeadlineMs(session);
-  const completedAtIso =
-    session.deadlineAt ||
-    (deadlineMs !== null ? new Date(deadlineMs).toISOString() : new Date().toISOString());
-  const baseCheckpoint: SessionCheckpoint = session.checkpoint
-    ? {
-        ...session.checkpoint,
-        elapsedSec: session.timeLimitSec ?? session.checkpoint.elapsedSec ?? 0,
-      }
-    : {
-        currentIndex: 0,
-        elapsedSec: session.timeLimitSec ?? 0,
-        answersByPartId: {},
-        flaggedQuestionIds: [],
-      };
+  if (!isSessionPastGrace(session)) return session;
 
-  const finalized = await finalizeSessionRecord({
-    repo,
-    session,
-    checkpoint: baseCheckpoint,
-    assisted: false,
-    completedAtIso,
-    expiredAutoSubmitted: true,
-    rejectValidationErrors: false,
-  });
-  return finalized.session;
+  let target = session;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (target.status === 'submitted') return target;
+    const deadlineMs = getEffectiveDeadlineMs(target);
+    const completedAtIso =
+      target.deadlineAt ||
+      (deadlineMs !== null ? new Date(deadlineMs).toISOString() : new Date().toISOString());
+    const baseCheckpoint: SessionCheckpoint = target.checkpoint
+      ? {
+          ...target.checkpoint,
+          elapsedSec: target.timeLimitSec ?? target.checkpoint.elapsedSec ?? 0,
+        }
+      : {
+          currentIndex: 0,
+          elapsedSec: target.timeLimitSec ?? 0,
+          answersByPartId: {},
+          flaggedQuestionIds: [],
+        };
+
+    try {
+      const finalized = await finalizeSessionRecord({
+        repo,
+        session: target,
+        checkpoint: baseCheckpoint,
+        expectedRevision: target.checkpointRevision ?? 1,
+        assisted: false,
+        completedAtIso,
+        expiredAutoSubmitted: true,
+        rejectValidationErrors: false,
+      });
+      return finalized.session;
+    } catch (err) {
+      if (err instanceof RevisionConflictError && attempt === 0) {
+        const fresh = await repo.getSession(target.sessionId, target.studentId);
+        if (fresh) {
+          target = fresh;
+          continue;
+        }
+      }
+      throw err;
+    }
+  }
+  return target;
 }

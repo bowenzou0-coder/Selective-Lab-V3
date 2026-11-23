@@ -8,6 +8,7 @@ import { registerAdminBankRoutes } from './routes/adminBank.ts';
 import { registerAdminLearnerRoutes } from './routes/adminLearners.ts';
 import { registerAdminSystemRoutes } from './routes/adminSystem.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
+import { registerBenchmarkRoutes } from './routes/benchmarks.ts';
 import { registerSessionRoutes } from './routes/sessions.ts';
 import { registerStudentRoutes } from './routes/student.ts';
 import { registerStudentProgressRoutes } from './routes/studentProgress.ts';
@@ -48,6 +49,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   registerAuthRoutes(app, ctx);
   registerStudentRoutes(app, ctx);
+  registerBenchmarkRoutes(app, ctx);
   registerSessionRoutes(app, ctx);
   registerStudentProgressRoutes(app, ctx);
   registerAdminLearnerRoutes(app, ctx);

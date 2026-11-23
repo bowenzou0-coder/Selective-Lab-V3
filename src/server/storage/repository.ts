@@ -8,6 +8,7 @@ import type {
 import type {
   BankImportManifest,
   BankMasterySummary,
+  BenchmarkReportRecord,
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
@@ -147,6 +148,7 @@ export interface StudentDashboardBankSummary {
   batchCounts: Record<'PT1' | 'PT2' | 'PT3', Record<SectionCode, number>>;
   poolCounts: Record<SectionCode, { live: number; unseen: number }>;
   customBatches: { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }[];
+  benchmarkBatches: { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }[];
 }
 
 export interface TodayAttemptCounts {
@@ -236,6 +238,7 @@ export interface FinalizeSessionInput {
   sessionId: string;
   studentId: string;
   checkpoint: SessionCheckpoint;
+  expectedRevision?: number;
   correctSlots: number;
   totalSlots: number;
   completedAtIso: string;
@@ -488,6 +491,10 @@ export interface AppRepository {
   upsertQuestionMemory(entries: QuestionMemoryState[], studentId?: string): Promise<void>;
   getDailyFocusPlan(studentId: string, planDate: string): Promise<DailyFocusPlan | null>;
   saveDailyFocusPlan(studentId: string, plan: DailyFocusPlan): Promise<void>;
+
+  saveBenchmarkReport(report: BenchmarkReportRecord): Promise<void>;
+  getBenchmarkReport(sessionId: string, studentId?: string): Promise<BenchmarkReportRecord | null>;
+  listBenchmarkReports(studentId: string, limit?: number): Promise<BenchmarkReportRecord[]>;
 
   saveQuestionFlag(flag: QuestionFlagRecord): Promise<void>;
   listQuestionFlags(): Promise<QuestionFlagRecord[]>;

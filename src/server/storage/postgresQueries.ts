@@ -260,20 +260,18 @@ export async function queryStudentDashboardBankSummary(
     string,
     { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
   >();
+  const benchmarkBatchMap = new Map<
+    string,
+    { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
+  >();
 
   for (const r of rows) {
     if (r.tag === 'PT1' || r.tag === 'PT2' || r.tag === 'PT3') {
       batchCounts[r.tag][r.section] += r.n;
     }
-    if (r.poolType !== 'benchmark_holdout') {
-      if (!(autoRetireMastered && r.completionStatus === 'done')) {
-        poolCounts[r.section].live += r.n;
-        if (r.completionStatus === 'unseen') {
-          poolCounts[r.section].unseen += r.n;
-        }
-      }
-      if (r.batchId && r.tag !== 'PT1' && r.tag !== 'PT2' && r.tag !== 'PT3' && r.importedBy !== 'system_seed') {
-        const entry = customBatchMap.get(r.batchId) || {
+    if (r.poolType === 'benchmark_holdout') {
+      if (r.batchId) {
+        const entry = benchmarkBatchMap.get(r.batchId) || {
           batchId: r.batchId,
           batchLabel: r.batchLabel || r.batchId,
           counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
@@ -281,8 +279,26 @@ export async function queryStudentDashboardBankSummary(
         };
         entry.counts[r.section] += r.n;
         entry.total += r.n;
-        customBatchMap.set(r.batchId, entry);
+        benchmarkBatchMap.set(r.batchId, entry);
       }
+      continue;
+    }
+    if (!(autoRetireMastered && r.completionStatus === 'done')) {
+      poolCounts[r.section].live += r.n;
+      if (r.completionStatus === 'unseen') {
+        poolCounts[r.section].unseen += r.n;
+      }
+    }
+    if (r.batchId && r.tag !== 'PT1' && r.tag !== 'PT2' && r.tag !== 'PT3' && r.importedBy !== 'system_seed') {
+      const entry = customBatchMap.get(r.batchId) || {
+        batchId: r.batchId,
+        batchLabel: r.batchLabel || r.batchId,
+        counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
+        total: 0,
+      };
+      entry.counts[r.section] += r.n;
+      entry.total += r.n;
+      customBatchMap.set(r.batchId, entry);
     }
   }
 
@@ -290,6 +306,7 @@ export async function queryStudentDashboardBankSummary(
     batchCounts,
     poolCounts,
     customBatches: Array.from(customBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
+    benchmarkBatches: Array.from(benchmarkBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
   };
 }
 

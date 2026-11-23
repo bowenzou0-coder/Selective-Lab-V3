@@ -8,9 +8,11 @@ import { useI18n } from './client/i18n';
 
 // Route-level chunks: the dashboard ships in the entry bundle; everything else loads on demand.
 const loadAdminView = () => import('./client/components/AdminView');
+const loadBenchmarksView = () => import('./client/components/BenchmarksView');
 const loadProgressView = () => import('./client/components/ProgressView');
 const loadSessionPlayer = () => import('./client/components/SessionPlayerView');
 const AdminView = lazy(() => loadAdminView().then((m) => ({ default: m.AdminView })));
+const BenchmarksView = lazy(() => loadBenchmarksView().then((m) => ({ default: m.BenchmarksView })));
 const ProgressView = lazy(() => loadProgressView().then((m) => ({ default: m.ProgressView })));
 const SessionPlayerView = lazy(() => loadSessionPlayer().then((m) => ({ default: m.SessionPlayerView })));
 
@@ -174,9 +176,11 @@ export default function App() {
     ? '/session/[sessionId]'
     : isAdminRoute
       ? '/admin'
-      : effectivePath.startsWith('/progress')
-        ? '/progress'
-        : '/';
+      : effectivePath.startsWith('/benchmarks')
+        ? '/benchmarks'
+        : effectivePath.startsWith('/progress')
+          ? '/progress'
+          : '/';
 
   const demoBanner = isDisposableDemo ? (
     <div
@@ -264,6 +268,17 @@ export default function App() {
         {isAdminRoute && auth.role === 'admin' ? (
           <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
             <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
+          </Suspense>
+        ) : effectivePath.startsWith('/benchmarks') ? (
+          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+            <BenchmarksView
+              onOpenSession={(id, isLocked = true) => {
+                if (isLocked) {
+                  setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
+                }
+                navigate(`/session/${id}`);
+              }}
+            />
           </Suspense>
         ) : effectivePath.startsWith('/progress') ? (
           <Suspense fallback={<RouteFallback label={t('app.loading')} />}>

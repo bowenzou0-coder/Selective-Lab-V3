@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import {
+  Award,
   BarChart3,
   BookOpenCheck,
   Clock,
@@ -20,7 +21,7 @@ export interface StudioShellProps {
   children: ReactNode;
 }
 
-type NavKey = 'dashboard' | 'drills' | 'mocks' | 'progress' | 'admin';
+type NavKey = 'dashboard' | 'drills' | 'mocks' | 'benchmarks' | 'progress' | 'admin';
 
 export function StudioShell({
   currentPath,
@@ -36,13 +37,15 @@ export function StudioShell({
 
   const activeKey: NavKey = currentPath.startsWith('/admin')
     ? 'admin'
-    : currentPath.startsWith('/progress')
-      ? 'progress'
-      : homeAnchor === 'drills'
-        ? 'drills'
-        : homeAnchor === 'mocks'
-          ? 'mocks'
-          : 'dashboard';
+    : currentPath.startsWith('/benchmarks')
+      ? 'benchmarks'
+      : currentPath.startsWith('/progress')
+        ? 'progress'
+        : homeAnchor === 'drills'
+          ? 'drills'
+          : homeAnchor === 'mocks'
+            ? 'mocks'
+            : 'dashboard';
 
   const handleNav = (key: NavKey) => {
     if (key === 'dashboard') {
@@ -68,13 +71,14 @@ export function StudioShell({
       return;
     }
     setHomeAnchor('top');
-    onNavigate(key === 'progress' ? '/progress' : '/admin');
+    onNavigate(key === 'benchmarks' ? '/benchmarks' : key === 'progress' ? '/progress' : '/admin');
   };
 
   const navItems: { key: NavKey; label: string; shortLabel: string; href: string; icon: typeof LayoutGrid }[] = [
     { key: 'dashboard', label: t('nav.dashboard'), shortLabel: t('nav.dashboardShort'), href: '/', icon: LayoutGrid },
     { key: 'drills', label: t('nav.drills'), shortLabel: t('nav.drillsShort'), href: '/#practice-drills', icon: BookOpenCheck },
     { key: 'mocks', label: t('nav.mocks'), shortLabel: t('nav.mocksShort'), href: '/#mock-simulator', icon: Clock },
+    { key: 'benchmarks', label: t('nav.benchmarks'), shortLabel: t('nav.benchmarksShort'), href: '/benchmarks', icon: Award },
     { key: 'progress', label: t('nav.progress'), shortLabel: t('nav.progressShort'), href: '/progress', icon: BarChart3 },
     ...(role === 'admin'
       ? [{ key: 'admin' as const, label: t('nav.admin'), shortLabel: t('nav.adminShort'), href: '/admin', icon: SlidersHorizontal }]
