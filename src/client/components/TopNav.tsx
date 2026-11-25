@@ -1,11 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import {
   Award,
   BarChart3,
-  BookOpenCheck,
-  Clock,
   LayoutGrid,
   LogOut,
+  Settings,
   SlidersHorizontal,
 } from 'lucide-react';
 import { LanguageToggle, useI18n } from '../i18n';
@@ -21,7 +20,7 @@ export interface StudioShellProps {
   children: ReactNode;
 }
 
-type NavKey = 'dashboard' | 'drills' | 'mocks' | 'benchmarks' | 'progress' | 'admin';
+type NavKey = 'dashboard' | 'benchmarks' | 'progress' | 'settings' | 'admin';
 
 export function StudioShell({
   currentPath,
@@ -33,53 +32,39 @@ export function StudioShell({
   children,
 }: StudioShellProps) {
   const { t } = useI18n();
-  const [homeAnchor, setHomeAnchor] = useState<'top' | 'drills' | 'mocks'>('top');
 
   const activeKey: NavKey = currentPath.startsWith('/admin')
     ? 'admin'
-    : currentPath.startsWith('/benchmarks')
-      ? 'benchmarks'
-      : currentPath.startsWith('/progress')
-        ? 'progress'
-        : homeAnchor === 'drills'
-          ? 'drills'
-          : homeAnchor === 'mocks'
-            ? 'mocks'
-            : 'dashboard';
+    : currentPath.startsWith('/settings')
+      ? 'settings'
+      : currentPath.startsWith('/benchmarks')
+        ? 'benchmarks'
+        : currentPath.startsWith('/progress')
+          ? 'progress'
+          : 'dashboard';
 
   const handleNav = (key: NavKey) => {
     if (key === 'dashboard') {
-      setHomeAnchor('top');
       onNavigate('/');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-    if (key === 'drills') {
-      setHomeAnchor('drills');
-      onNavigate('/');
-      window.setTimeout(() => {
-        document.getElementById('practice-drills')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 60);
-      return;
-    }
-    if (key === 'mocks') {
-      setHomeAnchor('mocks');
-      onNavigate('/');
-      window.setTimeout(() => {
-        document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 60);
-      return;
-    }
-    setHomeAnchor('top');
-    onNavigate(key === 'benchmarks' ? '/benchmarks' : key === 'progress' ? '/progress' : '/admin');
+    onNavigate(
+      key === 'benchmarks'
+        ? '/benchmarks'
+        : key === 'progress'
+          ? '/progress'
+          : key === 'settings'
+            ? '/settings'
+            : '/admin'
+    );
   };
 
   const navItems: { key: NavKey; label: string; shortLabel: string; href: string; icon: typeof LayoutGrid }[] = [
     { key: 'dashboard', label: t('nav.dashboard'), shortLabel: t('nav.dashboardShort'), href: '/', icon: LayoutGrid },
-    { key: 'drills', label: t('nav.drills'), shortLabel: t('nav.drillsShort'), href: '/#practice-drills', icon: BookOpenCheck },
-    { key: 'mocks', label: t('nav.mocks'), shortLabel: t('nav.mocksShort'), href: '/#mock-simulator', icon: Clock },
     { key: 'benchmarks', label: t('nav.benchmarks'), shortLabel: t('nav.benchmarksShort'), href: '/benchmarks', icon: Award },
     { key: 'progress', label: t('nav.progress'), shortLabel: t('nav.progressShort'), href: '/progress', icon: BarChart3 },
+    { key: 'settings', label: t('nav.settings'), shortLabel: t('nav.settingsShort'), href: '/settings', icon: Settings },
     ...(role === 'admin'
       ? [{ key: 'admin' as const, label: t('nav.admin'), shortLabel: t('nav.adminShort'), href: '/admin', icon: SlidersHorizontal }]
       : []),
@@ -137,12 +122,13 @@ export function StudioShell({
                   <a
                     key={item.key}
                     href={item.href}
+                    data-tour={`nav-${item.key}`}
                     onClick={(e) => {
                       e.preventDefault();
                       handleNav(item.key);
                     }}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-colors whitespace-nowrap ${
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-[background-color,color,border-color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
                       isActive
                         ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5] shadow-[0_1px_2px_rgba(17,60,54,0.05)]'
                         : 'text-[#4A5955] font-sans-text font-medium hover:text-[#113C36] hover:bg-white/55 border border-transparent'
@@ -198,12 +184,13 @@ export function StudioShell({
             <a
               key={item.key}
               href={item.href}
+              data-tour={`nav-${item.key}`}
               onClick={(e) => {
                 e.preventDefault();
                 handleNav(item.key);
               }}
               aria-current={isActive ? 'page' : undefined}
-              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-colors ${
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] ${
                 isActive
                   ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5]'
                   : 'text-[#4A5955] font-medium'

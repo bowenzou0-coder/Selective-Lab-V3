@@ -1,10 +1,12 @@
 import type {
   AdminLearnerSummary,
+  AutoCalibrateConfig,
   BankImportManifest,
   BankMasterySummary,
   BenchmarkReportRecord,
   DailyFocusPlan,
   ImportBatchRecord,
+  LearnerPreferences,
   LearningConfig,
   MarkingResult,
   MediaAssetRecord,
@@ -77,6 +79,9 @@ export interface DashboardResponse {
   todaySlotsCorrect: number;
   dailyLimits: Record<SectionCode, number>;
   autoCalibrateEnabled?: boolean;
+  adminOverrideLocked?: boolean;
+  onboardingCompleted?: boolean;
+  shouldShowOnboarding?: boolean;
   poolCounts?: Record<SectionCode, { live: number; unseen: number }>;
   batchCounts: Record<MockTestBatch, Record<SectionCode, number>>;
   customBatches?: CustomBatchOption[];
@@ -136,6 +141,7 @@ export interface ProgressResponse {
   }[];
   totalAttempts: number;
   masterySummary: BankMasterySummary;
+  benchmarkReports?: BenchmarkReportRecord[];
 }
 
 export interface AdminStatusResponse {
@@ -199,6 +205,42 @@ export interface ProgressResetResponse {
   preservedQuestionsCount: number;
 }
 
+export interface AccountDeleteResponse extends ProgressResetResponse {
+  deletedUser: boolean;
+  clearedFlags: number;
+  studentId?: string;
+}
+
+export interface LearnerDailySettingsView {
+  autoCalibrate: AutoCalibrateConfig;
+  dailyQuestionLimitBySection: Record<SectionCode, number>;
+  dailyGoalMinutes: number;
+  sectionDrillQuestionCount: number;
+  sectionDrillTimeMinutes: number;
+}
+
+export interface StudentSettingsResponse {
+  studentId: string;
+  role: 'student' | 'admin';
+  email?: string;
+  effectiveConfig: LearnerDailySettingsView;
+  globalDefaults: LearnerDailySettingsView;
+  preferences: LearnerPreferences | null;
+  adminOverrideLocked: boolean;
+  dailyFocusPlan: DailyFocusPlan | null;
+  progressCounts: ProgressCountsResponse | null;
+  flags: QuestionFlagRecord[];
+  onboardingCompleted: boolean;
+}
+
+export interface AdminLearnerPreferencesResponse {
+  studentId: string;
+  preferences: LearnerPreferences | null;
+  effectiveConfig: LearnerDailySettingsView;
+  globalDefaults: LearnerDailySettingsView;
+  adminOverrideLocked: boolean;
+}
+
 export interface RestoreReport {
   valid: boolean;
   dryRun: boolean;
@@ -250,6 +292,9 @@ export type ApiError = Error & {
   serverCheckpoint?: SessionRecord['checkpoint'];
   expiredAutoSubmitted?: boolean;
   alreadySubmitted?: boolean;
+  sectionExpired?: boolean;
+  sectionPhase?: string;
+  session?: SessionRecord;
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -281,6 +326,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       serverCheckpoint?: SessionRecord['checkpoint'];
       expiredAutoSubmitted?: boolean;
       alreadySubmitted?: boolean;
+      sectionExpired?: boolean;
+      sectionPhase?: string;
+      session?: SessionRecord;
     };
     const err = new Error(payload?.error || `Request failed (${res.status})`) as ApiError;
     err.status = res.status;
@@ -292,6 +340,15 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     }
     if (typeof payload?.alreadySubmitted === 'boolean') {
       err.alreadySubmitted = payload.alreadySubmitted;
+    }
+    if (typeof payload?.sectionExpired === 'boolean') {
+      err.sectionExpired = payload.sectionExpired;
+    }
+    if (typeof payload?.sectionPhase === 'string') {
+      err.sectionPhase = payload.sectionPhase;
+    }
+    if (payload?.session) {
+      err.session = payload.session;
     }
     throw err;
   }
@@ -399,6 +456,26 @@ export const api = {
         body: JSON.stringify({ checkpoint, assisted, expectedRevision }),
       }
     ),
+  completeSessionSection: (
+    id: string,
+    checkpoint?: SessionRecord['checkpoint'],
+    expectedRevision?: number
+  ) =>
+    request<
+      | ({ finishedExam: true; alreadySubmitted?: boolean; expiredAutoSubmitted?: boolean; session: SessionRecord } & SessionSubmissionPayload)
+      | { finishedExam: false; session: SessionRecord; serverNowIso?: string }
+    >(`/api/student/sessions/${encodeURIComponent(id)}/section/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ checkpoint, expectedRevision }),
+    }),
+  startSessionSection: (id: string, expectedRevision?: number) =>
+    request<{ session: SessionRecord; serverNowIso?: string }>(
+      `/api/student/sessions/${encodeURIComponent(id)}/section/start`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ expectedRevision }),
+      }
+    ),
   evaluateWriting: (submissionId: string) =>
     request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
       `/api/student/writing/${encodeURIComponent(submissionId)}/evaluate`,
@@ -411,6 +488,57 @@ export const api = {
     }),
   getProgress: () =>
     request<ProgressResponse>('/api/student/progress'),
+  getStudentSettings: () =>
+    request<StudentSettingsResponse>('/api/student/settings'),
+  saveStudentDailyPlan: (payload: {
+    autoCalibrate?: AutoCalibrateConfig;
+    dailyQuestionLimitBySection?: Record<SectionCode, number>;
+    dailyGoalMinutes?: number;
+    sectionDrillQuestionCount?: number;
+    sectionDrillTimeMinutes?: number;
+    resetToDefaults?: boolean;
+  }) =>
+    request<{
+      ok: boolean;
+      preferences: LearnerPreferences;
+      effectiveConfig: LearnerDailySettingsView;
+      adminOverrideLocked: boolean;
+    }>('/api/student/settings/daily-plan', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  recalibrateStudentDailyPlan: (payload?: { autoCalibrate?: AutoCalibrateConfig }) =>
+    request<{
+      plan: DailyFocusPlan;
+      studentId?: string;
+      effectiveConfig: LearnerDailySettingsView;
+    }>('/api/student/settings/recalibrate', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    }),
+  setOnboardingStatus: (completed: boolean) =>
+    request<{
+      ok: boolean;
+      onboardingCompleted: boolean;
+      onboardingCompletedAtIso: string | null;
+    }>('/api/student/settings/onboarding', {
+      method: 'POST',
+      body: JSON.stringify({ completed }),
+    }),
+  getOwnProgressCounts: () =>
+    request<ProgressCountsResponse & { studentId?: string }>('/api/student/study-progress'),
+  resetOwnStudyProgress: (confirmation = 'RESET') =>
+    request<ProgressResetResponse & { studentId?: string }>('/api/student/study-progress/reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirmation }),
+    }),
+  getOwnFlags: () =>
+    request<{ flags: QuestionFlagRecord[] }>('/api/student/flags'),
+  deleteOwnAccount: (confirmation = 'DELETE') =>
+    request<AccountDeleteResponse>('/api/student/account', {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation }),
+    }),
 
   // Admin APIs
   getAdminStatus: () =>
@@ -469,10 +597,41 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ studentId }),
     }),
+  deleteAdminLearner: (studentId: string, confirmation = 'DELETE') =>
+    request<AccountDeleteResponse>(`/api/admin/learners/${encodeURIComponent(studentId)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation }),
+    }),
   getAdminDailyPlan: (studentId?: string) => {
     const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
     return request<{ studentId: string | null; plan: DailyFocusPlan | null }>(`/api/admin/daily-plan${suffix}`);
   },
+  getAdminLearnerPreferences: (studentId: string) =>
+    request<AdminLearnerPreferencesResponse>(
+      `/api/admin/learners/${encodeURIComponent(studentId)}/preferences`
+    ),
+  saveAdminLearnerPreferences: (
+    studentId: string,
+    payload: {
+      autoCalibrate?: AutoCalibrateConfig;
+      dailyQuestionLimitBySection?: Record<SectionCode, number>;
+      dailyGoalMinutes?: number;
+      sectionDrillQuestionCount?: number;
+      sectionDrillTimeMinutes?: number;
+      adminOverrideLocked?: boolean;
+      resetToDefaults?: boolean;
+    }
+  ) =>
+    request<{
+      ok: boolean;
+      studentId: string;
+      preferences: LearnerPreferences;
+      effectiveConfig: LearnerDailySettingsView;
+      adminOverrideLocked: boolean;
+    }>(`/api/admin/learners/${encodeURIComponent(studentId)}/preferences`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   getQuestionVersions: (questionId: string) =>
     request<{
       questionFamilyId: string;

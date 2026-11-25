@@ -7,6 +7,9 @@ interface SubmitConfirmDialogProps {
   answeredSlots: number;
   totalSlots: number;
   flaggedCount: number;
+  titleOverride?: string;
+  descriptionOverride?: string;
+  confirmLabelOverride?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -18,6 +21,9 @@ export function SubmitConfirmDialog({
   answeredSlots,
   totalSlots,
   flaggedCount,
+  titleOverride,
+  descriptionOverride,
+  confirmLabelOverride,
   onCancel,
   onConfirm,
 }: SubmitConfirmDialogProps) {
@@ -27,8 +33,8 @@ export function SubmitConfirmDialog({
       open={open}
       onClose={onCancel}
       variant="center"
-      title={t('session.submitModalTitle')}
-      description={t('session.submitModalNote')}
+      title={titleOverride || t('session.submitModalTitle')}
+      description={descriptionOverride || t('session.submitModalNote')}
       closeLabel={t('session.keepWorking')}
       widthClassName="w-[min(28rem,calc(100vw-2rem))]"
       footer={
@@ -47,7 +53,7 @@ export function SubmitConfirmDialog({
             onClick={onConfirm}
             className="cursor-pointer rounded-[10px] bg-[#113C36] px-5 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform] duration-150 hover:bg-[#0B2B26] active:scale-[0.97] disabled:opacity-60"
           >
-            {submitting ? t('session.submitting') : t('session.confirmAndSubmit')}
+            {submitting ? t('session.submitting') : confirmLabelOverride || t('session.confirmAndSubmit')}
           </button>
         </div>
       }

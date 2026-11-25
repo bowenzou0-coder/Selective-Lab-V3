@@ -24,7 +24,6 @@ import {
   type ApplicantGenderFilter,
   type NswPerformanceBand,
 } from '../../shared/nswBenchmark';
-import { NswBenchmarkEstimator } from './NswBenchmarkEstimator';
 
 interface BenchmarksViewProps {
   onOpenSession: (sessionId: string, isLocked?: boolean) => void;
@@ -905,40 +904,6 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                       </div>
                     ) : null}
                   </section>
-
-                  {/* Collapsible What-If Simulator (secondary to the official saved report) */}
-                  <NswBenchmarkEstimator
-                    compact
-                    defaultOpen={false}
-                    hideEyebrow
-                    titleOverride={t('bm.whatIfTitle')}
-                    initialScores={{
-                      read: {
-                        score: activeReport.sections.READ.correct,
-                        maxScore: Math.max(1, activeReport.sections.READ.total),
-                      },
-                      math: {
-                        score: activeReport.sections.MATH.correct,
-                        maxScore: Math.max(1, activeReport.sections.MATH.total),
-                      },
-                      think: {
-                        score: activeReport.sections.THINK.correct,
-                        maxScore: Math.max(1, activeReport.sections.THINK.total),
-                      },
-                      writ: {
-                        score: activeReport.sections.WRIT.correct,
-                        maxScore: Math.max(1, activeReport.sections.WRIT.total),
-                      },
-                    }}
-                    sectionSources={{
-                      READ: activeReport.sections.READ.isAssumed ? 'assumed' : 'actual',
-                      MATH: activeReport.sections.MATH.isAssumed ? 'assumed' : 'actual',
-                      THINK: activeReport.sections.THINK.isAssumed ? 'assumed' : 'actual',
-                      WRIT: activeReport.sections.WRIT.isAssumed ? 'assumed' : 'actual',
-                    }}
-                    initialDifficulty={activeReport.difficulty}
-                    sourceNote={t('bm.whatIfNote')}
-                  />
 
                   <div className="flex items-start gap-2 text-[11px] text-[#78756E] leading-relaxed">
                     <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />

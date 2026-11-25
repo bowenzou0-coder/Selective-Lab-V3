@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import { api, type AuthState } from './client/api';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
@@ -10,11 +10,40 @@ import { useI18n } from './client/i18n';
 const loadAdminView = () => import('./client/components/AdminView');
 const loadBenchmarksView = () => import('./client/components/BenchmarksView');
 const loadProgressView = () => import('./client/components/ProgressView');
+const loadSettingsView = () => import('./client/components/SettingsView');
+const loadOnboardingTour = () => import('./client/components/OnboardingTour');
 const loadSessionPlayer = () => import('./client/components/SessionPlayerView');
 const AdminView = lazy(() => loadAdminView().then((m) => ({ default: m.AdminView })));
 const BenchmarksView = lazy(() => loadBenchmarksView().then((m) => ({ default: m.BenchmarksView })));
 const ProgressView = lazy(() => loadProgressView().then((m) => ({ default: m.ProgressView })));
+const SettingsView = lazy(() => loadSettingsView().then((m) => ({ default: m.SettingsView })));
+const OnboardingTour = lazy(() => loadOnboardingTour().then((m) => ({ default: m.OnboardingTour })));
 const SessionPlayerView = lazy(() => loadSessionPlayer().then((m) => ({ default: m.SessionPlayerView })));
+
+const ONBOARDING_STORAGE_PREFIX = 'selective_lab_onboarding_done:';
+
+function hasLocalOnboardingDone(studentId?: string | null): boolean {
+  if (!studentId) return false;
+  try {
+    return window.localStorage.getItem(`${ONBOARDING_STORAGE_PREFIX}${studentId}`) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setLocalOnboardingDone(studentId?: string | null, done = true): void {
+  if (!studentId) return;
+  try {
+    const key = `${ONBOARDING_STORAGE_PREFIX}${studentId}`;
+    if (done) {
+      window.localStorage.setItem(key, '1');
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore storage quota / privacy mode errors
+  }
+}
 
 const signedOut: AuthState = { authenticated: false, role: null, studentId: null };
 
@@ -45,6 +74,8 @@ export default function App() {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState('');
   const [logoutError, setLogoutError] = useState('');
+  const [tourOpen, setTourOpen] = useState(false);
+  const autoPromptedTourRef = useRef<string | null>(null);
 
   useEffect(() => {
     const onPopState = () => {
@@ -126,6 +157,63 @@ export default function App() {
     setAuth((prev) => (prev && prev.activeSessionId !== null ? { ...prev, activeSessionId: null } : prev));
   }, []);
 
+  const handleOnboardingEligible = useCallback(
+    (shouldShow: boolean) => {
+      if (!shouldShow || !auth?.authenticated || !auth.studentId || auth.activeSessionId) return;
+      if (autoPromptedTourRef.current === auth.studentId) return;
+      if (hasLocalOnboardingDone(auth.studentId)) return;
+      autoPromptedTourRef.current = auth.studentId;
+      setTourOpen(true);
+    },
+    [auth]
+  );
+
+  const handleDismissTour = useCallback(() => {
+    setTourOpen(false);
+    if (auth?.authenticated && auth.studentId) {
+      setLocalOnboardingDone(auth.studentId, true);
+      void api.setOnboardingStatus(true).catch(() => {
+        // local storage already prevents nagging on this device
+      });
+    }
+  }, [auth]);
+
+  const handleReplayTour = useCallback(() => {
+    if (auth?.authenticated && auth.studentId) {
+      autoPromptedTourRef.current = auth.studentId;
+      setLocalOnboardingDone(auth.studentId, false);
+    }
+    navigate('/');
+    setTourOpen(true);
+  }, [auth, navigate]);
+
+  const handleStartCalibration = useCallback(async () => {
+    if (auth?.authenticated && auth.studentId) {
+      setLocalOnboardingDone(auth.studentId, true);
+      void api.setOnboardingStatus(true).catch(() => {});
+    }
+    const res = await api.createSession({ mode: 'diagnostic' });
+    setTourOpen(false);
+    setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: res.sessionId } : prev));
+    navigate(`/session/${res.sessionId}`);
+  }, [auth, navigate]);
+
+  const handleAccountDeleted = useCallback(() => {
+    if (auth?.authenticated && auth.studentId) {
+      setLocalOnboardingDone(auth.studentId, false);
+    }
+    setTourOpen(false);
+    autoPromptedTourRef.current = null;
+    setAuth((previous) => ({
+      ...previous,
+      ...signedOut,
+      email: undefined,
+      activeSessionId: null,
+    }));
+    window.history.replaceState({}, '', '/');
+    setPath('/');
+  }, [auth]);
+
   // Lock all routes into an active non-sandbox test until submitted
   useEffect(() => {
     if (!auth?.authenticated || !auth.activeSessionId) return;
@@ -176,11 +264,13 @@ export default function App() {
     ? '/session/[sessionId]'
     : isAdminRoute
       ? '/admin'
-      : effectivePath.startsWith('/benchmarks')
-        ? '/benchmarks'
-        : effectivePath.startsWith('/progress')
-          ? '/progress'
-          : '/';
+      : effectivePath.startsWith('/settings')
+        ? '/settings'
+        : effectivePath.startsWith('/benchmarks')
+          ? '/benchmarks'
+          : effectivePath.startsWith('/progress')
+            ? '/progress'
+            : '/';
 
   const demoBanner = isDisposableDemo ? (
     <div
@@ -267,7 +357,17 @@ export default function App() {
       >
         {isAdminRoute && auth.role === 'admin' ? (
           <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-            <AdminView onOpenSession={(id) => navigate(`/session/${id}`)} />
+            <AdminView
+              currentUserId={auth.studentId}
+              onOpenSession={(id) => navigate(`/session/${id}`)}
+            />
+          </Suspense>
+        ) : effectivePath.startsWith('/settings') ? (
+          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+            <SettingsView
+              onAccountDeleted={handleAccountDeleted}
+              onReplayTour={handleReplayTour}
+            />
           </Suspense>
         ) : effectivePath.startsWith('/benchmarks') ? (
           <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
@@ -282,7 +382,10 @@ export default function App() {
           </Suspense>
         ) : effectivePath.startsWith('/progress') ? (
           <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-            <ProgressView onOpenSession={(id) => navigate(`/session/${id}`)} />
+            <ProgressView
+              onOpenSession={(id) => navigate(`/session/${id}`)}
+              onNavigate={navigate}
+            />
           </Suspense>
         ) : (
           <HomeView
@@ -294,7 +397,19 @@ export default function App() {
               navigate(`/session/${id}`);
             }}
             onNavigate={navigate}
+            onOnboardingEligible={handleOnboardingEligible}
           />
+        )}
+        {tourOpen && !auth.activeSessionId && (
+          <Suspense fallback={null}>
+            <OnboardingTour
+              open={tourOpen}
+              currentPath={effectivePath}
+              onNavigate={navigate}
+              onDismiss={handleDismissTour}
+              onStartCalibration={handleStartCalibration}
+            />
+          </Suspense>
         )}
       </StudioShell>
     );

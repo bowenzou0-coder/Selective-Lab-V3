@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./client/styles/tokens.css";
+@import "./client/styles/onboarding.css";
 
 @layer base {
   button,

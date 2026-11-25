@@ -11,7 +11,7 @@ import {
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
-import { api, type SessionDetailResponse } from '../api';
+import { api, type ApiError, type SessionDetailResponse } from '../api';
 import { CheckpointSaveQueue } from '../checkpointQueue';
 import type {
   MarkingResult,
@@ -27,6 +27,7 @@ import { createSessionClock, useClockValue } from '../sessionClock';
 import { AdminInspectorDrawer } from './session/AdminInspectorDrawer';
 import { ExamTimer } from './session/ExamTimer';
 import { QuestionNavigator } from './session/QuestionNavigator';
+import { SectionBreakView } from './session/SectionBreakView';
 import { SubmitConfirmDialog } from './session/SubmitConfirmDialog';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
@@ -86,7 +87,7 @@ export function SessionPlayerView({
   onNavigate,
   onActiveSessionCleared,
 }: SessionPlayerViewProps) {
-  const { t, isZh, skillName } = useI18n();
+  const { t, isZh, skillName, sectionLabel } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [session, setSession] = useState<SessionRecord | null>(null);
@@ -125,6 +126,7 @@ export function SessionPlayerView({
   const [navOpen, setNavOpen] = useState(false);
   const [activeGapIndex, setActiveGapIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [startingNextSection, setStartingNextSection] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const autoSubmittedRef = useRef(false);
   const onActiveSessionClearedRef = useRef(onActiveSessionCleared);
@@ -200,6 +202,38 @@ export function SessionPlayerView({
     writingDraftsByQuestionId,
   ]);
 
+  const syncClockFromSession = useCallback(
+    (s: SessionRecord, serverNowIso?: string) => {
+      const parsedServerMs = serverNowIso ? Date.parse(serverNowIso) : NaN;
+      if (!Number.isNaN(parsedServerMs)) {
+        clock.setServerNow(serverNowIso);
+      }
+      if (s.status !== 'in_progress') {
+        clock.setRunning(false);
+        return;
+      }
+      if (s.sectionState) {
+        if (s.sectionState.phase === 'on_break') {
+          clock.setRunning(false);
+          clock.setDeadline(undefined, undefined);
+          return;
+        }
+        const activeSec = s.sectionState.sections[s.sectionState.currentSectionIndex];
+        clock.setDeadline(activeSec?.deadlineAt, activeSec?.timeLimitSec);
+        const nowMs = !Number.isNaN(parsedServerMs) ? parsedServerMs : Date.now();
+        const startMs = activeSec?.startedAt ? Date.parse(activeSec.startedAt) : NaN;
+        const secElapsed = Number.isFinite(startMs) ? Math.max(0, Math.floor((nowMs - startMs) / 1000)) : 0;
+        clock.setElapsed(secElapsed);
+        clock.setRunning(true);
+        return;
+      }
+      clock.setDeadline(s.deadlineAt, s.timeLimitSec);
+      clock.setElapsed(s.checkpoint?.elapsedSec || 0);
+      clock.setRunning(true);
+    },
+    [clock]
+  );
+
   // Load authoritative session from server
   useEffect(() => {
     let active = true;
@@ -214,9 +248,7 @@ export function SessionPlayerView({
       .getSession(sessionId)
       .then(async (res) => {
         if (!active) return;
-        const parsedServerMs = res.serverNowIso ? Date.parse(res.serverNowIso) : Date.now();
-        clock.setServerNow(Number.isNaN(parsedServerMs) ? undefined : res.serverNowIso);
-        clock.setDeadline(res.session.deadlineAt, res.session.timeLimitSec);
+        syncClockFromSession(res.session, res.serverNowIso);
         sessionRef.current = res.session;
         setSession(res.session);
         setQuestions(res.questions);
@@ -230,6 +262,7 @@ export function SessionPlayerView({
             Boolean(
               sessionRef.current &&
                 sessionRef.current.status === 'in_progress' &&
+                sessionRef.current.sectionState?.phase !== 'on_break' &&
                 !submittingRef.current
             ),
           saveFn: (payload, expectedRevision) =>
@@ -259,9 +292,21 @@ export function SessionPlayerView({
               sessionRef.current = refreshed.session;
               setSession(refreshed.session);
               setQuestions(refreshed.questions);
-              if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
-              if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
-              onActiveSessionClearedRef.current?.();
+              const rev = refreshed.session.checkpointRevision ?? 1;
+              checkpointRevisionRef.current = rev;
+              queue.clearConflict(rev, true);
+              syncClockFromSession(refreshed.session, refreshed.serverNowIso);
+              autoSubmittedRef.current = false;
+              if (refreshed.session.status === 'submitted') {
+                if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
+                if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
+                onActiveSessionClearedRef.current?.();
+              } else {
+                if (refreshed.session.checkpoint) {
+                  applyCheckpointToState(refreshed.session.checkpoint, refreshed.questions.length);
+                }
+                setSaveStatus('saved');
+              }
             } catch {
               if (active) setSaveStatus('failed');
             }
@@ -282,9 +327,10 @@ export function SessionPlayerView({
         const cp = res.session.checkpoint;
         if (cp) {
           applyCheckpointToState(cp, res.questions.length);
+          syncClockFromSession(res.session, res.serverNowIso);
         }
 
-        if (res.session.status === 'in_progress') {
+        if (res.session.status === 'in_progress' && res.session.sectionState?.phase !== 'on_break') {
           const localDraft = readLocalDraft(draftStorageKey);
           if (localDraft) {
             const normCp = (c?: SessionCheckpoint) =>
@@ -310,7 +356,7 @@ export function SessionPlayerView({
           }
         } else {
           clearLocalDraft(draftStorageKey);
-          if (!res.session.isSandbox) {
+          if (res.session.status !== 'in_progress' && !res.session.isSandbox) {
             onActiveSessionClearedRef.current?.();
           }
         }
@@ -339,7 +385,7 @@ export function SessionPlayerView({
       saveQueueRef.current?.dispose();
       saveQueueRef.current = null;
     };
-  }, [sessionId, isAdmin, draftStorageKey, applyCheckpointToState, clock]);
+  }, [sessionId, isAdmin, draftStorageKey, applyCheckpointToState, syncClockFromSession, clock]);
 
   const flushCheckpoint = useCallback(async (overrideExpectedRevision?: number) => {
     const queue = saveQueueRef.current;
@@ -347,11 +393,13 @@ export function SessionPlayerView({
     await queue.flush(overrideExpectedRevision);
   }, []);
 
-  // Run the exam clock while in progress, plus a 30s periodic autosave.
-  const inProgress = session?.status === 'in_progress';
+  // Run the exam clock while a timed section/session is active, plus a 30s periodic autosave.
+  const inProgressActiveSection = Boolean(
+    session?.status === 'in_progress' && session.sectionState?.phase !== 'on_break'
+  );
   useEffect(() => {
-    clock.setRunning(Boolean(inProgress));
-    if (!inProgress) return;
+    clock.setRunning(inProgressActiveSection);
+    if (!inProgressActiveSection) return;
     const saveTimer = window.setInterval(() => {
       if (!saveQueueRef.current?.hasActiveConflict()) {
         void flushCheckpoint();
@@ -361,11 +409,11 @@ export function SessionPlayerView({
       window.clearInterval(saveTimer);
       clock.setRunning(false);
     };
-  }, [inProgress, clock, flushCheckpoint]);
+  }, [inProgressActiveSection, clock, flushCheckpoint]);
 
   // Debounced checkpoint save on state change
   useEffect(() => {
-    if (!session || session.status !== 'in_progress' || !dirtyRef.current) return;
+    if (!session || session.status !== 'in_progress' || session.sectionState?.phase === 'on_break' || !dirtyRef.current) return;
     const t = window.setTimeout(() => {
       void flushCheckpoint();
     }, 450);
@@ -378,8 +426,29 @@ export function SessionPlayerView({
     eliminatedByPartId,
     highlightsByStimulusId,
     writingDraft,
+    writingDraftsByQuestionId,
     flushCheckpoint,
   ]);
+
+  const sectionState = session?.sectionState;
+  const isOnSectionBreak = Boolean(
+    session && session.status === 'in_progress' && sectionState?.phase === 'on_break'
+  );
+  const activeSection = sectionState
+    ? sectionState.sections[sectionState.currentSectionIndex] ?? null
+    : null;
+  const isLastSection =
+    !sectionState || sectionState.currentSectionIndex >= sectionState.sections.length - 1;
+  const nextSection =
+    sectionState && !isLastSection
+      ? sectionState.sections[sectionState.currentSectionIndex + 1] ?? null
+      : null;
+  const sectionStart = activeSection ? activeSection.startIndex : 0;
+  const sectionEnd = activeSection ? activeSection.endIndex : questions.length;
+  const sectionQuestions = useMemo(
+    () => questions.slice(sectionStart, sectionEnd),
+    [questions, sectionStart, sectionEnd]
+  );
 
   const currentQuestion = questions[currentIndex];
 
@@ -438,12 +507,16 @@ export function SessionPlayerView({
 
   const handleGoIndex = useCallback(
     (nextIdx: number) => {
-      const bounded = Math.max(0, Math.min(questions.length - 1, nextIdx));
+      const minIdx = activeSection ? activeSection.startIndex : 0;
+      const maxIdx = activeSection
+        ? Math.max(minIdx, activeSection.endIndex - 1)
+        : Math.max(0, questions.length - 1);
+      const bounded = Math.max(minIdx, Math.min(maxIdx, nextIdx));
       persistDraftPatch({ currentIndex: bounded });
       setCurrentIndex(bounded);
       setActiveGapIndex(0);
     },
-    [questions.length, persistDraftPatch]
+    [activeSection, questions.length, persistDraftPatch]
   );
 
   const isLockedStudentSession = Boolean(
@@ -458,14 +531,15 @@ export function SessionPlayerView({
     const remaining = c.getRemainingSec();
     return remaining !== null && remaining <= 0;
   });
-  const isTimeUp = isLockedStudentSession && clockSaysTimeUp;
+  const isTimeUp = isLockedStudentSession && !isOnSectionBreak && clockSaysTimeUp;
   const isAdminRun = Boolean(session && session.mode === 'admin_calibration' && isAdmin);
 
-  // Keyboard shortcuts (1-8 / A-H, N / P, F) — blocked once time is up, submitting, or confirm dialog open
+  // Keyboard shortcuts (1-8 / A-H, N / P, F) — blocked once time is up, on break, submitting, or confirm dialog open
   useEffect(() => {
     if (
       !session ||
       session.status !== 'in_progress' ||
+      isOnSectionBreak ||
       !currentQuestion ||
       isTimeUp ||
       submitting ||
@@ -534,9 +608,10 @@ export function SessionPlayerView({
     handleToggleFlag,
     handleSelectAnswer,
     isAdminRun,
+    isOnSectionBreak,
   ]);
 
-  // Re-sync clock anchor and check remote submit/expiry after tab wake / OS sleep
+  // Re-sync clock anchor and check remote submit/expiry/section-transition after tab wake / OS sleep
   useEffect(() => {
     if (!session || session.status !== 'in_progress') return;
     const onVisible = () => {
@@ -544,9 +619,7 @@ export function SessionPlayerView({
       api
         .getSession(session.sessionId)
         .then((refreshed) => {
-          if (refreshed.serverNowIso && !Number.isNaN(Date.parse(refreshed.serverNowIso))) {
-            clock.setServerNow(refreshed.serverNowIso);
-          }
+          syncClockFromSession(refreshed.session, refreshed.serverNowIso);
           if (refreshed.session.status === 'submitted') {
             clearLocalDraft(draftStorageKey);
             setSession(refreshed.session);
@@ -554,24 +627,49 @@ export function SessionPlayerView({
             if (refreshed.reviewResults) setReviewResults(refreshed.reviewResults);
             if (refreshed.writingReview) setWritingReview(refreshed.writingReview);
             onActiveSessionClearedRef.current?.();
+            return;
+          }
+          const remotePhase = refreshed.session.sectionState?.phase;
+          const remoteIdx = refreshed.session.sectionState?.currentSectionIndex;
+          const localPhase = sessionRef.current?.sectionState?.phase;
+          const localIdx = sessionRef.current?.sectionState?.currentSectionIndex;
+          if (remotePhase !== localPhase || remoteIdx !== localIdx) {
+            clearLocalDraft(draftStorageKey);
+            dirtyRef.current = false;
+            const rev = refreshed.session.checkpointRevision ?? 1;
+            checkpointRevisionRef.current = rev;
+            saveQueueRef.current?.clearConflict(rev, true);
+            sessionRef.current = refreshed.session;
+            setSession(refreshed.session);
+            setQuestions(refreshed.questions);
+            if (refreshed.session.checkpoint) {
+              applyCheckpointToState(refreshed.session.checkpoint, refreshed.questions.length);
+              syncClockFromSession(refreshed.session, refreshed.serverNowIso);
+            }
+            autoSubmittedRef.current = false;
+            setSaveStatus('saved');
           }
         })
         .catch(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [session, draftStorageKey, clock]);
+  }, [session, draftStorageKey, syncClockFromSession, applyCheckpointToState]);
 
-  // Warn on tab close/refresh when unsent draft exists or while locked in timed test
+  // Warn on tab close/refresh when unsent draft exists or while locked in an active timed test section
   useEffect(() => {
-    if (!isLockedStudentSession && saveStatus !== 'unsent' && saveStatus !== 'failed') return;
+    if ((!isLockedStudentSession || isOnSectionBreak) && saveStatus !== 'unsent' && saveStatus !== 'failed') return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [isLockedStudentSession, saveStatus]);
+  }, [isLockedStudentSession, isOnSectionBreak, saveStatus]);
+
+  useEffect(() => {
+    autoSubmittedRef.current = false;
+  }, [sectionState?.currentSectionIndex, sectionState?.phase]);
 
   const handleSubmit = useCallback(async () => {
     if (!session || submittingRef.current) return;
@@ -606,7 +704,7 @@ export function SessionPlayerView({
       setWritingReview(res.writingReview);
       onActiveSessionClearedRef.current?.();
     } catch (err) {
-      const apiErr = err as { status?: number; currentRevision?: number; serverCheckpoint?: SessionCheckpoint };
+      const apiErr = err as ApiError;
       if (apiErr.status === 409 && typeof apiErr.currentRevision === 'number' && apiErr.serverCheckpoint) {
         setConflictState({
           currentRevision: apiErr.currentRevision,
@@ -627,14 +725,119 @@ export function SessionPlayerView({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [session, draftStorageKey, isTimeUp, clock]);
+  }, [session, draftStorageKey, isTimeUp, clock, t]);
 
-  // Auto-submit when timed locked student session hits 00:00 on server clock
+  const handleCompleteSection = useCallback(async () => {
+    if (!session || !session.sectionState || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitConfirmOpen(false);
+    setSubmitting(true);
+    setError('');
+    try {
+      const expectedRev = saveQueueRef.current?.getRevision() ?? checkpointRevisionRef.current;
+      const res = await api.completeSessionSection(
+        session.sessionId,
+        {
+          ...checkpointRef.current,
+          elapsedSec: clock.getElapsedSec(),
+        },
+        expectedRev
+      );
+      clearLocalDraft(draftStorageKey);
+      dirtyRef.current = false;
+      const nextRev = res.session.checkpointRevision ?? expectedRev + 1;
+      checkpointRevisionRef.current = nextRev;
+      saveQueueRef.current?.clearConflict(nextRev, true);
+      sessionRef.current = res.session;
+      setSession(res.session);
+      setNavOpen(false);
+      if (res.finishedExam) {
+        clock.setRunning(false);
+        setReviewResults(res.reviewResults);
+        setWritingReview(res.writingReview);
+        onActiveSessionClearedRef.current?.();
+      } else {
+        syncClockFromSession(res.session, res.serverNowIso);
+        if (res.session.checkpoint) {
+          applyCheckpointToState(res.session.checkpoint, questions.length);
+          syncClockFromSession(res.session, res.serverNowIso);
+        }
+        setSaveStatus('saved');
+        autoSubmittedRef.current = false;
+      }
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 409 && typeof apiErr.currentRevision === 'number' && apiErr.serverCheckpoint) {
+        setConflictState({
+          currentRevision: apiErr.currentRevision,
+          serverCheckpoint: apiErr.serverCheckpoint,
+        });
+        setSaveStatus('conflict');
+        setError('');
+      } else {
+        setError(err instanceof Error ? err.message : t('session.unableSubmit'));
+      }
+      if (isTimeUp) {
+        window.setTimeout(() => {
+          autoSubmittedRef.current = false;
+          setAutoSubmitRetry((n) => n + 1);
+        }, 2500);
+      }
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }, [session, draftStorageKey, isTimeUp, clock, syncClockFromSession, applyCheckpointToState, questions.length, t]);
+
+  const handleStartNextSection = useCallback(async () => {
+    if (!session || !session.sectionState || startingNextSection) return;
+    setStartingNextSection(true);
+    setError('');
+    try {
+      const expectedRev = saveQueueRef.current?.getRevision() ?? checkpointRevisionRef.current;
+      const res = await api.startSessionSection(session.sessionId, expectedRev);
+      const nextRev = res.session.checkpointRevision ?? expectedRev + 1;
+      checkpointRevisionRef.current = nextRev;
+      saveQueueRef.current?.clearConflict(nextRev, true);
+      sessionRef.current = res.session;
+      setSession(res.session);
+      autoSubmittedRef.current = false;
+      const nextActive =
+        res.session.sectionState?.sections[res.session.sectionState.currentSectionIndex];
+      if (nextActive) {
+        setCurrentIndex(nextActive.startIndex);
+        setActiveGapIndex(0);
+      }
+      if (res.session.checkpoint) {
+        checkpointRef.current = res.session.checkpoint;
+      }
+      syncClockFromSession(res.session, res.serverNowIso);
+      setSaveStatus('saved');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('session.unableLoad'));
+    } finally {
+      setStartingNextSection(false);
+    }
+  }, [session, startingNextSection, syncClockFromSession, t]);
+
+  // Auto-submit / auto-advance when timed locked student session hits 00:00 on server clock
   useEffect(() => {
-    if (!isTimeUp || autoSubmittedRef.current || submitting) return;
+    if (!isTimeUp || isOnSectionBreak || autoSubmittedRef.current || submitting) return;
     autoSubmittedRef.current = true;
-    handleSubmit();
-  }, [isTimeUp, submitting, handleSubmit, autoSubmitRetry]);
+    if (session?.sectionState) {
+      void handleCompleteSection();
+    } else {
+      void handleSubmit();
+    }
+  }, [
+    isTimeUp,
+    isOnSectionBreak,
+    submitting,
+    session?.sectionState,
+    handleCompleteSection,
+    handleSubmit,
+    autoSubmitRetry,
+  ]);
 
   const handleInspectorQcChange = useCallback(async (questionId: string, nextStatus: QuestionItem['qcStatus']) => {
     setInspectorBusy(true);
@@ -660,9 +863,11 @@ export function SessionPlayerView({
 
   const answeredSlotsCount = useMemo(() => {
     let cnt = 0;
-    for (const q of questions) {
+    for (const q of sectionQuestions) {
       if (q.formatType === 'WRIT_TYPED_TASK') {
-        if (writingDraft.responseText.trim().length > 0) cnt++;
+        const resp =
+          writingDraftsByQuestionId[q.questionId]?.responseText ?? writingDraft.responseText;
+        if (resp.trim().length > 0) cnt++;
       } else {
         for (const p of q.parts) {
           if (answersByPartId[p.partId]) cnt++;
@@ -670,12 +875,24 @@ export function SessionPlayerView({
       }
     }
     return cnt;
-  }, [questions, answersByPartId, writingDraft.responseText]);
+  }, [sectionQuestions, answersByPartId, writingDraft.responseText, writingDraftsByQuestionId]);
 
   const totalSlotsCount = useMemo(
-    () => questions.reduce((sum, q) => sum + Math.max(1, q.parts.length), 0),
-    [questions]
+    () => sectionQuestions.reduce((sum, q) => sum + Math.max(1, q.parts.length), 0),
+    [sectionQuestions]
   );
+
+  const sectionFlaggedCount = useMemo(() => {
+    if (!activeSection) return flaggedQuestionIds.length;
+    const ids = new Set(sectionQuestions.map((q) => q.questionId));
+    return flaggedQuestionIds.filter((id) => ids.has(id)).length;
+  }, [activeSection, sectionQuestions, flaggedQuestionIds]);
+
+  const navigatorWritingResponse = useMemo(() => {
+    const writQ = sectionQuestions.find((q) => q.formatType === 'WRIT_TYPED_TASK');
+    if (!writQ) return writingDraft.responseText;
+    return writingDraftsByQuestionId[writQ.questionId]?.responseText ?? writingDraft.responseText;
+  }, [sectionQuestions, writingDraftsByQuestionId, writingDraft.responseText]);
 
   if (loading) {
     return (
@@ -712,7 +929,7 @@ export function SessionPlayerView({
         sessionMode={session.mode}
         correctSlots={session.correctSlots}
         totalSlots={session.totalSlots}
-        elapsedSec={clock.getElapsedSec()}
+        elapsedSec={session.checkpoint?.elapsedSec ?? clock.getElapsedSec()}
         questions={questions}
         reviewResults={reviewResults}
         writingReview={writingReview}
@@ -723,9 +940,31 @@ export function SessionPlayerView({
     );
   }
 
+  if (isOnSectionBreak && sectionState) {
+    return (
+      <SectionBreakView
+        sessionTitle={session.title || session.mode.replace(/_/g, ' ')}
+        sectionState={sectionState}
+        questions={questions}
+        answersByPartId={answersByPartId}
+        writingDraftsByQuestionId={writingDraftsByQuestionId}
+        writingDraft={writingDraft}
+        starting={startingNextSection}
+        error={error}
+        onStartNext={() => void handleStartNextSection()}
+      />
+    );
+  }
+
   const isFlagged = flaggedQuestionIds.includes(currentQuestion.questionId);
   const currentStimId = currentQuestion.stimulus?.stimulusId || currentQuestion.questionId;
   const activeInspectorQ = inspectorMap[currentQuestion.questionId];
+  const localIndex = Math.max(0, currentIndex - sectionStart);
+  const finishBtnLabel = submitting
+    ? t('session.submitting')
+    : sectionState && activeSection && !isLastSection
+      ? t('session.finishSectionBtn', { section: sectionLabel(activeSection.section) })
+      : t('session.finishTest');
 
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[#FAF8F5] text-[#113C36]">
@@ -753,6 +992,16 @@ export function SessionPlayerView({
               <span className="font-sans-display font-semibold text-sm text-[#113C36] truncate">
                 {session.title || session.mode.replace(/_/g, ' ')}
               </span>
+
+              {sectionState && activeSection && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#E5F0EA] border border-[#C5DDD1] text-[#113C36] text-[11px] font-sans-display font-semibold whitespace-nowrap">
+                  {t('session.sectionOfTotal', {
+                    current: sectionState.currentSectionIndex + 1,
+                    total: sectionState.sections.length,
+                  })}{' '}
+                  ({sectionLabel(activeSection.section)})
+                </span>
+              )}
 
               {isAdminRun && (
                 <span
@@ -818,7 +1067,7 @@ export function SessionPlayerView({
           {/* Right: Question X of Y, Flag, Navigator, Language, Finish test */}
           <div className="flex items-center justify-start md:justify-end gap-2 flex-wrap">
             <div className="text-xs font-medium text-[#4A5955] tabular-nums whitespace-nowrap mr-1">
-              {t('session.qOfTotal', { current: currentIndex + 1, total: questions.length })}
+              {t('session.qOfTotal', { current: localIndex + 1, total: sectionQuestions.length })}
             </div>
 
             <button
@@ -881,21 +1130,21 @@ export function SessionPlayerView({
               onClick={() => setSubmitConfirmOpen(true)}
               className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-colors"
             >
-              {submitting ? t('session.submitting') : t('session.finishTest')}
+              {finishBtnLabel}
             </button>
           </div>
         </div>
 
         {navOpen && (
           <QuestionNavigator
-            questions={questions}
-            currentIndex={currentIndex}
+            questions={sectionQuestions}
+            currentIndex={localIndex}
             answersByPartId={answersByPartId}
             flaggedQuestionIds={flaggedQuestionIds}
-            writingResponse={writingDraft.responseText}
+            writingResponse={navigatorWritingResponse}
             answeredSlots={answeredSlotsCount}
             totalSlots={totalSlotsCount}
-            onGoIndex={handleGoIndex}
+            onGoIndex={(idx) => handleGoIndex(sectionStart + idx)}
           />
         )}
       </header>
@@ -1065,7 +1314,7 @@ export function SessionPlayerView({
           <div className="pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-3">
             <button
               type="button"
-              disabled={currentIndex === 0}
+              disabled={currentIndex <= sectionStart}
               onClick={() => handleGoIndex(currentIndex - 1)}
               className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-colors"
             >
@@ -1074,7 +1323,7 @@ export function SessionPlayerView({
             </button>
 
             <div className="flex items-center gap-2">
-              {currentIndex < questions.length - 1 ? (
+              {currentIndex < sectionEnd - 1 ? (
                 <button
                   type="button"
                   onClick={() => handleGoIndex(currentIndex + 1)}
@@ -1090,7 +1339,7 @@ export function SessionPlayerView({
                   onClick={() => setSubmitConfirmOpen(true)}
                   className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-colors"
                 >
-                  {submitting ? t('session.submitting') : t('session.finishTest')}
+                  {finishBtnLabel}
                 </button>
               )}
             </div>
@@ -1103,9 +1352,27 @@ export function SessionPlayerView({
         submitting={submitting}
         answeredSlots={answeredSlotsCount}
         totalSlots={totalSlotsCount}
-        flaggedCount={flaggedQuestionIds.length}
+        flaggedCount={sectionFlaggedCount}
+        titleOverride={
+          sectionState && activeSection && !isLastSection && nextSection
+            ? t('session.finishSectionModalTitle', { section: sectionLabel(activeSection.section) })
+            : undefined
+        }
+        descriptionOverride={
+          sectionState && activeSection && !isLastSection && nextSection
+            ? t('session.finishSectionModalNote', {
+                section: sectionLabel(activeSection.section),
+                nextSection: sectionLabel(nextSection.section),
+              })
+            : undefined
+        }
+        confirmLabelOverride={
+          sectionState && activeSection && !isLastSection
+            ? t('session.confirmFinishSection', { section: sectionLabel(activeSection.section) })
+            : undefined
+        }
         onCancel={closeSubmitConfirm}
-        onConfirm={handleSubmit}
+        onConfirm={sectionState ? handleCompleteSection : handleSubmit}
       />
     </div>
   );

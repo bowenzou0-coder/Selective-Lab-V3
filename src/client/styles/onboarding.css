@@ -1,0 +1,113 @@
+/* Interactive Onboarding Walkthrough — Sunlit Editorial Studio motion tokens */
+
+:root {
+  --tour-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --tour-ease-move: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes tour-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tour-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tour-step-swap {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes tour-beacon-pulse {
+  0% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
+@keyframes tour-float-gentle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.tour-backdrop-enter {
+  animation: tour-backdrop-in 240ms var(--tour-ease-out) forwards;
+}
+
+.tour-card-enter {
+  animation: tour-card-in 280ms var(--tour-ease-out) forwards;
+}
+
+.tour-step-content {
+  animation: tour-step-swap 240ms var(--tour-ease-out) forwards;
+}
+
+.tour-spotlight-ring {
+  transition:
+    top 380ms var(--tour-ease-move),
+    left 380ms var(--tour-ease-move),
+    width 380ms var(--tour-ease-move),
+    height 380ms var(--tour-ease-move),
+    opacity 220ms var(--tour-ease-out);
+}
+
+.tour-card-glide {
+  transition:
+    top 380ms var(--tour-ease-move),
+    left 380ms var(--tour-ease-move),
+    transform 380ms var(--tour-ease-move),
+    opacity 220ms var(--tour-ease-out);
+}
+
+.tour-beacon-halo {
+  animation: tour-beacon-pulse 2.2s var(--tour-ease-out) infinite;
+}
+
+.tour-illustration-float {
+  animation: tour-float-gentle 3.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-beacon-halo,
+  .tour-illustration-float {
+    animation: none !important;
+  }
+
+  .tour-step-content,
+  .tour-card-enter {
+    animation: tour-backdrop-in 180ms ease forwards;
+  }
+}

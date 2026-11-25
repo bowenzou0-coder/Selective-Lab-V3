@@ -27,8 +27,11 @@ import {
   type WritingTextAnnotation,
 } from '../../shared/contracts';
 import { buildAnnotatedParagraphs } from '../writingHighlight';
-import { extractBenchmarkScoresFromSession } from '../../shared/nswBenchmark';
-import { NswBenchmarkEstimator } from './NswBenchmarkEstimator';
+import {
+  evaluateNswBenchmark,
+  extractBenchmarkScoresFromSession,
+  type NswPerformanceBand,
+} from '../../shared/nswBenchmark';
 import { QuestionWorkspace } from './QuestionWorkspace';
 import { WritingStimulusPane } from './WritingEditor';
 
@@ -155,7 +158,7 @@ export function PostSubmissionReview({
   onViewProgress,
   onViewBenchmarks,
 }: PostSubmissionReviewProps) {
-  const { t, isZh, skillName } = useI18n();
+  const { t, isZh, skillName, sectionShortLabel } = useI18n();
   const [writingReview, setWritingReview] = useState(initialWritingReview || []);
   const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
   const [evalError, setEvalError] = useState('');
@@ -254,6 +257,26 @@ export function PostSubmissionReview({
   const showSessionBenchmark =
     sessionMode === 'benchmark_exam' ||
     (sessionBenchmark.hasObjectiveMultiSection && questions.length >= 20);
+
+  const readOnlyBenchmarkEval = useMemo(() => {
+    if (!showSessionBenchmark) return null;
+    return evaluateNswBenchmark({
+      read: sessionBenchmark.read,
+      math: sessionBenchmark.math,
+      think: sessionBenchmark.think,
+      writ: sessionBenchmark.writ,
+      difficulty: sessionBenchmark.suggestedDifficulty,
+      weighting: 'official_2025_equal',
+      genderFilter: 'all',
+    });
+  }, [showSessionBenchmark, sessionBenchmark]);
+
+  const bandShortLabel = (band: NswPerformanceBand): string => {
+    if (band === 'top_10') return t('bench.bandTop10');
+    if (band === 'next_15') return t('bench.bandNext15');
+    if (band === 'next_25') return t('bench.bandNext25');
+    return t('bench.bandLowest50');
+  };
 
   const activeIndex = Math.max(
     0,
@@ -1240,27 +1263,43 @@ export function PostSubmissionReview({
         )}
       </header>
 
-      {/* Benchmark School Cutoff Summary (for full mocks & benchmark exams) */}
-      {showSessionBenchmark && (
+      {/* Read-only Benchmark Standing Summary (for full mocks & benchmark exams) */}
+      {showSessionBenchmark && readOnlyBenchmarkEval && (
         <div className="shrink-0 border-b border-[#E5DFD5] bg-[#FAF8F5] px-4 sm:px-6 py-3">
-          <div className="max-w-[1440px] mx-auto">
-            <NswBenchmarkEstimator
-              compact
-              defaultOpen={false}
-              initialScores={{
-                read: sessionBenchmark.read,
-                math: sessionBenchmark.math,
-                think: sessionBenchmark.think,
-                writ: sessionBenchmark.writ,
-              }}
-              sectionSources={sessionBenchmark.sectionSources}
-              initialDifficulty={sessionBenchmark.suggestedDifficulty}
-              sourceNote={
-                sessionBenchmark.writingEvaluated
+          <div className="max-w-[1440px] mx-auto flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="font-sans-display font-semibold text-xs text-[#113C36]">
+                {t('bm.reviewStripTitle')}
+              </div>
+              <div className="text-[11px] text-[#4A5955]">
+                {sessionBenchmark.writingEvaluated
                   ? t('bench.seededFromSession')
-                  : t('bench.seededFromSessionNoWrit')
-              }
-            />
+                  : t('bench.seededFromSessionNoWrit')}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs tabular-nums">
+              <span className="px-3 py-1 rounded-full bg-[#E5F0EA] border border-[#C5DDD1] font-sans-display font-semibold text-[#113C36]">
+                {readOnlyBenchmarkEval.scaledScore120.toFixed(1)} / 120
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-white border border-[#E5DFD5] text-[#4A5955]">
+                {t('bench.stateRankShort', {
+                  rank: readOnlyBenchmarkEval.estimatedStateRank.toLocaleString(),
+                  pct: readOnlyBenchmarkEval.estimatedPercentile,
+                })}
+              </span>
+              {(['READ', 'MATH', 'THINK', 'WRIT'] as const).map((sec) => {
+                const ev = readOnlyBenchmarkEval.sections[sec];
+                return (
+                  <span
+                    key={sec}
+                    className="px-2.5 py-1 rounded-full bg-white border border-[#E5DFD5] text-[#113C36]"
+                  >
+                    {sectionShortLabel(sec)} {ev.score}/{ev.maxScore} ({bandShortLabel(ev.band)})
+                  </span>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

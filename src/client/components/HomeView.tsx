@@ -14,6 +14,7 @@ import {
 interface HomeViewProps {
   onOpenSession: (sessionId: string, isLocked?: boolean) => void;
   onNavigate: (path: string) => void;
+  onOnboardingEligible?: (shouldShow: boolean) => void;
 }
 
 const SECTION_DRILLS: {
@@ -83,7 +84,7 @@ function inferSessionThumbKind(title?: string, mode?: string): SectionCode | 'DA
   return 'DAILY';
 }
 
-export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
+export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: HomeViewProps) {
   const { t, isZh, sectionLabel, sectionShortLabel, skillName, formatDate } = useI18n();
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -118,6 +119,9 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
           return;
         }
         setData(res);
+        if (res.shouldShowOnboarding) {
+          onOnboardingEligible?.(true);
+        }
         if (res.sectionDrillQuestionCount) {
           setDrillCounts({
             READ: res.sectionDrillQuestionCount,
@@ -135,7 +139,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
     return () => {
       active = false;
     };
-  }, [onOpenSession]);
+  }, [onOpenSession, onOnboardingEligible]);
 
   // Dismiss Ready modal on Escape
   useEffect(() => {
@@ -404,7 +408,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
   const streakDays = data?.streakDays ?? 0;
 
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto">
+    <main className="px-6 sm:px-9 py-8 sm:py-10 space-y-12 max-w-[1160px] mx-auto">
       {error && (
         <div
           role="alert"
@@ -516,7 +520,7 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       </header>
 
       {/* Editorial Studio 3-Card Hero Band */}
-      <section aria-label={t('home.todaysPractice')} className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <section data-tour="hero-band" aria-label={t('home.todaysPractice')} className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Card 1: Today's Practice — Warm Apricot (#F9CAA7) */}
         <div className="lg:col-span-5 rounded-[16px] bg-[#F9CAA7] p-6 flex flex-col justify-between gap-5 border border-[#EAB690]/70">
           <div className="flex items-start justify-between gap-4">
@@ -655,15 +659,51 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
         </section>
       )}
 
+      {/* Quick In-Page Section Strip (replaces redundant sidebar links) */}
+      <nav
+        aria-label={t('home.drillsTitle')}
+        className="flex flex-wrap items-center gap-2 pt-1 border-b border-[#E5DFD5] pb-4"
+      >
+        <button
+          type="button"
+          onClick={() =>
+            document.getElementById('practice-drills')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+        >
+          {t('home.jumpDrills')}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+        >
+          {t('home.jumpMocks')}
+        </button>
+        {data && data.recentSessions.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              document.getElementById('recent-sessions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+            className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+          >
+            {t('home.jumpRecent')}
+          </button>
+        )}
+      </nav>
+
       {/* Hairline-Divided Section Practice Drills */}
-      <section id="practice-drills" className="space-y-3 scroll-mt-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
+      <section id="practice-drills" data-tour="section-drills" className="space-y-4 scroll-mt-6">
+        <div className="space-y-1">
+          <h2 className="font-sans-display font-semibold text-[24px] sm:text-[26px] tracking-[-0.02em] text-[#113C36] leading-tight">
             {t('home.drillsTitle')}
           </h2>
-          <span className="text-xs text-[#78756E]">
-            {t('home.drillsSubtitle')}
-          </span>
+          <p className="text-[14px] text-[#4A5955]">
+            {t('home.sectionDrillsLead')}
+          </p>
         </div>
 
         <div className="border-t border-b border-[#E5DFD5] divide-y divide-[#E5DFD5]">
@@ -682,15 +722,15 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
             return (
               <div
                 key={drill.code}
-                className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 group"
+                className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 group"
               >
                 <div className="flex items-center gap-3.5 min-w-0">
                   <SectionThumbnail kind={drill.code} />
                   <div className="min-w-0">
-                    <div className="font-sans-display font-semibold text-[15px] text-[#113C36]">
+                    <div className="font-sans-display font-semibold text-[16px] text-[#113C36]">
                       {drillLabel}
                     </div>
-                    <p className="text-[13px] text-[#4A5955] truncate sm:whitespace-normal">
+                    <p className="text-[13.5px] text-[#4A5955] truncate sm:whitespace-normal">
                       {t(drill.detailKey)}
                     </p>
                   </div>
@@ -749,15 +789,16 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
       {/* Mock Test Simulator (Fresh Pool Mock Default + Fixed Paper / Batch Option) */}
       <section
         id="mock-simulator"
-        className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-6 sm:p-7 space-y-6 scroll-mt-6"
+        data-tour="section-mocks"
+        className="rounded-[18px] bg-[#FAF8F5] border border-[#E5DFD5] p-6 sm:p-8 space-y-6 scroll-mt-6"
       >
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div className="space-y-1">
-            <h2 className="font-sans-display font-semibold text-[19px] tracking-[-0.015em] text-[#113C36]">
+          <div className="space-y-1.5">
+            <h2 className="font-sans-display font-semibold text-[24px] sm:text-[26px] tracking-[-0.02em] text-[#113C36] leading-tight">
               {t('home.mockSectionTitle')}
             </h2>
-            <p className="text-[13px] text-[#4A5955]">
-              {t('home.mockSectionDesc')}
+            <p className="text-[14px] text-[#4A5955]">
+              {t('home.sectionMocksLead')}
             </p>
           </div>
 
@@ -964,15 +1005,15 @@ export function HomeView({ onOpenSession, onNavigate }: HomeViewProps) {
 
       {/* Hairline-Divided Recent Sessions */}
       {data && data.recentSessions.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
+        <section id="recent-sessions" className="space-y-4 scroll-mt-6">
+          <div className="flex items-end justify-between gap-3">
+            <h2 className="font-sans-display font-semibold text-[22px] sm:text-[24px] tracking-[-0.02em] text-[#113C36] leading-tight">
               {t('home.recentSessions')}
             </h2>
             <button
               type="button"
               onClick={() => onNavigate('/progress')}
-              className="text-xs font-sans-display font-semibold text-[#4A5955] hover:text-[#113C36] underline underline-offset-4 cursor-pointer whitespace-nowrap"
+              className="text-[13px] font-sans-display font-semibold text-[#4A5955] hover:text-[#113C36] underline underline-offset-4 cursor-pointer whitespace-nowrap"
             >
               {t('home.viewFullProgress')}
             </button>

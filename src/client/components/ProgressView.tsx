@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
 import { api, type ProgressResponse } from '../api';
-import { OFFICIAL_SECTION_MAX_MARKS } from '../../shared/nswBenchmark';
-import { NswBenchmarkEstimator } from './NswBenchmarkEstimator';
+import { BenchmarkReportSummaryCard } from './BenchmarkReportSummaryCard';
 import {
   WRITING_MAX_TOTAL_MARKS,
   type SectionCode,
@@ -20,9 +19,10 @@ function legacyEstimateToBand(est: WritingEvaluationRecord['overallBandEstimate'
 
 interface ProgressViewProps {
   onOpenSession: (sessionId: string) => void;
+  onNavigate?: (path: string) => void;
 }
 
-export function ProgressView({ onOpenSession }: ProgressViewProps) {
+export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
   const { t, sectionLabel, sectionShortLabel, skillName, familyLabel, formatDate } = useI18n();
   const [data, setData] = useState<ProgressResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,50 +66,6 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
     }
     return Array.from(map.entries());
   }, [filteredSkills]);
-
-  const benchmarkSeed = useMemo(() => {
-    if (!data) return null;
-    const projectSection = (sec: 'READ' | 'MATH' | 'THINK') => {
-      const st = data.sectionStats[sec];
-      const maxScore = OFFICIAL_SECTION_MAX_MARKS[sec];
-      if (st.attempts > 0) {
-        return {
-          score: Math.round((st.correct / st.attempts) * maxScore),
-          maxScore,
-          source: 'actual' as const,
-        };
-      }
-      return { score: Math.round(maxScore * 0.78), maxScore, source: 'assumed' as const };
-    };
-    const readP = projectSection('READ');
-    const mathP = projectSection('MATH');
-    const thinkP = projectSection('THINK');
-    const latestGradedWriting = data.writingSubmissions.find((w) => w.evaluations.length > 0)?.evaluations[0];
-    const writMax = latestGradedWriting?.maxTotalMarks ?? OFFICIAL_SECTION_MAX_MARKS.WRIT;
-    const writScore = latestGradedWriting
-      ? latestGradedWriting.totalMarks ??
-        latestGradedWriting.criteriaScores.reduce((sum, c) => sum + Math.round(c.score), 0)
-      : 15;
-    const writSource = latestGradedWriting ? ('actual' as const) : ('assumed' as const);
-    const actualCount = [readP.source, mathP.source, thinkP.source, writSource].filter(
-      (s) => s === 'actual'
-    ).length;
-    return {
-      scores: {
-        read: { score: readP.score, maxScore: readP.maxScore },
-        math: { score: mathP.score, maxScore: mathP.maxScore },
-        think: { score: thinkP.score, maxScore: thinkP.maxScore },
-        writ: { score: Math.min(writMax, Math.max(0, Math.round(writScore))), maxScore: writMax },
-      },
-      sectionSources: {
-        READ: readP.source,
-        MATH: mathP.source,
-        THINK: thinkP.source,
-        WRIT: writSource,
-      },
-      actualCount,
-    };
-  }, [data]);
 
   if (loading) {
     return (
@@ -371,21 +327,12 @@ export function ProgressView({ onOpenSession }: ProgressViewProps) {
         </section>
       )}
 
-      {/* NSW Selective School Benchmark & Cutoff Estimator */}
-      {benchmarkSeed && (
-        <NswBenchmarkEstimator
-          initialScores={benchmarkSeed.scores}
-          sectionSources={benchmarkSeed.sectionSources}
-          initialDifficulty="selective_lab_timed"
-          sourceNote={
-            benchmarkSeed.actualCount === 4
-              ? t('bench.seededFromProgress')
-              : benchmarkSeed.actualCount > 0
-                ? t('bench.seededPartial', { count: benchmarkSeed.actualCount })
-                : t('bench.seededDefault')
-          }
-        />
-      )}
+      {/* Official NSW Selective Benchmark Report (strictly read-only from real benchmark sittings) */}
+      <BenchmarkReportSummaryCard
+        reports={data.benchmarkReports ?? []}
+        onOpenBenchmarks={() => onNavigate?.('/benchmarks')}
+        onOpenSession={onOpenSession}
+      />
 
       {/* Section Accuracy & Pace vs Target */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

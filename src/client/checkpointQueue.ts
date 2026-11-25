@@ -13,6 +13,8 @@ export interface CheckpointSaveError<TCheckpoint> {
   status?: number;
   alreadySubmitted?: boolean;
   expiredAutoSubmitted?: boolean;
+  sectionExpired?: boolean;
+  sectionPhase?: string;
   currentRevision?: number;
   serverCheckpoint?: TCheckpoint;
 }
@@ -145,7 +147,10 @@ export class CheckpointSaveQueue<TCheckpoint> {
             const apiErr = err as CheckpointSaveError<TCheckpoint>;
             if (
               apiErr?.status === 409 &&
-              (apiErr.expiredAutoSubmitted || apiErr.alreadySubmitted)
+              (apiErr.expiredAutoSubmitted ||
+                apiErr.alreadySubmitted ||
+                apiErr.sectionExpired ||
+                apiErr.sectionPhase === 'on_break')
             ) {
               this.lastSavedSeq = this.mutationSeq;
               this.pendingFlush = false;

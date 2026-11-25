@@ -56,7 +56,7 @@ export function DataAndDesignPanel({
     try {
       const [c, f] = await Promise.all([
         targetStudentId === null
-          ? api.getProgressCounts('__none__')
+          ? Promise.resolve(null)
           : api.getProgressCounts(targetStudentId || undefined),
         api.getAdminFlags().catch(() => ({ flags: [] })),
       ]);
@@ -145,15 +145,22 @@ export function DataAndDesignPanel({
   };
 
   const openFlags = flags.filter((f) => f.status === 'open');
+  const learnerName = monitoredLearner
+    ? monitoredLearner.displayName || monitoredLearner.email || monitoredLearner.uid
+    : null;
 
   return (
     <div className="space-y-6">
+      <p className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-2.5 text-xs text-[#4A5955]">
+        {t('admin.dataScopeHint')}
+      </p>
+
       {/* 1. Data Controls — Reset Study Progress to Zero */}
       <section className="rounded-[16px] bg-white border border-[#E5DFD5] p-6 space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1 min-w-0">
             <h2 className="font-sans-display font-semibold text-[18px] text-[#113C36]">
-              {t('data.title')}
+              {learnerName ? t('data.titleForLearner', { name: learnerName }) : t('data.title')}
             </h2>
             <p className="text-xs text-[#4A5955] max-w-2xl leading-relaxed">
               {t('data.desc')}
@@ -167,32 +174,38 @@ export function DataAndDesignPanel({
           )}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-            <div className="text-xs text-[#78756E]">{t('data.testSessions')}</div>
-            <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
-              {loadingCounts ? '—' : counts?.sessionsCount ?? 0}
+        {monitoredStudentId === null ? (
+          <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 text-xs text-[#4A5955] leading-relaxed">
+            {t('data.catalogEmptyCallout')}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
+              <div className="text-xs text-[#78756E]">{t('data.testSessions')}</div>
+              <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
+                {loadingCounts ? '—' : counts?.sessionsCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
+              <div className="text-xs text-[#78756E]">{t('data.questionAttempts')}</div>
+              <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
+                {loadingCounts ? '—' : counts?.attemptsCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
+              <div className="text-xs text-[#78756E]">{t('data.masteryRecords')}</div>
+              <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
+                {loadingCounts ? '—' : counts?.evidenceCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
+              <div className="text-xs text-[#78756E]">{t('data.writingSubmissions')}</div>
+              <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
+                {loadingCounts ? '—' : counts?.writingCount ?? 0}
+              </div>
             </div>
           </div>
-          <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-            <div className="text-xs text-[#78756E]">{t('data.questionAttempts')}</div>
-            <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
-              {loadingCounts ? '—' : counts?.attemptsCount ?? 0}
-            </div>
-          </div>
-          <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-            <div className="text-xs text-[#78756E]">{t('data.masteryRecords')}</div>
-            <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
-              {loadingCounts ? '—' : counts?.evidenceCount ?? 0}
-            </div>
-          </div>
-          <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-            <div className="text-xs text-[#78756E]">{t('data.writingSubmissions')}</div>
-            <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
-              {loadingCounts ? '—' : counts?.writingCount ?? 0}
-            </div>
-          </div>
-        </div>
+        )}
 
         {!confirmOpen ? (
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -206,14 +219,9 @@ export function DataAndDesignPanel({
             </button>
 
             <div className="space-y-1.5">
-              {monitoredLearner ? (
+              {learnerName ? (
                 <p className="text-xs text-[#4A5955]">
-                  {t('data.scopedToLearner', {
-                    name:
-                      monitoredLearner.displayName ||
-                      monitoredLearner.email ||
-                      monitoredLearner.uid,
-                  })}
+                  {t('data.scopedToLearner', { name: learnerName })}
                 </p>
               ) : monitoredStudentId === null ? (
                 <p className="text-xs text-[#78756E]">
@@ -227,7 +235,7 @@ export function DataAndDesignPanel({
                 className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-45 disabled:pointer-events-none"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{t('data.resetProgressBtn')}</span>
+                <span>{learnerName ? t('data.resetForLearner', { name: learnerName }) : t('data.resetProgressBtn')}</span>
               </button>
             </div>
           </div>
