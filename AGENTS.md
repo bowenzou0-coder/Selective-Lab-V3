@@ -16,5 +16,6 @@ Use `docs/selective-lab-question-skill/SKILL.md` for both authoring and pasted q
 5. Sync per the skill's "Output and local sync": generated batches ask once before publishing; pasted batches publish after validation. "Review only" overrides.
 
 ## Publishing and deploy
+- After verifying application code changes, automatically start `npm run dev:demo` as a background daemon (`IsDaemon: true`, port `3000`, in-memory DB with local PIN `1234` / admin `admin-dev` so live Neon is never touched) so the preview popup appears immediately for testing without the user running it manually.
 - `npm run db:push -- <validated-archive>` writes to Neon using `DATABASE_URL` from the environment or `.env`; check its exit status and summary before reporting. Bank edits take effect on the next request (the server revalidates its cache).
-- `npm run deploy` when application code changes. Secrets (`DATABASE_URL`, `SESSION_SECRET`) live in `.env` and Vercel production env; `ADMIN_EMAILS` controls admin access.
+- Run `npm run deploy` only when the user asks to deploy to production (not automatically after every edit). Secrets (`DATABASE_URL`, `SESSION_SECRET`) live in `.env` and Vercel production env; `ADMIN_EMAILS` controls admin access.
