@@ -7,7 +7,7 @@ import type { QuestionFlagRecord, WritingDeterministicMetrics } from '../../shar
 import { SKILLS_TAXONOMY } from '../../shared/skills.ts';
 import { buildBenchmarkReportRecord } from '../../shared/nswBenchmark.ts';
 import { gradeSubmission } from '../../shared/engine.ts';
-import { resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
+import { ensureBenchmarkReportForSession, resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
 import type { AppContext } from '../context.ts';
 
 
@@ -152,12 +152,24 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
     try {
       await ctx.ensureSeeded();
       const studentId = req.auth!.studentId;
-      const [configData, skillStates, sessions, writingSubmissions] = await Promise.all([
+      const [configData, skillStates, sessions, writingSubmissions, savedReports] = await Promise.all([
         repo.getActiveConfig(),
         repo.getSkillStates(studentId),
         repo.listSessions(200, studentId, false, { omitSubmissionSummary: true }),
         repo.listWritingSubmissions(studentId),
+        repo.listBenchmarkReports(studentId, 20),
       ]);
+
+      const savedIds = new Set(savedReports.map((r) => r.sessionId));
+      const missingBenchmarks = sessions.filter(
+        (s) => s.mode === 'benchmark_exam' && s.status === 'submitted' && !s.isSandbox && !savedIds.has(s.sessionId)
+      );
+      const benchmarkReports = [...savedReports];
+      for (const s of missingBenchmarks) {
+        const created = await ensureBenchmarkReportForSession(repo, s.sessionId, studentId);
+        if (created) benchmarkReports.push(created);
+      }
+      benchmarkReports.sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso));
 
       const stats = await repo.getStudentProgressStats({
         studentId,
@@ -178,6 +190,7 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         writingSubmissions,
         totalAttempts: stats.totalAttempts,
         masterySummary: stats.masterySummary,
+        benchmarkReports,
       });
     } catch (err) {
       console.error('GET /api/student/progress error:', err);

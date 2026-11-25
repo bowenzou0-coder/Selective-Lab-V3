@@ -12,6 +12,7 @@ import { registerBenchmarkRoutes } from './routes/benchmarks.ts';
 import { registerSessionRoutes } from './routes/sessions.ts';
 import { registerStudentRoutes } from './routes/student.ts';
 import { registerStudentProgressRoutes } from './routes/studentProgress.ts';
+import { registerStudentSettingsRoutes } from './routes/studentSettings.ts';
 import { createRepository } from './storage/index.ts';
 import type { AppRepository } from './storage/repository.ts';
 
@@ -52,6 +53,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   registerBenchmarkRoutes(app, ctx);
   registerSessionRoutes(app, ctx);
   registerStudentProgressRoutes(app, ctx);
+  registerStudentSettingsRoutes(app, ctx);
   registerAdminLearnerRoutes(app, ctx);
   registerAdminBankRoutes(app, ctx);
   registerAdminSystemRoutes(app, ctx);

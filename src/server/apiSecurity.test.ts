@@ -1444,3 +1444,602 @@ test('Admin lightweight endpoints: batch summaries, summary-free paging, and cro
     await srv.close();
   }
 });
+
+test('Official benchmark exam runs section-by-section with untimed breaks, server expiry auto-advance, and saved report on progress', async () => {
+  const srv = await startTestServer();
+  const studentCookie = signedCookie('bench_student', 'student');
+  const studentId = 'google_bench_student';
+  try {
+    const active = await srv.repo.listQuestions({ qcStatus: 'active' });
+    const pick = (sec: SectionCode) =>
+      structuredClone(active.find((q) => q.section === sec && q.poolType !== 'benchmark_holdout')!);
+    const readQ = pick('READ');
+    const mathQ = pick('MATH');
+    const thinkQ = pick('THINK');
+    const writQ = pick('WRIT');
+
+    const holdoutQuestions = [readQ, mathQ, thinkQ, writQ].map((q) => ({
+      ...q,
+      questionId: `bh_test_${q.section.toLowerCase()}_v1`,
+      questionFamilyId: `bh_test_${q.section.toLowerCase()}`,
+      version: 1,
+      poolType: 'benchmark_holdout' as const,
+      qcStatus: 'active' as const,
+      batchId: undefined,
+      batchLabel: '2026-11-24_b99',
+      parts: q.parts.map((p, idx) => ({
+        ...p,
+        partId: `bh_test_${q.section.toLowerCase()}_p${idx + 1}`,
+      })),
+    }));
+
+    const imported = await srv.repo.importManifest(
+      {
+        manifestVersion: '1.0',
+        batchLabel: '2026-11-24_b99',
+        defaultPoolType: 'benchmark_holdout',
+        defaultQcStatus: 'active',
+        stimuli: [],
+        questions: holdoutQuestions,
+      },
+      'test_seed'
+    );
+    const batchId = imported.batch.batchId;
+
+    // 1. Progress before taking any benchmark must return empty benchmarkReports
+    const preProgRes = await fetch(`${srv.baseUrl}/api/student/progress`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(preProgRes.status, 200);
+    const preProg = (await preProgRes.json()) as { benchmarkReports: unknown[] };
+    assert.deepEqual(preProg.benchmarkReports, []);
+
+    // 2. Launch Official Benchmark exam -> starts on Section 0 (READ) with 45m deadline (not 155m)
+    const createRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'benchmark_exam', batchId }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()) as {
+      sessionId: string;
+      session: {
+        timeLimitSec: number;
+        deadlineAt?: string;
+        checkpointRevision?: number;
+        sectionState?: {
+          currentSectionIndex: number;
+          phase: 'active' | 'on_break';
+          sections: {
+            section: SectionCode;
+            startIndex: number;
+            endIndex: number;
+            timeLimitSec: number;
+            status: string;
+            deadlineAt?: string;
+            elapsedSec: number;
+            expiredAutoAdvanced?: boolean;
+          }[];
+        };
+      };
+    };
+    const sid = created.sessionId;
+    assert.equal(created.session.timeLimitSec, 9300);
+    assert.equal(created.session.sectionState?.currentSectionIndex, 0);
+    assert.equal(created.session.sectionState?.phase, 'active');
+    assert.deepEqual(
+      created.session.sectionState?.sections.map((s) => [s.section, s.timeLimitSec]),
+      [
+        ['READ', 2700],
+        ['MATH', 2400],
+        ['THINK', 2400],
+        ['WRIT', 1800],
+      ]
+    );
+    assert.equal(created.session.deadlineAt, created.session.sectionState?.sections[0].deadlineAt);
+
+    // 3. Checkpoint during READ saves READ answer and ignores out-of-section MATH answer
+    const readPart = holdoutQuestions[0].parts[0];
+    const mathPart = holdoutQuestions[1].parts[0];
+    const cpRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/checkpoint`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        expectedRevision: created.session.checkpointRevision ?? 1,
+        checkpoint: {
+          currentIndex: 3, // out of READ bounds [0,1) -> clamped to 0
+          elapsedSec: 25,
+          answersByPartId: {
+            [readPart.partId]: readPart.correctAnswerKey,
+            [mathPart.partId]: mathPart.correctAnswerKey,
+          },
+          flaggedQuestionIds: [],
+        },
+      }),
+    });
+    assert.equal(cpRes.status, 200);
+    const cpBody = (await cpRes.json()) as { checkpointRevision: number };
+
+    // Submitting entire exam early before final section must be rejected
+    const earlySubmit = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ expectedRevision: cpBody.checkpointRevision }),
+    });
+    assert.equal(earlySubmit.status, 400);
+
+    // 4. Complete Section 0 (READ) -> enters untimed break before MATH; READ is locked
+    const comp0Res = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        expectedRevision: cpBody.checkpointRevision,
+        checkpoint: {
+          currentIndex: 0,
+          elapsedSec: 40,
+          answersByPartId: {
+            [readPart.partId]: readPart.correctAnswerKey,
+            [mathPart.partId]: mathPart.correctAnswerKey,
+          },
+          flaggedQuestionIds: [],
+        },
+      }),
+    });
+    assert.equal(comp0Res.status, 200);
+    const comp0 = (await comp0Res.json()) as {
+      finishedExam: boolean;
+      session: {
+        status: string;
+        deadlineAt?: string;
+        checkpointRevision?: number;
+        checkpoint?: { currentIndex: number; answersByPartId: Record<string, string | null> };
+        sectionState?: {
+          currentSectionIndex: number;
+          phase: 'active' | 'on_break';
+          sections: { status: string; elapsedSec: number; expiredAutoAdvanced?: boolean }[];
+        };
+      };
+    };
+    assert.equal(comp0.finishedExam, false);
+    assert.equal(comp0.session.status, 'in_progress');
+    assert.equal(comp0.session.sectionState?.phase, 'on_break');
+    assert.equal(comp0.session.sectionState?.currentSectionIndex, 1);
+    assert.equal(comp0.session.sectionState?.sections[0].status, 'completed');
+    assert.equal(comp0.session.deadlineAt, undefined);
+    assert.equal(comp0.session.checkpoint?.answersByPartId[readPart.partId], readPart.correctAnswerKey);
+    assert.equal(comp0.session.checkpoint?.answersByPartId[mathPart.partId], undefined);
+
+    // Checkpoint while on_break returns 409 sectionPhase: 'on_break'
+    const breakCpRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/checkpoint`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        expectedRevision: comp0.session.checkpointRevision ?? 1,
+        checkpoint: comp0.session.checkpoint,
+      }),
+    });
+    assert.equal(breakCpRes.status, 409);
+    const breakCpErr = (await breakCpRes.json()) as { sectionPhase?: string };
+    assert.equal(breakCpErr.sectionPhase, 'on_break');
+
+    // Reloading during untimed break NEVER expires the session even if startedAt was hours ago
+    await srv.repo.updateSessionProgressState(sid, studentId, (s) => {
+      s.startedAt = new Date(Date.now() - 5 * 3600_000).toISOString();
+    });
+    const breakGetRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(breakGetRes.status, 200);
+    const breakGet = (await breakGetRes.json()) as {
+      session: { status: string; checkpointRevision?: number; sectionState?: { phase: string } };
+    };
+    assert.equal(breakGet.session.status, 'in_progress');
+    assert.equal(breakGet.session.sectionState?.phase, 'on_break');
+
+    // 5. Start Section 1 (MATH)
+    const start1Res = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ expectedRevision: breakGet.session.checkpointRevision }),
+    });
+    assert.equal(start1Res.status, 200);
+    const start1 = (await start1Res.json()) as {
+      session: {
+        deadlineAt?: string;
+        checkpoint?: { currentIndex: number };
+        sectionState?: { currentSectionIndex: number; phase: string; sections: { deadlineAt?: string }[] };
+      };
+    };
+    assert.equal(start1.session.sectionState?.phase, 'active');
+    assert.equal(start1.session.sectionState?.currentSectionIndex, 1);
+    assert.equal(start1.session.checkpoint?.currentIndex, 1);
+    assert.ok(start1.session.deadlineAt);
+
+    // 6. Simulate MATH section expiring past grace -> GET auto-advances into THINK break (NOT submit)
+    const expiredAt = new Date(Date.now() - 20_000).toISOString();
+    await srv.repo.updateSessionProgressState(sid, studentId, (s) => {
+      s.deadlineAt = expiredAt;
+      if (s.sectionState) s.sectionState.sections[1].deadlineAt = expiredAt;
+    });
+    const afterExpRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(afterExpRes.status, 200);
+    const afterExp = (await afterExpRes.json()) as {
+      session: {
+        status: string;
+        checkpointRevision?: number;
+        sectionState?: {
+          currentSectionIndex: number;
+          phase: string;
+          sections: { status: string; elapsedSec: number; expiredAutoAdvanced?: boolean }[];
+        };
+      };
+    };
+    assert.equal(afterExp.session.status, 'in_progress');
+    assert.equal(afterExp.session.sectionState?.phase, 'on_break');
+    assert.equal(afterExp.session.sectionState?.currentSectionIndex, 2);
+    assert.equal(afterExp.session.sectionState?.sections[1].status, 'completed');
+    assert.equal(afterExp.session.sectionState?.sections[1].elapsedSec, 2400);
+    assert.equal(afterExp.session.sectionState?.sections[1].expiredAutoAdvanced, true);
+
+    // 7. Start THINK (2), complete THINK -> break for WRIT (3), start WRIT (3), complete WRIT -> submitted
+    const start2 = (await (
+      await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+        body: JSON.stringify({ expectedRevision: afterExp.session.checkpointRevision }),
+      })
+    ).json()) as { session: { checkpointRevision?: number; checkpoint?: Record<string, unknown> } };
+
+    const thinkPart = holdoutQuestions[2].parts[0];
+    const comp2 = (await (
+      await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+        body: JSON.stringify({
+          expectedRevision: start2.session.checkpointRevision,
+          checkpoint: {
+            currentIndex: 2,
+            elapsedSec: 30,
+            answersByPartId: { [thinkPart.partId]: thinkPart.correctAnswerKey },
+            flaggedQuestionIds: [],
+          },
+        }),
+      })
+    ).json()) as { finishedExam: boolean; session: { checkpointRevision?: number } };
+    assert.equal(comp2.finishedExam, false);
+
+    const start3 = (await (
+      await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+        body: JSON.stringify({ expectedRevision: comp2.session.checkpointRevision }),
+      })
+    ).json()) as { session: { checkpointRevision?: number } };
+
+    const writQid = holdoutQuestions[3].questionId;
+    const comp3Res = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        expectedRevision: start3.session.checkpointRevision,
+        checkpoint: {
+          currentIndex: 3,
+          elapsedSec: 60,
+          answersByPartId: {},
+          flaggedQuestionIds: [],
+          writingDraft: { planNotes: 'Outline', responseText: 'My selective essay draft response.' },
+          writingDraftsByQuestionId: {
+            [writQid]: { planNotes: 'Outline', responseText: 'My selective essay draft response.' },
+          },
+        },
+      }),
+    });
+    assert.equal(comp3Res.status, 200);
+    const comp3 = (await comp3Res.json()) as {
+      finishedExam: boolean;
+      correctSlots: number;
+      session: { status: string };
+    };
+    assert.equal(comp3.finishedExam, true);
+    assert.equal(comp3.session.status, 'submitted');
+    assert.equal(comp3.correctSlots, 2); // READ + THINK answered correctly, MATH expired unanswered
+
+    // 8. Progress API returns the persisted official BenchmarkReportRecord
+    const progAfterRes = await fetch(`${srv.baseUrl}/api/student/progress`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(progAfterRes.status, 200);
+    const progAfter = (await progAfterRes.json()) as {
+      benchmarkReports: { sessionId: string; sections: Record<SectionCode, { correct: number; total: number }> }[];
+    };
+    assert.equal(progAfter.benchmarkReports.length, 1);
+    assert.equal(progAfter.benchmarkReports[0].sessionId, sid);
+    assert.equal(progAfter.benchmarkReports[0].sections.READ.correct, 1);
+    assert.equal(progAfter.benchmarkReports[0].sections.MATH.correct, 0);
+    assert.equal(progAfter.benchmarkReports[0].sections.THINK.correct, 1);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('Solo admin fallback: /api/admin/learners defaults to admin when no students exist, then prioritizes students once signed in', async () => {
+  const srv = await startTestServer();
+  const soloAdminId = 'google_solo_admin';
+  const soloAdminCookie = signedCookie('solo_admin', 'admin');
+  const studentCookie = signedCookie('first_student', 'student');
+  try {
+    await srv.repo.upsertUserFromAuth({
+      uid: soloAdminId,
+      email: 'bowenzou0@gmail.com',
+      displayName: 'Bowen Admin',
+      isBootstrappedAdmin: true,
+    });
+
+    const learners1 = (await (
+      await fetch(`${srv.baseUrl}/api/admin/learners`, { headers: { Cookie: soloAdminCookie } })
+    ).json()) as { defaultMonitoredStudentId: string | null };
+    assert.equal(learners1.defaultMonitoredStudentId, soloAdminId);
+
+    const bank1 = (await (
+      await fetch(`${srv.baseUrl}/api/admin/questions?pageSize=5`, {
+        headers: { Cookie: soloAdminCookie },
+      })
+    ).json()) as { monitoredStudentId: string | null };
+    assert.equal(bank1.monitoredStudentId, soloAdminId);
+
+    // Once a student signs in, default monitoring automatically shifts to the student
+    await srv.repo.upsertUserFromAuth({
+      uid: 'google_first_student',
+      email: 'first_student@gmail.com',
+      displayName: 'First Student',
+      isBootstrappedAdmin: false,
+    });
+    await fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: studentCookie } });
+    const learners2 = (await (
+      await fetch(`${srv.baseUrl}/api/admin/learners`, { headers: { Cookie: soloAdminCookie } })
+    ).json()) as { defaultMonitoredStudentId: string | null };
+    assert.equal(learners2.defaultMonitoredStudentId, 'google_first_student');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('Public settings, per-learner daily plan isolation, admin override lock, own flags, onboarding, calibration, and account deletion', async () => {
+  const srv = await startTestServer();
+  const aliceId = 'google_alice_settings';
+  const bobId = 'google_bob_settings';
+  const aliceCookie = signedCookie('alice_settings', 'student');
+  const bobCookie = signedCookie('bob_settings', 'student');
+  const adminCookie = signedCookie('admin_settings', 'admin');
+  try {
+    await srv.repo.upsertUserFromAuth({
+      uid: aliceId,
+      email: 'alice@example.com',
+      displayName: 'Alice',
+      isBootstrappedAdmin: false,
+    });
+    await srv.repo.upsertUserFromAuth({
+      uid: bobId,
+      email: 'bob@example.com',
+      displayName: 'Bob',
+      isBootstrappedAdmin: false,
+    });
+
+    // 1. Fresh account dashboard triggers onboarding until dismissed
+    const dashNewRes = await fetch(`${srv.baseUrl}/api/student/dashboard`, {
+      headers: { Cookie: aliceCookie },
+    });
+    assert.equal(dashNewRes.status, 200);
+    const dashNew = (await dashNewRes.json()) as {
+      shouldShowOnboarding: boolean;
+      onboardingCompleted: boolean;
+      dailyLimits: Record<string, number>;
+    };
+    assert.equal(dashNew.shouldShowOnboarding, true);
+    assert.equal(dashNew.onboardingCompleted, false);
+
+    const onboardRes = await fetch(`${srv.baseUrl}/api/student/settings/onboarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ completed: true }),
+    });
+    assert.equal(onboardRes.status, 200);
+    const dashAfterOnboard = (await (
+      await fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: aliceCookie } })
+    ).json()) as { shouldShowOnboarding: boolean; onboardingCompleted: boolean };
+    assert.equal(dashAfterOnboard.onboardingCompleted, true);
+    assert.equal(dashAfterOnboard.shouldShowOnboarding, false);
+
+    // 2. Alice switches her personal daily plan to manual counts; Bob stays on platform defaults
+    const saveAliceRes = await fetch(`${srv.baseUrl}/api/student/settings/daily-plan`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({
+        autoCalibrate: { enabled: false, minDailyQuestions: 6, maxDailyQuestions: 14, includeWriting: false },
+        dailyQuestionLimitBySection: { READ: 1, MATH: 4, THINK: 2, WRIT: 0 },
+        dailyGoalMinutes: 35,
+        sectionDrillQuestionCount: 15,
+        sectionDrillTimeMinutes: 12,
+      }),
+    });
+    assert.equal(saveAliceRes.status, 200);
+
+    const aliceDash = (await (
+      await fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: aliceCookie } })
+    ).json()) as {
+      autoCalibrateEnabled: boolean;
+      dailyLimits: Record<string, number>;
+      dailyGoalMinutes: number;
+      sectionDrillQuestionCount: number;
+    };
+    assert.equal(aliceDash.autoCalibrateEnabled, false);
+    assert.equal(aliceDash.dailyLimits.MATH, 4);
+    assert.equal(aliceDash.dailyGoalMinutes, 35);
+    assert.equal(aliceDash.sectionDrillQuestionCount, 15);
+
+    const bobSettings = (await (
+      await fetch(`${srv.baseUrl}/api/student/settings`, { headers: { Cookie: bobCookie } })
+    ).json()) as {
+      effectiveConfig: { autoCalibrate: { enabled: boolean }; dailyGoalMinutes: number };
+    };
+    assert.equal(bobSettings.effectiveConfig.autoCalibrate.enabled, true);
+    assert.equal(bobSettings.effectiveConfig.dailyGoalMinutes, 30);
+
+    // 3. Admin overrides and locks Alice's daily plan -> Alice receives 403 when attempting to modify
+    const adminOverrideRes = await fetch(
+      `${srv.baseUrl}/api/admin/learners/${encodeURIComponent(aliceId)}/preferences`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+        body: JSON.stringify({
+          autoCalibrate: { enabled: false, minDailyQuestions: 6, maxDailyQuestions: 14, includeWriting: false },
+          dailyQuestionLimitBySection: { READ: 2, MATH: 2, THINK: 2, WRIT: 0 },
+          dailyGoalMinutes: 20,
+          adminOverrideLocked: true,
+        }),
+      }
+    );
+    assert.equal(adminOverrideRes.status, 200);
+
+    const lockedAttemptRes = await fetch(`${srv.baseUrl}/api/student/settings/daily-plan`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ dailyGoalMinutes: 60 }),
+    });
+    assert.equal(lockedAttemptRes.status, 403);
+
+    // Admin unlocks back to platform defaults
+    const adminUnlockRes = await fetch(
+      `${srv.baseUrl}/api/admin/learners/${encodeURIComponent(aliceId)}/preferences`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+        body: JSON.stringify({ resetToDefaults: true }),
+      }
+    );
+    assert.equal(adminUnlockRes.status, 200);
+
+    // 4. Question flags are strictly isolated per learner in /api/student/flags
+    const allQs = await srv.repo.listQuestions({ qcStatus: 'active' });
+    const q1 = allQs[0].questionId;
+    await fetch(`${srv.baseUrl}/api/student/flags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ questionId: q1, sessionId: 'sess_a', reason: 'Typo in prompt' }),
+    });
+    await fetch(`${srv.baseUrl}/api/student/flags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: bobCookie },
+      body: JSON.stringify({ questionId: q1, sessionId: 'sess_b', reason: 'Unclear diagram' }),
+    });
+
+    const aliceFlags = (await (
+      await fetch(`${srv.baseUrl}/api/student/flags`, { headers: { Cookie: aliceCookie } })
+    ).json()) as { flags: { reason: string }[] };
+    assert.equal(aliceFlags.flags.length, 1);
+    assert.equal(aliceFlags.flags[0].reason, 'Typo in prompt');
+
+    // 5. Starter Calibration Test (mode: diagnostic) launches cleanly
+    const calRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ mode: 'diagnostic' }),
+    });
+    assert.equal(calRes.status, 201);
+    const calData = (await calRes.json()) as { session: { mode: string; title: string; plannedQuestionIds: string[] } };
+    assert.equal(calData.session.mode, 'diagnostic');
+    assert.equal(calData.session.title, 'Starter Calibration Test');
+    assert.ok(calData.session.plannedQuestionIds.length > 0);
+
+    // 6. Own study progress reset requires RESET confirmation and clears only caller's data
+    const badResetRes = await fetch(`${srv.baseUrl}/api/student/study-progress/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ confirmation: 'NOPE' }),
+    });
+    assert.equal(badResetRes.status, 400);
+
+    const okResetRes = await fetch(`${srv.baseUrl}/api/student/study-progress/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ confirmation: 'RESET' }),
+    });
+    assert.equal(okResetRes.status, 200);
+    const okReset = (await okResetRes.json()) as { clearedSessions: number; preservedQuestionsCount: number };
+    assert.equal(okReset.clearedSessions, 1);
+    assert.ok(okReset.preservedQuestionsCount > 0);
+
+    // 7. Account deletion requires DELETE, clears user + flags + preferences, clears cookie, preserves bank & Bob
+    const badDelRes = await fetch(`${srv.baseUrl}/api/student/account`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ confirmation: 'WRONG' }),
+    });
+    assert.equal(badDelRes.status, 400);
+
+    const delRes = await fetch(`${srv.baseUrl}/api/student/account`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: aliceCookie },
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+    assert.equal(delRes.status, 200);
+    const delData = (await delRes.json()) as {
+      ok: boolean;
+      deletedUser: boolean;
+      clearedFlags: number;
+      preservedQuestionsCount: number;
+    };
+    assert.equal(delData.ok, true);
+    assert.equal(delData.deletedUser, true);
+    assert.equal(delData.clearedFlags, 1);
+    assert.ok(delData.preservedQuestionsCount > 0);
+
+    const setCookieHeader = delRes.headers.get('set-cookie') || '';
+    assert.ok(setCookieHeader.includes('Max-Age=0') || setCookieHeader.includes('Expires=Thu, 01 Jan 1970'));
+
+    // Bob's account and flag remain completely intact
+    const remainingUsers = await srv.repo.listUsers();
+    assert.equal(remainingUsers.some((u) => u.uid === aliceId), false);
+    assert.equal(remainingUsers.some((u) => u.uid === bobId), true);
+    const bobFlagsAfter = await srv.repo.listQuestionFlags(bobId);
+    assert.equal(bobFlagsAfter.length, 1);
+
+    // 8. Admin can delete any other learner account via DELETE /api/admin/learners/:studentId
+    await fetch(`${srv.baseUrl}/api/admin/learners/primary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ studentId: bobId }),
+    });
+    const studentCannotDel = await fetch(`${srv.baseUrl}/api/admin/learners/${encodeURIComponent(bobId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: bobCookie },
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+    assert.equal(studentCannotDel.status, 403);
+
+    const adminSelfDelBlocked = await fetch(
+      `${srv.baseUrl}/api/admin/learners/${encodeURIComponent('google_admin_settings')}`,
+      {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+        body: JSON.stringify({ confirmation: 'DELETE' }),
+      }
+    );
+    assert.equal(adminSelfDelBlocked.status, 400);
+
+    const adminDelBob = await fetch(`${srv.baseUrl}/api/admin/learners/${encodeURIComponent(bobId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+    assert.equal(adminDelBob.status, 200);
+    const afterAdminDelUsers = await srv.repo.listUsers();
+    assert.equal(afterAdminDelUsers.some((u) => u.uid === bobId), false);
+    const cfgAfterDel = await srv.repo.getActiveConfig();
+    assert.equal(cfgAfterDel.config.primaryMonitoredStudentId, undefined);
+  } finally {
+    await srv.close();
+  }
+});

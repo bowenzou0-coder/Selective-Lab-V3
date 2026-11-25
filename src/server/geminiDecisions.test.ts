@@ -830,6 +830,29 @@ test('Auto-Calibrate with gemini-decision-1 dynamically adjusts total question v
   assert.equal(lightDay.dailyQuestionLimitBySection.WRIT, 1);
   assert.ok(lightDay.dailyQuestionLimitBySection.READ > lightDay.dailyQuestionLimitBySection.MATH);
 
+  // Balanced default range (min 20, max 40): ~1 min per question and balanced splits (no extreme 27/4/5 skew)
+  const evenDay = allocateAutoCalibratedDailyPlan({
+    volumeScore: 2, // midpoint = 30
+    sectionScores: { READ: 2, MATH: 2, THINK: 2 },
+    includeWriting: false,
+    availableBySection: { READ: 40, MATH: 40, THINK: 40, WRIT: 5 },
+    autoConfig: { enabled: true, minDailyQuestions: 20, maxDailyQuestions: 40, includeWriting: false },
+  });
+  assert.deepEqual(evenDay.dailyQuestionLimitBySection, { READ: 10, MATH: 10, THINK: 10, WRIT: 0 });
+  assert.equal(evenDay.dailyGoalMinutes, 30);
+
+  const skewedDay = allocateAutoCalibratedDailyPlan({
+    volumeScore: 3, // 35 questions
+    sectionScores: { READ: 0, MATH: 4, THINK: 0 },
+    includeWriting: false,
+    availableBySection: { READ: 40, MATH: 40, THINK: 40, WRIT: 5 },
+    autoConfig: { enabled: true, minDailyQuestions: 20, maxDailyQuestions: 40, includeWriting: false },
+  });
+  assert.equal(skewedDay.dailyGoalMinutes, 35);
+  assert.ok(skewedDay.dailyQuestionLimitBySection.READ >= 7);
+  assert.ok(skewedDay.dailyQuestionLimitBySection.THINK >= 7);
+  assert.ok(skewedDay.dailyQuestionLimitBySection.MATH <= 20);
+
   // Full generateGeminiFocusOverride with autoCalibrate enabled
   const questions = [
     makeQuestion('r1', 'READ', 'READ.FIC.CHARACTER_INFERENCE'),

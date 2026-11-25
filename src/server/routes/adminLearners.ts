@@ -2,8 +2,14 @@ import type { Express } from 'express';
 import { requireAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { getRuntimeDiagnostics } from '../diagnostics.ts';
 import { generateDailyFocusPlanStateless, getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
-import type { AdminLearnerSummary, LearningConfig } from '../../shared/contracts.ts';
+import {
+  resolveEffectiveLearningConfig,
+  type AdminLearnerSummary,
+  type LearnerPreferences,
+  type LearningConfig,
+} from '../../shared/contracts.ts';
 import type { AppContext } from '../context.ts';
+import { extractLearnerDailyView, sanitizeDailyPlanPatch } from './studentSettings.ts';
 
 
 /** Admin diagnostics, learner monitoring and daily plans (/api/admin/*). */
@@ -154,6 +160,123 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
     }
   });
 
+  app.delete('/api/admin/learners/:studentId', requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const targetId = String(req.params.studentId || '').trim();
+      if (!targetId || targetId === 'none') {
+        res.status(400).json({ error: 'A valid learner ID is required.' });
+        return;
+      }
+      if (targetId === req.auth!.studentId) {
+        res.status(400).json({ error: 'Use Settings to delete your own active account.' });
+        return;
+      }
+      const confirmation = String(req.body?.confirmation || '').trim().toUpperCase();
+      if (confirmation !== 'DELETE') {
+        res.status(400).json({ error: 'Type DELETE to confirm deleting this account.' });
+        return;
+      }
+      const result = await repo.deleteUserAccount(targetId);
+      const configData = await repo.getActiveConfig();
+      if (configData.config.primaryMonitoredStudentId === targetId) {
+        const nextConfig: LearningConfig = {
+          ...configData.config,
+          primaryMonitoredStudentId: undefined,
+        };
+        await repo.saveConfigVersion(nextConfig, `Cleared deleted primary learner: ${targetId}`);
+      }
+      res.json({ ...result, studentId: targetId });
+    } catch (err) {
+      console.error('DELETE /api/admin/learners/:studentId error:', err);
+      res.status(500).json({ error: 'Unable to delete learner account.' });
+    }
+  });
+
+  app.get('/api/admin/learners/:studentId/preferences', requireAdmin, async (req, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const targetStudentId = String(req.params.studentId || '').trim();
+      if (!targetStudentId || targetStudentId === 'none') {
+        res.status(400).json({ error: 'Valid studentId is required.' });
+        return;
+      }
+      const [configData, prefs] = await Promise.all([
+        repo.getActiveConfig(),
+        repo.getLearnerPreferences(targetStudentId),
+      ]);
+      const effectiveConfig = resolveEffectiveLearningConfig(configData.config, prefs);
+      res.json({
+        studentId: targetStudentId,
+        preferences: prefs,
+        effectiveConfig: extractLearnerDailyView(effectiveConfig),
+        globalDefaults: extractLearnerDailyView(configData.config),
+        adminOverrideLocked: Boolean(prefs?.adminOverrideLocked),
+      });
+    } catch (err) {
+      console.error('GET /api/admin/learners/:studentId/preferences error:', err);
+      res.status(500).json({ error: 'Unable to load learner preferences.' });
+    }
+  });
+
+  app.put('/api/admin/learners/:studentId/preferences', requireAdmin, async (req, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const targetStudentId = String(req.params.studentId || '').trim();
+      if (!targetStudentId || targetStudentId === 'none') {
+        res.status(400).json({ error: 'Valid studentId is required.' });
+        return;
+      }
+      const [configData, existing] = await Promise.all([
+        repo.getActiveConfig(),
+        repo.getLearnerPreferences(targetStudentId),
+      ]);
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+
+      if (body.resetToDefaults === true) {
+        const nextPrefs: LearnerPreferences = {
+          onboardingCompletedAtIso: existing?.onboardingCompletedAtIso ?? null,
+          adminOverrideLocked: false,
+          updatedBy: 'admin',
+        };
+        const saved = await repo.saveLearnerPreferences(targetStudentId, nextPrefs);
+        const effectiveConfig = resolveEffectiveLearningConfig(configData.config, saved);
+        res.json({
+          ok: true,
+          studentId: targetStudentId,
+          preferences: saved,
+          effectiveConfig: extractLearnerDailyView(effectiveConfig),
+          adminOverrideLocked: false,
+        });
+        return;
+      }
+
+      const baseEffective = resolveEffectiveLearningConfig(configData.config, existing);
+      const patch = sanitizeDailyPlanPatch(body, baseEffective);
+      const nextPrefs: LearnerPreferences = {
+        ...(existing || {}),
+        ...patch,
+        adminOverrideLocked:
+          typeof body.adminOverrideLocked === 'boolean'
+            ? body.adminOverrideLocked
+            : Boolean(existing?.adminOverrideLocked),
+        updatedBy: 'admin',
+      };
+      const saved = await repo.saveLearnerPreferences(targetStudentId, nextPrefs);
+      const effectiveConfig = resolveEffectiveLearningConfig(configData.config, saved);
+      res.json({
+        ok: true,
+        studentId: targetStudentId,
+        preferences: saved,
+        effectiveConfig: extractLearnerDailyView(effectiveConfig),
+        adminOverrideLocked: Boolean(saved.adminOverrideLocked),
+      });
+    } catch (err) {
+      console.error('PUT /api/admin/learners/:studentId/preferences error:', err);
+      res.status(500).json({ error: 'Unable to update learner preferences.' });
+    }
+  });
+
   app.get('/api/admin/daily-plan', requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ctx.ensureSeeded();
@@ -167,6 +290,8 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         requestedId ||
         (await ctx.resolveDefaultMonitoredStudentId(configData.config)) ||
         req.auth!.studentId;
+      const learnerPrefs = await repo.getLearnerPreferences(targetStudentId);
+      const effectiveConfig = resolveEffectiveLearningConfig(configData.config, learnerPrefs);
       const { plan } = await getOrCreateDailyFocusPlan({
         repo,
         studentId: targetStudentId,
@@ -174,7 +299,7 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         evidenceMap: () => repo.getQuestionEvidence(targetStudentId),
         questionMemory: () => repo.getQuestionMemory(targetStudentId),
         questions: () => repo.listSelectionQuestions({ qcStatus: 'active' }),
-        config: configData.config,
+        config: effectiveConfig,
       });
       res.json({ studentId: targetStudentId, plan });
     } catch (err) {
@@ -188,13 +313,15 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
       await ctx.ensureSeeded();
       const requestedId = typeof req.body?.studentId === 'string' ? req.body.studentId.trim() : '';
       const studentId = requestedId && requestedId !== 'none' ? requestedId : req.auth!.studentId;
-      const [configData, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
+      const [configData, learnerPrefs, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
         repo.getActiveConfig(),
+        repo.getLearnerPreferences(studentId),
         repo.listSelectionQuestions({ qcStatus: 'active' }),
         repo.getSkillStates(studentId),
         repo.getQuestionEvidence(studentId),
         repo.getQuestionMemory(studentId),
       ]);
+      const baseEffective = resolveEffectiveLearningConfig(configData.config, learnerPrefs);
       const config = req.body?.config;
       const result = await generateDailyFocusPlanStateless({
         studentId,
@@ -203,8 +330,8 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         questionMemory,
         questions,
         config: {
-          ...configData.config,
-          autoCalibrate: config?.autoCalibrate ?? configData.config.autoCalibrate,
+          ...baseEffective,
+          autoCalibrate: config?.autoCalibrate ?? baseEffective.autoCalibrate,
         },
       });
       await repo.saveDailyFocusPlan(studentId, result.plan);

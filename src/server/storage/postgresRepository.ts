@@ -6,6 +6,7 @@ import type {
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
+  LearnerPreferences,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -42,6 +43,7 @@ import {
   ForbiddenError,
   NotFoundError,
   RevisionConflictError,
+  type AccountDeleteResponse,
   type AdminBankStatusSummary,
   type AppRepository,
   type BackupRestoreReport,
@@ -99,7 +101,7 @@ type ManifestImportResult = Awaited<ReturnType<AppRepository['importManifest']>>
 const schemaReadyByPool = new WeakMap<Pool, Promise<void>>();
 const bankCacheByPool = new WeakMap<Pool, QuestionBankCache>();
 // Bump with the newest object created by runSchemaInit so cold starts skip the DDL transaction.
-const SCHEMA_MARKER = 'benchmark_reports_student_completed_idx';
+const SCHEMA_MARKER = 'learner_preferences';
 
 function manifestBatchId(manifest: object): string {
   const canonical = JSON.stringify(manifest, (key, value: unknown) => {
@@ -302,6 +304,11 @@ export class PostgresRepository implements AppRepository {
         completed_at TIMESTAMPTZ NOT NULL,
         data JSONB NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS learner_preferences (
+        student_id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
       CREATE INDEX IF NOT EXISTS questions_family_version_idx ON questions (question_family_id, version DESC);
       CREATE INDEX IF NOT EXISTS sessions_student_started_idx ON sessions (student_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS part_attempts_student_created_idx ON part_attempts (student_id, created_at DESC);
@@ -456,6 +463,75 @@ export class PostgresRepository implements AppRepository {
         clearedEvidence: evidence.rowCount ?? 0,
         clearedWriting: writing.rowCount ?? 0,
         clearedDailyPlans: plans.rowCount ?? 0,
+        preservedQuestionsCount: bank.rows[0].count,
+      };
+    });
+  }
+
+  async getLearnerPreferences(studentId: string): Promise<LearnerPreferences | null> {
+    await this.ensureSchema();
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    const { rows } = await this.pool.query<{ data: LearnerPreferences }>(
+      'SELECT data FROM learner_preferences WHERE student_id = $1',
+      [sid]
+    );
+    return rows.length ? structuredClone(rows[0].data) : null;
+  }
+
+  async saveLearnerPreferences(studentId: string, prefs: LearnerPreferences): Promise<LearnerPreferences> {
+    await this.ensureSchema();
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    const stamped: LearnerPreferences = {
+      ...prefs,
+      updatedAtIso: new Date().toISOString(),
+    };
+    await this.pool.query(
+      `INSERT INTO learner_preferences (student_id, data, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (student_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [sid, JSON.stringify(stamped)]
+    );
+    return structuredClone(stamped);
+  }
+
+  async deleteLearnerPreferences(studentId: string): Promise<void> {
+    await this.ensureSchema();
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    await this.pool.query('DELETE FROM learner_preferences WHERE student_id = $1', [sid]);
+  }
+
+  async deleteUserAccount(studentId: string): Promise<AccountDeleteResponse> {
+    await this.ensureSchema();
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    return this.transaction(async (client) => {
+      await this.lockStudentProgress(client, sid);
+      const sessions = await client.query('DELETE FROM sessions WHERE student_id = $1', [sid]);
+      await client.query('DELETE FROM session_snapshots WHERE student_id = $1', [sid]);
+      const attempts = await client.query('DELETE FROM part_attempts WHERE student_id = $1', [sid]);
+      const skills = await client.query('DELETE FROM skill_states WHERE student_id = $1', [sid]);
+      const memory = await client.query('DELETE FROM question_memory WHERE student_id = $1', [sid]);
+      const evidence = await client.query('DELETE FROM question_evidence WHERE student_id = $1', [sid]);
+      await client.query(`
+        DELETE FROM writing_evaluations e USING writing_submissions s
+        WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [sid]);
+      const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [sid]);
+      const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [sid]);
+      await client.query('DELETE FROM benchmark_reports WHERE student_id = $1', [sid]);
+      await client.query('DELETE FROM learner_preferences WHERE student_id = $1', [sid]);
+      const flags = await client.query(`DELETE FROM question_flags WHERE data->>'studentId' = $1`, [sid]);
+      const userDel = await client.query('DELETE FROM users WHERE uid = $1', [sid]);
+      const bank = await client.query<{ count: number }>('SELECT count(DISTINCT question_family_id)::int AS count FROM questions');
+      return {
+        ok: true,
+        deletedUser: (userDel.rowCount ?? 0) > 0,
+        clearedSessions: sessions.rowCount ?? 0,
+        clearedAttempts: attempts.rowCount ?? 0,
+        clearedSkillStates: skills.rowCount ?? 0,
+        clearedMemory: memory.rowCount ?? 0,
+        clearedEvidence: evidence.rowCount ?? 0,
+        clearedWriting: writing.rowCount ?? 0,
+        clearedDailyPlans: plans.rowCount ?? 0,
+        clearedFlags: flags.rowCount ?? 0,
         preservedQuestionsCount: bank.rows[0].count,
       };
     });
@@ -1267,6 +1343,48 @@ export class PostgresRepository implements AppRepository {
     }
   }
 
+  async updateSessionProgressState(
+    sessionId: string,
+    studentId: string,
+    mutate: (session: SessionRecord) => void,
+    expectedRevision?: number
+  ): Promise<{ session: SessionRecord; checkpointRevision: number }> {
+    await this.ensureSchema();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query('SELECT data FROM sessions WHERE session_id = $1 FOR UPDATE', [sessionId]);
+      if (rows.length === 0) throw new NotFoundError('Session not found.');
+      const session = rows[0].data as SessionRecord;
+      if ((session.studentId || DEFAULT_STUDENT_ID) !== studentId) {
+        throw new ForbiddenError('Forbidden: session belongs to another user.');
+      }
+      if (session.status !== 'in_progress') {
+        throw new RevisionConflictError('Session already submitted.', session.checkpointRevision ?? 1, session.checkpoint);
+      }
+      const currentRev = session.checkpointRevision ?? 1;
+      if (expectedRevision !== undefined && expectedRevision !== currentRev) {
+        throw new RevisionConflictError(
+          `Checkpoint revision conflict: expected v${expectedRevision}, current v${currentRev}.`,
+          currentRev,
+          session.checkpoint
+        );
+      }
+      const updated = structuredClone(session);
+      mutate(updated);
+      const nextRev = currentRev + 1;
+      updated.checkpointRevision = nextRev;
+      await client.query('UPDATE sessions SET data = $2 WHERE session_id = $1', [sessionId, JSON.stringify(updated)]);
+      await client.query('COMMIT');
+      return { session: updated, checkpointRevision: nextRev };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async completeSession(
     sessionId: string,
     summary: { correctSlots: number; totalSlots: number; completedAt: string },
@@ -1402,6 +1520,7 @@ export class PostgresRepository implements AppRepository {
       const nextRev = currentRev + 1;
       const updatedSession: SessionRecord = {
         ...existing,
+        ...(input.sectionState ? { sectionState: input.sectionState, deadlineAt: undefined } : {}),
         status: 'submitted',
         expiredAutoSubmitted: Boolean(input.expiredAutoSubmitted || existing.expiredAutoSubmitted),
         checkpoint: input.checkpoint,
@@ -1666,9 +1785,14 @@ export class PostgresRepository implements AppRepository {
     );
   }
 
-  async listQuestionFlags(): Promise<QuestionFlagRecord[]> {
+  async listQuestionFlags(studentId?: string): Promise<QuestionFlagRecord[]> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT data FROM question_flags ORDER BY created_at DESC');
+    const { rows } = studentId
+      ? await this.pool.query(
+          `SELECT data FROM question_flags WHERE data->>'studentId' = $1 ORDER BY created_at DESC`,
+          [studentId]
+        )
+      : await this.pool.query('SELECT data FROM question_flags ORDER BY created_at DESC');
     return rows.map((r) => r.data as QuestionFlagRecord);
   }
 

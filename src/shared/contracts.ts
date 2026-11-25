@@ -202,16 +202,91 @@ export interface PoolPolicyConfig {
   autoRetireMastered: boolean;
 }
 
+export interface LearnerPreferences {
+  autoCalibrate?: AutoCalibrateConfig;
+  dailyQuestionLimitBySection?: Record<SectionCode, number>;
+  dailyGoalMinutes?: number;
+  sectionDrillQuestionCount?: number;
+  sectionDrillTimeMinutes?: number;
+  adminOverrideLocked?: boolean;
+  onboardingCompletedAtIso?: string | null;
+  updatedBy?: 'student' | 'admin';
+  updatedAtIso?: string;
+}
+
 export const DEFAULT_AUTO_CALIBRATE: AutoCalibrateConfig = {
   enabled: true,
-  minDailyQuestions: 6,
-  maxDailyQuestions: 14,
+  minDailyQuestions: 20,
+  maxDailyQuestions: 40,
   includeWriting: false,
 };
 
 export const DEFAULT_POOL_POLICY: PoolPolicyConfig = {
   autoRetireMastered: false,
 };
+
+/**
+ * Merges a learner's personal daily-plan and drill preferences over the platform
+ * LearningConfig while keeping admin-only policies (poolPolicy, scheduling,
+ * masteryPolicy, plateauDetection) strictly governed by global config.
+ */
+export function resolveEffectiveLearningConfig(
+  globalConfig: LearningConfig,
+  prefs?: LearnerPreferences | null
+): LearningConfig {
+  const baseAuto: AutoCalibrateConfig = {
+    ...DEFAULT_AUTO_CALIBRATE,
+    ...(globalConfig.autoCalibrate || {}),
+  };
+  const baseDefaults = {
+    ...DEFAULT_LEARNING_CONFIG.sessionDefaults,
+    ...globalConfig.sessionDefaults,
+    dailyQuestionLimitBySection: {
+      ...DEFAULT_LEARNING_CONFIG.sessionDefaults.dailyQuestionLimitBySection,
+      ...globalConfig.sessionDefaults.dailyQuestionLimitBySection,
+    },
+  };
+  if (!prefs) {
+    return {
+      ...globalConfig,
+      sessionDefaults: baseDefaults,
+      autoCalibrate: baseAuto,
+    };
+  }
+  const mergedAuto: AutoCalibrateConfig = prefs.autoCalibrate
+    ? {
+        ...baseAuto,
+        ...prefs.autoCalibrate,
+      }
+    : baseAuto;
+  if (mergedAuto.minDailyQuestions > mergedAuto.maxDailyQuestions) {
+    mergedAuto.maxDailyQuestions = mergedAuto.minDailyQuestions;
+  }
+  return {
+    ...globalConfig,
+    sessionDefaults: {
+      dailyQuestionLimitBySection: prefs.dailyQuestionLimitBySection
+        ? {
+            ...baseDefaults.dailyQuestionLimitBySection,
+            ...prefs.dailyQuestionLimitBySection,
+          }
+        : baseDefaults.dailyQuestionLimitBySection,
+      dailyGoalMinutes:
+        typeof prefs.dailyGoalMinutes === 'number' && prefs.dailyGoalMinutes > 0
+          ? prefs.dailyGoalMinutes
+          : baseDefaults.dailyGoalMinutes,
+      sectionDrillQuestionCount:
+        typeof prefs.sectionDrillQuestionCount === 'number' && prefs.sectionDrillQuestionCount > 0
+          ? prefs.sectionDrillQuestionCount
+          : baseDefaults.sectionDrillQuestionCount,
+      sectionDrillTimeMinutes:
+        typeof prefs.sectionDrillTimeMinutes === 'number' && prefs.sectionDrillTimeMinutes > 0
+          ? prefs.sectionDrillTimeMinutes
+          : baseDefaults.sectionDrillTimeMinutes,
+    },
+    autoCalibrate: mergedAuto,
+  };
+}
 
 export interface LearningConfig {
   sessionDefaults: {
@@ -626,6 +701,29 @@ export interface SessionSelectionDecision {
   algorithmAdjustments?: AlgorithmAdjustments;
 }
 
+export interface ExamSectionBlock {
+  section: SectionCode;
+  /** Inclusive start index in plannedQuestionIds / snapshots */
+  startIndex: number;
+  /** Exclusive end index in plannedQuestionIds / snapshots */
+  endIndex: number;
+  /** Official time limit for this section in seconds (READ 2700, MATH 2400, THINK 2400, WRIT 1800) */
+  timeLimitSec: number;
+  status: 'pending' | 'active' | 'completed';
+  startedAt?: string;
+  deadlineAt?: string;
+  completedAt?: string;
+  elapsedSec: number;
+  expiredAutoAdvanced?: boolean;
+}
+
+export interface SessionSectionState {
+  currentSectionIndex: number;
+  phase: 'active' | 'on_break';
+  breakStartedAt?: string;
+  sections: ExamSectionBlock[];
+}
+
 export interface SessionRecord {
   sessionId: string;
   studentId?: string;
@@ -641,6 +739,7 @@ export interface SessionRecord {
   selectionDecision?: SessionSelectionDecision;
   checkpointRevision?: number;
   checkpoint?: SessionCheckpoint;
+  sectionState?: SessionSectionState;
   timeLimitSec?: number;
   deadlineAt?: string;
   expiredAutoSubmitted?: boolean;
@@ -677,10 +776,10 @@ export interface MediaAssetRecord {
 
 export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
   sessionDefaults: {
-    dailyQuestionLimitBySection: { READ: 2, MATH: 3, THINK: 3, WRIT: 0 },
-    dailyGoalMinutes: 25,
+    dailyQuestionLimitBySection: { READ: 10, MATH: 10, THINK: 10, WRIT: 0 },
+    dailyGoalMinutes: 30,
     sectionDrillQuestionCount: 10,
-    sectionDrillTimeMinutes: 8,
+    sectionDrillTimeMinutes: 10,
   },
   sectionWeights: { READ: 0.25, MATH: 0.25, THINK: 0.25, WRIT: 0.25 },
   calibration: { targetSuccessRateRange: [0.65, 0.80], difficultyScaleMin: 1.0, difficultyScaleMax: 5.0 },

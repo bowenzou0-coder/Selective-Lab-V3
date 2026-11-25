@@ -12,6 +12,7 @@ import type {
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
+  LearnerPreferences,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -23,6 +24,7 @@ import type {
   SessionCheckpoint,
   SessionQuestionSnapshot,
   SessionRecord,
+  SessionSectionState,
   SessionSubmissionPayload,
   SkillState,
   StimulusGroup,
@@ -238,6 +240,7 @@ export interface FinalizeSessionInput {
   sessionId: string;
   studentId: string;
   checkpoint: SessionCheckpoint;
+  sectionState?: SessionSectionState;
   expectedRevision?: number;
   correctSlots: number;
   totalSlots: number;
@@ -356,6 +359,11 @@ export interface ProgressResetResponse {
   preservedQuestionsCount: number;
 }
 
+export interface AccountDeleteResponse extends ProgressResetResponse {
+  deletedUser: boolean;
+  clearedFlags: number;
+}
+
 export interface AppRepository {
   readonly backendName: 'postgres' | 'memory_preview';
   initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void>;
@@ -369,6 +377,10 @@ export interface AppRepository {
   }): Promise<{ role: 'student' | 'admin' }>;
   isUserAdmin(uid: string): Promise<boolean>;
   listUsers(): Promise<LearnerAccountRecord[]>;
+  getLearnerPreferences(studentId: string): Promise<LearnerPreferences | null>;
+  saveLearnerPreferences(studentId: string, prefs: LearnerPreferences): Promise<LearnerPreferences>;
+  deleteLearnerPreferences(studentId: string): Promise<void>;
+  deleteUserAccount(studentId: string): Promise<AccountDeleteResponse>;
   getProgressCounts?(studentId: string): Promise<ProgressCountsResponse>;
   resetStudentProgress?(studentId: string): Promise<ProgressResetResponse>;
 
@@ -450,6 +462,12 @@ export interface AppRepository {
     checkpoint: SessionCheckpoint,
     expectedRevision?: number
   ): Promise<CheckpointSaveResult>;
+  updateSessionProgressState(
+    sessionId: string,
+    studentId: string,
+    mutate: (session: SessionRecord) => void,
+    expectedRevision?: number
+  ): Promise<{ session: SessionRecord; checkpointRevision: number }>;
   completeSession(
     sessionId: string,
     summary: { correctSlots: number; totalSlots: number; completedAt: string },
@@ -497,7 +515,7 @@ export interface AppRepository {
   listBenchmarkReports(studentId: string, limit?: number): Promise<BenchmarkReportRecord[]>;
 
   saveQuestionFlag(flag: QuestionFlagRecord): Promise<void>;
-  listQuestionFlags(): Promise<QuestionFlagRecord[]>;
+  listQuestionFlags(studentId?: string): Promise<QuestionFlagRecord[]>;
   resolveQuestionFlag(flagId: string): Promise<void>;
 
   saveMediaAsset(asset: MediaAssetRecord): Promise<void>;

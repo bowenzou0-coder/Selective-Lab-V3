@@ -1,53 +1,8 @@
 import type { Express } from 'express';
 import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import type { AppContext } from '../context.ts';
-import { buildBenchmarkReportRecord } from '../../shared/nswBenchmark.ts';
 import { generateBenchmarkAiCoaching } from '../geminiBenchmarkCoach.ts';
-import { resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
-import { gradeSubmission } from '../../shared/engine.ts';
-import type { MarkingResult } from '../../shared/contracts.ts';
-
-async function ensureReportForSession(
-  ctx: AppContext,
-  sessionId: string,
-  studentId: string
-) {
-  const { repo } = ctx;
-  const existing = await repo.getBenchmarkReport(sessionId, studentId);
-  if (existing) return existing;
-
-  const session = await repo.getSession(sessionId, studentId);
-  if (!session || session.status !== 'submitted' || session.isSandbox) return null;
-
-  const { pairs } = await resolveSessionQuestionPairs(repo, session);
-  let reviewResults: Record<string, MarkingResult[]> = {};
-  if (session.submissionSummary?.reviewResults) {
-    reviewResults = session.submissionSummary.reviewResults;
-  } else {
-    const answers = session.checkpoint?.answersByPartId ?? {};
-    for (const pair of pairs) {
-      if (pair.question.formatType === 'WRIT_TYPED_TASK') {
-        reviewResults[pair.question.questionId] = [];
-        continue;
-      }
-      reviewResults[pair.question.questionId] = gradeSubmission(pair.question, answers).results;
-    }
-  }
-
-  const allSubs = await repo.listWritingSubmissions(studentId);
-  const writingReview = allSubs
-    .filter((s) => s.sessionId === session.sessionId)
-    .map((s) => ({ submissionId: s.submissionId, evaluations: s.evaluations }));
-
-  const built = buildBenchmarkReportRecord({
-    session,
-    questions: pairs.map((p) => p.question),
-    reviewResults,
-    writingReview,
-  });
-  await repo.saveBenchmarkReport(built);
-  return built;
-}
+import { ensureBenchmarkReportForSession } from '../sessionLifecycle.ts';
 
 /** Dedicated NSW Benchmark Exams & Saved Reports API (/api/student/benchmarks/*). */
 export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
@@ -70,7 +25,7 @@ export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
       );
       const allReports = [...savedReports];
       for (const s of missingBenchmarks) {
-        const created = await ensureReportForSession(ctx, s.sessionId, studentId);
+        const created = await ensureBenchmarkReportForSession(repo, s.sessionId, studentId);
         if (created) allReports.push(created);
       }
       allReports.sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso));
@@ -89,7 +44,7 @@ export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
     try {
       await ctx.ensureSeeded();
       const studentId = req.auth!.studentId;
-      const report = await ensureReportForSession(ctx, req.params.sessionId, studentId);
+      const report = await ensureBenchmarkReportForSession(repo, req.params.sessionId, studentId);
       if (!report) {
         res.status(404).json({ error: 'Benchmark report not found.' });
         return;
@@ -105,7 +60,7 @@ export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
     try {
       await ctx.ensureSeeded();
       const studentId = req.auth!.studentId;
-      const report = await ensureReportForSession(ctx, req.params.sessionId, studentId);
+      const report = await ensureBenchmarkReportForSession(repo, req.params.sessionId, studentId);
       if (!report) {
         res.status(404).json({ error: 'Benchmark report not found.' });
         return;

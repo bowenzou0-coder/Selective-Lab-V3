@@ -471,3 +471,66 @@ test('clampAlgorithmAdjustments bounds multipliers and selectPracticeCandidates 
   assert.equal(targetCount, 2);
   assert.ok(effectiveCaps);
 });
+
+test('selectPracticeSession groups Reading questions cohesively by passage (1 text for 4 Qs, 2 texts for 10 Qs)', () => {
+  const makeReadPassage = (passageIdx: number, count: number): QuestionItem[] =>
+    Array.from({ length: count }, (_, i) => ({
+      ...SAMPLE_Q,
+      questionId: `q_read_p${passageIdx}_${i + 1}_v1`,
+      questionFamilyId: `q_read_p${passageIdx}_${i + 1}`,
+      section: 'READ',
+      formatType: 'READ_FICTION_MCQ',
+      poolType: 'practice',
+      stimulusId: `stim_passage_${passageIdx}`,
+      parts: [
+        {
+          ...SAMPLE_Q.parts[0],
+          partId: `rp_${passageIdx}_${i + 1}`,
+          skillId: 'READ.FIC.CHARACTER_INFERENCE',
+        },
+      ],
+    }));
+
+  // 4 passages × 5 questions each = 20 reading questions across 4 texts
+  const readPool = [
+    ...makeReadPassage(1, 5),
+    ...makeReadPassage(2, 5),
+    ...makeReadPassage(3, 5),
+    ...makeReadPassage(4, 5),
+  ];
+
+  // Requesting 4 Reading questions MUST select from 1 single passage (never 4 scattered passages)
+  const fourQs = selectPracticeSession({
+    mode: 'section_drill',
+    sectionFilter: 'READ',
+    questionCountOverride: 4,
+    questions: readPool,
+    skillStates: {},
+    questionMemory: {},
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-25T10:00:00Z',
+    seed: 99,
+  });
+  assert.equal(fourQs.length, 4);
+  const fourStimuli = new Set(fourQs.map((q) => q.stimulusId));
+  assert.equal(fourStimuli.size, 1);
+
+  // Requesting 10 Reading questions MUST select exactly 2 passages consecutively (5 + 5)
+  const tenQs = selectPracticeSession({
+    mode: 'section_drill',
+    sectionFilter: 'READ',
+    questionCountOverride: 10,
+    questions: readPool,
+    skillStates: {},
+    questionMemory: {},
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-25T10:00:00Z',
+    seed: 99,
+  });
+  assert.equal(tenQs.length, 10);
+  const tenStimuli = new Set(tenQs.map((q) => q.stimulusId));
+  assert.equal(tenStimuli.size, 2);
+  // First 5 belong to one passage, next 5 belong to the second passage
+  assert.equal(new Set(tenQs.slice(0, 5).map((q) => q.stimulusId)).size, 1);
+  assert.equal(new Set(tenQs.slice(5, 10).map((q) => q.stimulusId)).size, 1);
+});

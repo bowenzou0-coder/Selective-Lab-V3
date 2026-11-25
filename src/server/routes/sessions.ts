@@ -3,10 +3,39 @@ import type { Express } from 'express';
 import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { decidePracticeQuestionOrderWithGemini, getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
 import { ForbiddenError, NotFoundError, RevisionConflictError, type QuestionSelectionItem } from '../storage/repository.ts';
-import type { MarkingResult, MockTestBatch, QuestionItem, SectionCode, SessionCheckpoint, SessionMode, SessionRecord, SessionSelectionDecision, WritingDeterministicMetrics, WritingEvaluationRecord } from '../../shared/contracts.ts';
+import {
+  DEFAULT_AUTO_CALIBRATE,
+  resolveEffectiveLearningConfig,
+  type MarkingResult,
+  type MockTestBatch,
+  type QuestionItem,
+  type SectionCode,
+  type SessionCheckpoint,
+  type SessionMode,
+  type SessionRecord,
+  type SessionSelectionDecision,
+  type WritingDeterministicMetrics,
+  type WritingEvaluationRecord,
+} from '../../shared/contracts.ts';
 import { gradeSubmission, selectBatchMockQuestions, selectBenchmarkHoldoutQuestions, selectMockTestQuestions, selectPoolMockQuestions, selectPracticeSession, toStudentQuestionView } from '../../shared/engine.ts';
 import type { AppContext } from '../context.ts';
-import { getOfficialTimeLimitSec, buildQuestionSnapshots, resolveSessionQuestionPairs, SessionValidationError, getEffectiveDeadlineMs, SUBMIT_GRACE_MS, isSessionExpired, isSessionPastGrace, resolveSessionForCaller, finalizeSessionRecord, resolveOrExpireSession } from '../sessionLifecycle.ts';
+import {
+  getOfficialTimeLimitSec,
+  buildQuestionSnapshots,
+  buildBenchmarkSectionState,
+  mergeActiveSectionCheckpoint,
+  computeActiveSectionElapsedSec,
+  computeTotalSectionedElapsedSec,
+  resolveSessionQuestionPairs,
+  SessionValidationError,
+  getEffectiveDeadlineMs,
+  SUBMIT_GRACE_MS,
+  isSessionExpired,
+  isSessionPastGrace,
+  resolveSessionForCaller,
+  finalizeSessionRecord,
+  resolveOrExpireSession,
+} from '../sessionLifecycle.ts';
 
 /** Session lifecycle: create, load, checkpoint, submit (/api/student/sessions/*). */
 export function registerSessionRoutes(app: Express, ctx: AppContext): void {
@@ -47,15 +76,17 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
                 ? { qcStatus: 'active', batchTag: mockBatch, section: sectionFilter }
                 : { qcStatus: 'active', section: mode === 'writing_sprint' ? ('WRIT' as SectionCode) : sectionFilter };
 
-      const [existingSessions, configData, candidateQuestions, skillStates, questionMemory, evidenceMap] =
+      const [existingSessions, configData, learnerPrefs, candidateQuestions, skillStates, questionMemory, evidenceMap] =
         await Promise.all([
           repo.listActiveSessions(studentId),
           repo.getActiveConfig(),
+          repo.getLearnerPreferences(studentId),
           repo.listSelectionQuestions(selectionFilter),
           repo.getSkillStates(studentId),
           repo.getQuestionMemory(studentId),
           repo.getQuestionEvidence(studentId),
         ]);
+      const effectiveConfig = resolveEffectiveLearningConfig(configData.config, learnerPrefs);
 
       for (const s of existingSessions) {
         if (s.status === 'in_progress' && !s.isSandbox) {
@@ -144,6 +175,37 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           timeLimitSec = Math.max(60, Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1)));
         }
         title = `${mockBatch} Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Test)'}`;
+      } else if (mode === 'diagnostic') {
+        const seed = Date.now() & 0xfffffff;
+        const calibrationConfig = {
+          ...effectiveConfig,
+          autoCalibrate: {
+            ...(effectiveConfig.autoCalibrate ?? DEFAULT_AUTO_CALIBRATE),
+            enabled: false,
+          },
+          sessionDefaults: {
+            ...effectiveConfig.sessionDefaults,
+            dailyQuestionLimitBySection: { READ: 2, MATH: 3, THINK: 3, WRIT: 0 },
+            dailyGoalMinutes: 15,
+          },
+        };
+        selectedMeta = selectPracticeSession({
+          mode: 'diagnostic',
+          questions: candidateQuestions,
+          skillStates,
+          questionMemory,
+          evidenceMap,
+          dailyLimitsOverride: { READ: 2, MATH: 3, THINK: 3, WRIT: 0 },
+          config: calibrationConfig,
+          nowIso,
+          seed,
+        });
+        effectiveMode = 'diagnostic';
+        timeLimitSec =
+          customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec)
+            ? Math.max(60, Math.round(customTimeLimitSec))
+            : 15 * 60;
+        title = 'Starter Calibration Test';
       } else {
         const effectiveSection: SectionCode | undefined =
           mode === 'writing_sprint' ? 'WRIT' : sectionFilter;
@@ -162,7 +224,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
                   effectiveSection
                     ? repo.listSelectionQuestions({ qcStatus: 'active' })
                     : Promise.resolve(candidateQuestions),
-                config: configData.config,
+                config: effectiveConfig,
                 nowIso,
               })).plan;
         const seed = Date.now() & 0xfffffff;
@@ -176,7 +238,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
             evidenceMap,
             skillFocusWeights: dailyPlan?.skillWeights,
             algorithmAdjustments: dailyPlan?.algorithmAdjustments,
-            config: configData.config,
+            config: effectiveConfig,
             nowIso,
             seed,
           }).slice(0, 1);
@@ -190,7 +252,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
             evidenceMap,
             dailyPlan,
             questionCountOverride: questionCount,
-            config: configData.config,
+            config: effectiveConfig,
             nowIso,
             seed,
           });
@@ -202,14 +264,14 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           timeLimitSec = 1800;
           title = 'Writing Sprint (30 min)';
         } else if (effectiveSection) {
-          const drillMin = Math.max(1, configData.config.sessionDefaults.sectionDrillTimeMinutes ?? 8);
+          const drillMin = Math.max(1, effectiveConfig.sessionDefaults.sectionDrillTimeMinutes ?? 8);
           timeLimitSec = effectiveSection === 'WRIT' ? 1800 : drillMin * 60;
           title = `${effectiveSection} Practice Drill (${selectedMeta.length} Qs)`;
         } else {
           const goalMin =
-            configData.config.autoCalibrate?.enabled && dailyPlan?.dailyGoalMinutes
+            effectiveConfig.autoCalibrate?.enabled && dailyPlan?.dailyGoalMinutes
               ? dailyPlan.dailyGoalMinutes
-              : configData.config.sessionDefaults.dailyGoalMinutes;
+              : effectiveConfig.sessionDefaults.dailyGoalMinutes;
           timeLimitSec = goalMin * 60;
           title = "Today's Adaptive Practice";
         }
@@ -237,8 +299,18 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
       const snapshots = await buildQuestionSnapshots(repo, selected);
       const totalSlots = snapshots.reduce((sum, s) => sum + s.question.parts.length, 0);
       const startedAtIso = new Date().toISOString();
-      const deadlineAt =
-        timeLimitSec > 0 ? new Date(Date.parse(startedAtIso) + timeLimitSec * 1000).toISOString() : undefined;
+      const sectionState =
+        effectiveMode === 'benchmark_exam' && !sectionFilter
+          ? buildBenchmarkSectionState(snapshots, startedAtIso)
+          : undefined;
+      const effectiveTimeLimitSec = sectionState
+        ? sectionState.sections.reduce((sum, b) => sum + b.timeLimitSec, 0)
+        : timeLimitSec;
+      const deadlineAt = sectionState
+        ? sectionState.sections[0].deadlineAt
+        : effectiveTimeLimitSec > 0
+          ? new Date(Date.parse(startedAtIso) + effectiveTimeLimitSec * 1000).toISOString()
+          : undefined;
 
       const session: SessionRecord = {
         sessionId: `sess_${crypto.randomUUID().slice(0, 12)}`,
@@ -263,7 +335,8 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
           passageHighlightsByStimulusId: {},
           writingDraft: { planNotes: '', responseText: '' },
         },
-        timeLimitSec: timeLimitSec > 0 ? timeLimitSec : undefined,
+        sectionState,
+        timeLimitSec: effectiveTimeLimitSec > 0 ? effectiveTimeLimitSec : undefined,
         deadlineAt,
         totalSlots,
         correctSlots: 0,
@@ -410,6 +483,16 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         nowMs > deadlineMs + SUBMIT_GRACE_MS;
       if (expiredPastGrace) {
         const finalized = await resolveOrExpireSession(repo, session);
+        if (finalized.status === 'in_progress' && finalized.sectionState?.phase === 'on_break') {
+          res.status(409).json({
+            error: 'Section time ended — your answers were saved and locked.',
+            sectionExpired: true,
+            currentRevision: finalized.checkpointRevision ?? 1,
+            serverCheckpoint: finalized.checkpoint,
+            session: finalized,
+          });
+          return;
+        }
         res.status(409).json({
           error: 'Time expired — this test has been auto-submitted.',
           expiredAutoSubmitted: true,
@@ -429,6 +512,16 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         });
         return;
       }
+      if (session.sectionState?.phase === 'on_break') {
+        res.status(409).json({
+          error: 'Currently on inter-section break. Start the next section to continue.',
+          sectionPhase: 'on_break',
+          currentRevision: session.checkpointRevision ?? 1,
+          serverCheckpoint: session.checkpoint,
+          session,
+        });
+        return;
+      }
       const cp = req.body?.checkpoint as NonNullable<SessionRecord['checkpoint']>;
       if (!cp || typeof cp !== 'object') {
         res.status(400).json({ error: 'Invalid checkpoint payload.' });
@@ -445,10 +538,19 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         return;
       }
 
+      let checkpointToSave = cp;
+      if (session.sectionState?.phase === 'active') {
+        const activeSec = session.sectionState.sections[session.sectionState.currentSectionIndex];
+        if (activeSec) {
+          const { pairs } = await resolveSessionQuestionPairs(repo, session);
+          checkpointToSave = mergeActiveSectionCheckpoint(session.checkpoint, cp, pairs, activeSec);
+        }
+      }
+
       const saved = await repo.saveSessionCheckpoint(
         session.sessionId,
         req.auth!.studentId,
-        cp,
+        checkpointToSave,
         expectedRevision
       );
       res.json({ ok: true, ...saved, serverNowIso: new Date().toISOString() });
@@ -471,6 +573,309 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
       }
       console.error('PATCH /api/student/sessions/:id/checkpoint error:', err);
       res.status(500).json({ error: 'Failed to save checkpoint.' });
+    }
+  });
+
+  app.post('/api/student/sessions/:id/section/complete', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const { session, forbidden } = await resolveSessionForCaller(
+        repo,
+        req.params.id,
+        req.auth!.studentId
+      );
+      if (!session) {
+        res.status(404).json({ error: 'Session not found.' });
+        return;
+      }
+      if (forbidden) {
+        res.status(403).json({ error: 'Forbidden: cannot modify another user session.' });
+        return;
+      }
+      if (session.status === 'submitted' && session.submissionSummary) {
+        res.json({
+          finishedExam: true,
+          ...session.submissionSummary,
+          alreadySubmitted: true,
+          expiredAutoSubmitted: Boolean(session.expiredAutoSubmitted),
+          session,
+        });
+        return;
+      }
+      if (!session.sectionState) {
+        res.status(400).json({ error: 'This session does not use sectioned breaks.' });
+        return;
+      }
+      if (session.status !== 'in_progress') {
+        res.status(409).json({
+          error: 'Session is not active.',
+          currentRevision: session.checkpointRevision ?? 1,
+          serverCheckpoint: session.checkpoint,
+        });
+        return;
+      }
+      if (session.sectionState.phase === 'on_break') {
+        res.json({
+          finishedExam: false,
+          session,
+          serverNowIso: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const nowMs = Date.now();
+      const expired = isSessionExpired(session, nowMs);
+      const deadlineMs = getEffectiveDeadlineMs(session);
+      const withinGrace = deadlineMs === null || nowMs <= deadlineMs + SUBMIT_GRACE_MS;
+      const idx = session.sectionState.currentSectionIndex;
+      const activeSec = session.sectionState.sections[idx];
+      const completedAtIso =
+        expired && activeSec?.deadlineAt
+          ? activeSec.deadlineAt
+          : new Date(nowMs).toISOString();
+
+      const { pairs } = await resolveSessionQuestionPairs(repo, session);
+      const fallbackCp: SessionCheckpoint = session.checkpoint || {
+        currentIndex: activeSec?.startIndex ?? 0,
+        elapsedSec: 0,
+        answersByPartId: {},
+        flaggedQuestionIds: [],
+      };
+      const incomingCp = req.body?.checkpoint as SessionCheckpoint | undefined;
+      const mergedCp =
+        (!expired || withinGrace) && incomingCp && activeSec
+          ? mergeActiveSectionCheckpoint(fallbackCp, incomingCp, pairs, activeSec)
+          : fallbackCp;
+
+      const rawExpectedRev = req.body?.expectedRevision;
+      const expectedRevision =
+        rawExpectedRev !== undefined && rawExpectedRev !== null && !Number.isNaN(Number(rawExpectedRev))
+          ? Number(rawExpectedRev)
+          : undefined;
+      const effectiveExpectedRev =
+        !expired || withinGrace ? expectedRevision : session.checkpointRevision ?? 1;
+
+      const isLastSection = idx >= session.sectionState.sections.length - 1;
+      if (isLastSection) {
+        let finalResult;
+        try {
+          finalResult = await finalizeSessionRecord({
+            repo,
+            session,
+            checkpoint: mergedCp,
+            expectedRevision: effectiveExpectedRev,
+            assisted: false,
+            completedAtIso,
+            expiredAutoSubmitted: expired,
+            rejectValidationErrors: false,
+          });
+        } catch (err) {
+          if (err instanceof RevisionConflictError && expired && !withinGrace) {
+            const fresh = await repo.getSession(session.sessionId, req.auth!.studentId);
+            if (fresh && fresh.status === 'submitted' && fresh.submissionSummary) {
+              finalResult = {
+                alreadySubmitted: true,
+                session: fresh,
+                submissionSummary: fresh.submissionSummary,
+              };
+            } else if (fresh) {
+              finalResult = await finalizeSessionRecord({
+                repo,
+                session: fresh,
+                checkpoint: fresh.checkpoint || fallbackCp,
+                expectedRevision: fresh.checkpointRevision ?? 1,
+                assisted: false,
+                completedAtIso,
+                expiredAutoSubmitted: true,
+                rejectValidationErrors: false,
+              });
+            } else {
+              throw err;
+            }
+          } else {
+            throw err;
+          }
+        }
+
+        res.json({
+          finishedExam: true,
+          ...finalResult.submissionSummary,
+          alreadySubmitted: finalResult.alreadySubmitted,
+          expiredAutoSubmitted: Boolean(finalResult.session.expiredAutoSubmitted),
+          session: finalResult.session,
+        });
+        return;
+      }
+
+      const sectionElapsedSec = activeSec
+        ? computeActiveSectionElapsedSec(activeSec, completedAtIso, expired)
+        : 0;
+
+      try {
+        const updated = await repo.updateSessionProgressState(
+          session.sessionId,
+          req.auth!.studentId,
+          (s) => {
+            if (!s.sectionState || s.sectionState.phase !== 'active' || s.sectionState.currentSectionIndex !== idx) {
+              return;
+            }
+            const sec = s.sectionState.sections[idx];
+            sec.status = 'completed';
+            sec.completedAt = completedAtIso;
+            sec.elapsedSec = sectionElapsedSec;
+            if (expired) sec.expiredAutoAdvanced = true;
+            const nextSec = s.sectionState.sections[idx + 1];
+            s.sectionState.currentSectionIndex = idx + 1;
+            s.sectionState.phase = 'on_break';
+            s.sectionState.breakStartedAt = completedAtIso;
+            s.deadlineAt = undefined;
+            const totalElapsed = computeTotalSectionedElapsedSec(s.sectionState, nowMs);
+            s.checkpoint = {
+              ...mergedCp,
+              currentIndex: nextSec.startIndex,
+              elapsedSec: totalElapsed,
+            };
+          },
+          effectiveExpectedRev
+        );
+        res.json({
+          finishedExam: false,
+          session: updated.session,
+          serverNowIso: new Date().toISOString(),
+        });
+        return;
+      } catch (err) {
+        if (err instanceof RevisionConflictError && expired && !withinGrace) {
+          const fresh = await repo.getSession(session.sessionId, req.auth!.studentId);
+          if (fresh?.status === 'in_progress' && fresh.sectionState) {
+            if (fresh.sectionState.phase === 'on_break' || fresh.sectionState.currentSectionIndex > idx) {
+              res.json({
+                finishedExam: false,
+                session: fresh,
+                serverNowIso: new Date().toISOString(),
+              });
+              return;
+            }
+          }
+        }
+        throw err;
+      }
+    } catch (err) {
+      if (err instanceof RevisionConflictError) {
+        res.status(409).json({
+          error: err.message,
+          currentRevision: err.currentRevision,
+          serverCheckpoint: err.serverCheckpoint,
+        });
+        return;
+      }
+      if (err instanceof ForbiddenError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      console.error('POST /api/student/sessions/:id/section/complete error:', err);
+      res.status(500).json({ error: 'Failed to complete exam section.' });
+    }
+  });
+
+  app.post('/api/student/sessions/:id/section/start', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const { session, forbidden } = await resolveSessionForCaller(
+        repo,
+        req.params.id,
+        req.auth!.studentId
+      );
+      if (!session) {
+        res.status(404).json({ error: 'Session not found.' });
+        return;
+      }
+      if (forbidden) {
+        res.status(403).json({ error: 'Forbidden: cannot modify another user session.' });
+        return;
+      }
+      if (!session.sectionState) {
+        res.status(400).json({ error: 'This session does not use sectioned breaks.' });
+        return;
+      }
+      if (session.status !== 'in_progress') {
+        res.status(409).json({
+          error: 'Session already submitted.',
+          alreadySubmitted: session.status === 'submitted',
+          currentRevision: session.checkpointRevision ?? 1,
+          serverCheckpoint: session.checkpoint,
+        });
+        return;
+      }
+      if (session.sectionState.phase === 'active') {
+        res.json({
+          session,
+          serverNowIso: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const rawExpectedRev = req.body?.expectedRevision;
+      const expectedRevision =
+        rawExpectedRev !== undefined && rawExpectedRev !== null && !Number.isNaN(Number(rawExpectedRev))
+          ? Number(rawExpectedRev)
+          : undefined;
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+
+      const updated = await repo.updateSessionProgressState(
+        session.sessionId,
+        req.auth!.studentId,
+        (s) => {
+          if (!s.sectionState || s.sectionState.phase === 'active') return;
+          const sec = s.sectionState.sections[s.sectionState.currentSectionIndex];
+          if (!sec) return;
+          sec.status = 'active';
+          sec.startedAt = nowIso;
+          sec.deadlineAt = new Date(nowMs + sec.timeLimitSec * 1000).toISOString();
+          s.sectionState.phase = 'active';
+          s.sectionState.breakStartedAt = undefined;
+          s.deadlineAt = sec.deadlineAt;
+          s.checkpoint = {
+            ...(s.checkpoint || {
+              currentIndex: 0,
+              elapsedSec: 0,
+              answersByPartId: {},
+              flaggedQuestionIds: [],
+            }),
+            currentIndex: sec.startIndex,
+          };
+        },
+        expectedRevision
+      );
+
+      res.json({
+        session: updated.session,
+        serverNowIso: new Date().toISOString(),
+      });
+    } catch (err) {
+      if (err instanceof RevisionConflictError) {
+        res.status(409).json({
+          error: err.message,
+          currentRevision: err.currentRevision,
+          serverCheckpoint: err.serverCheckpoint,
+        });
+        return;
+      }
+      if (err instanceof ForbiddenError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      console.error('POST /api/student/sessions/:id/section/start error:', err);
+      res.status(500).json({ error: 'Failed to start next exam section.' });
     }
   });
 
@@ -500,13 +905,32 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         return;
       }
 
+      if (session.sectionState) {
+        const isLast =
+          session.sectionState.currentSectionIndex >= session.sectionState.sections.length - 1;
+        if (!isLast) {
+          res.status(400).json({
+            error: 'Complete each timed section in order before final submission.',
+          });
+          return;
+        }
+        if (session.sectionState.phase === 'on_break') {
+          res.status(400).json({
+            error: 'Start the final section before submitting.',
+          });
+          return;
+        }
+      }
+
       const nowMs = Date.now();
       const expired = isSessionExpired(session, nowMs);
       const deadlineMs = getEffectiveDeadlineMs(session);
       const withinGrace = deadlineMs === null || nowMs <= deadlineMs + SUBMIT_GRACE_MS;
       const completedAtIso =
         expired && deadlineMs !== null
-          ? session.deadlineAt || new Date(deadlineMs).toISOString()
+          ? (session.sectionState?.sections[session.sectionState.currentSectionIndex]?.deadlineAt ||
+            session.deadlineAt ||
+            new Date(deadlineMs).toISOString())
           : new Date(nowMs).toISOString();
 
       const incomingCheckpoint = req.body?.checkpoint as SessionRecord['checkpoint'] | undefined;
@@ -516,8 +940,15 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
         answersByPartId: {},
         flaggedQuestionIds: [],
       };
-      const baseCp: SessionCheckpoint =
+      let baseCp: SessionCheckpoint =
         (!expired || withinGrace) && incomingCheckpoint ? incomingCheckpoint : fallbackCp;
+      if (session.sectionState?.phase === 'active' && (!expired || withinGrace) && incomingCheckpoint) {
+        const activeSec = session.sectionState.sections[session.sectionState.currentSectionIndex];
+        if (activeSec) {
+          const { pairs } = await resolveSessionQuestionPairs(repo, session);
+          baseCp = mergeActiveSectionCheckpoint(fallbackCp, incomingCheckpoint, pairs, activeSec);
+        }
+      }
       const cp: SessionCheckpoint = expired
         ? {
             ...baseCp,

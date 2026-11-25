@@ -5,6 +5,7 @@ import type {
   DailyFocusPlan,
   ImportBatchRecord,
   LearnerAccountRecord,
+  LearnerPreferences,
   LearningConfig,
   MediaAssetRecord,
   PartAttemptRecord,
@@ -15,6 +16,7 @@ import type {
   SessionCheckpoint,
   SessionQuestionSnapshot,
   SessionRecord,
+  SessionSectionState,
   SkillState,
   StimulusGroup,
   VisualSpec,
@@ -31,6 +33,7 @@ import {
   ForbiddenError,
   NotFoundError,
   RevisionConflictError,
+  type AccountDeleteResponse,
   type AdminBankStatusSummary,
   type AppRepository,
   type BackupRestoreReport,
@@ -105,6 +108,7 @@ export class MemoryRepository implements AppRepository {
   private skillStatesByStudent = new Map<string, Record<string, SkillState>>();
   private questionMemoryByStudent = new Map<string, Record<string, QuestionMemoryState>>();
   private questionEvidenceByStudent = new Map<string, Record<string, QuestionMasteryEvidence>>();
+  private learnerPreferencesByStudent = new Map<string, LearnerPreferences>();
   private flags = new Map<string, QuestionFlagRecord>();
 
   async initAndSeedIfEmpty(seedManifest: BankImportManifest): Promise<void> {
@@ -225,6 +229,47 @@ export class MemoryRepository implements AppRepository {
       clearedWriting: submissionIds.size,
       clearedDailyPlans,
       preservedQuestionsCount: new Set([...this.questions.values()].map((q) => q.questionFamilyId)).size,
+    };
+  }
+
+  async getLearnerPreferences(studentId: string): Promise<LearnerPreferences | null> {
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    const found = this.learnerPreferencesByStudent.get(sid);
+    return found ? structuredClone(found) : null;
+  }
+
+  async saveLearnerPreferences(studentId: string, prefs: LearnerPreferences): Promise<LearnerPreferences> {
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    const stamped: LearnerPreferences = {
+      ...structuredClone(prefs),
+      updatedAtIso: new Date().toISOString(),
+    };
+    this.learnerPreferencesByStudent.set(sid, stamped);
+    return structuredClone(stamped);
+  }
+
+  async deleteLearnerPreferences(studentId: string): Promise<void> {
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    this.learnerPreferencesByStudent.delete(sid);
+  }
+
+  async deleteUserAccount(studentId: string): Promise<AccountDeleteResponse> {
+    const sid = studentId || DEFAULT_STUDENT_ID;
+    const resetRes = await this.resetStudentProgress(sid);
+    this.learnerPreferencesByStudent.delete(sid);
+    let clearedFlags = 0;
+    for (const [id, flag] of this.flags) {
+      if (flag.studentId === sid) {
+        this.flags.delete(id);
+        clearedFlags++;
+      }
+    }
+    const deletedUser = this.users.delete(sid);
+    this.admins.delete(sid);
+    return {
+      ...resetRes,
+      deletedUser,
+      clearedFlags,
     };
   }
 
@@ -983,6 +1028,40 @@ export class MemoryRepository implements AppRepository {
     return { checkpointRevision: nextRev, savedAtIso: new Date().toISOString() };
   }
 
+  async updateSessionProgressState(
+    sessionId: string,
+    studentId: string,
+    mutate: (session: SessionRecord) => void,
+    expectedRevision?: number
+  ): Promise<{ session: SessionRecord; checkpointRevision: number }> {
+    const s = this.sessions.get(sessionId);
+    if (!s) throw new NotFoundError('Session not found.');
+    if ((s.studentId || DEFAULT_STUDENT_ID) !== studentId) {
+      throw new ForbiddenError('Forbidden: session belongs to another user.');
+    }
+    if (s.status !== 'in_progress') {
+      throw new RevisionConflictError(
+        'Session already submitted.',
+        s.checkpointRevision ?? 1,
+        s.checkpoint
+      );
+    }
+    const currentRev = s.checkpointRevision ?? 1;
+    if (expectedRevision !== undefined && expectedRevision !== currentRev) {
+      throw new RevisionConflictError(
+        `Checkpoint revision conflict: expected v${expectedRevision}, current v${currentRev}.`,
+        currentRev,
+        s.checkpoint
+      );
+    }
+    const next = structuredClone(s);
+    mutate(next);
+    const nextRev = currentRev + 1;
+    next.checkpointRevision = nextRev;
+    this.sessions.set(sessionId, next);
+    return { session: structuredClone(next), checkpointRevision: nextRev };
+  }
+
   async completeSession(
     sessionId: string,
     summary: { correctSlots: number; totalSlots: number; completedAt: string }
@@ -1047,6 +1126,10 @@ export class MemoryRepository implements AppRepository {
 
     s.status = 'submitted';
     s.checkpoint = structuredClone(input.checkpoint);
+    if (input.sectionState) {
+      s.sectionState = structuredClone(input.sectionState);
+      delete s.deadlineAt;
+    }
     s.checkpointRevision = (s.checkpointRevision ?? 1) + 1;
     s.correctSlots = input.correctSlots;
     s.totalSlots = input.totalSlots;
@@ -1225,8 +1308,9 @@ export class MemoryRepository implements AppRepository {
     this.flags.set(flag.flagId, structuredClone(flag));
   }
 
-  async listQuestionFlags(): Promise<QuestionFlagRecord[]> {
+  async listQuestionFlags(studentId?: string): Promise<QuestionFlagRecord[]> {
     return Array.from(this.flags.values())
+      .filter((f) => !studentId || f.studentId === studentId)
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .map((f) => structuredClone(f));
   }

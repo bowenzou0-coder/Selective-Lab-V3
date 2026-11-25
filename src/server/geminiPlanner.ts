@@ -14,6 +14,7 @@ import {
 } from '../shared/contracts.ts';
 import {
   clampAlgorithmAdjustments,
+  pickReadingCohesive,
   selectPracticeCandidates,
   selectPracticeSession,
   type SelectionQuestion,
@@ -155,8 +156,8 @@ export function allocateAutoCalibratedDailyPlan(input: {
     ...DEFAULT_AUTO_CALIBRATE,
     ...(input.autoConfig || {}),
   };
-  const minQ = Math.max(3, Math.min(30, Math.round(cfg.minDailyQuestions || 6)));
-  const maxQ = Math.max(minQ, Math.min(40, Math.round(cfg.maxDailyQuestions || 14)));
+  const minQ = Math.max(3, Math.min(30, Math.round(cfg.minDailyQuestions || 20)));
+  const maxQ = Math.max(minQ, Math.min(40, Math.round(cfg.maxDailyQuestions || 40)));
   const clampedVol = Math.min(4, Math.max(0, Number.isFinite(input.volumeScore) ? input.volumeScore : 2));
   const rawTotal = Math.round(minQ + (clampedVol / 4) * (maxQ - minQ));
 
@@ -171,12 +172,13 @@ export function allocateAutoCalibratedDailyPlan(input: {
   const allocation: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
 
   if (targetObjTotal > 0 && activeObjSections.length > 0) {
-    // Exponentially amplify rubric score differences so a high-urgency section gets clearly more questions
-    const weights: Record<'READ' | 'MATH' | 'THINK', number> = { READ: 0, MATH: 0, THINK: 0 };
+    // Balanced weight curve (2.0..5.0 -> max ~2.5x skew) so urgent sections get more
+    // questions without starving Reading/Maths/Thinking into extreme lopsided splits.
+    const weights: Record<'READ' | 'MATH' | 'THINK', number> = { READ: 2, MATH: 2, THINK: 2 };
     let weightSum = 0;
     for (const sec of activeObjSections) {
       const s = Math.min(4, Math.max(0, Number.isFinite(input.sectionScores[sec]) ? input.sectionScores[sec] : 2));
-      const w = 0.5 + Math.pow(s + 0.4, 1.5);
+      const w = 2.0 + s * 0.75;
       weights[sec] = w;
       weightSum += w;
     }
@@ -216,9 +218,10 @@ export function allocateAutoCalibratedDailyPlan(input: {
     cfg.includeWriting && input.includeWriting && (input.availableBySection.WRIT || 0) > 0 ? 1 : 0;
   allocation.WRIT = writingCount;
 
+  // Target ~1 minute per objective question (+30 minutes when a Writing sprint is scheduled)
   const objCount = allocation.READ + allocation.MATH + allocation.THINK;
-  const rawMinutes = objCount * 2.2 + writingCount * 25;
-  const dailyGoalMinutes = Math.max(10, Math.min(90, Math.round(rawMinutes / 5) * 5));
+  const rawMinutes = objCount * 1.0 + writingCount * 30;
+  const dailyGoalMinutes = Math.max(5, Math.min(90, Math.round(rawMinutes)));
 
   return { dailyQuestionLimitBySection: allocation, dailyGoalMinutes };
 }
@@ -309,7 +312,10 @@ export function buildDeterministicDailyFocusPlan(input: {
         secUrgency[sec] = Math.min(4, Math.max(0.5, avgUrg * 1.4));
       }
     }
-    const volScore = Math.min(4, Math.max(1, 1.5 + (totalRepairs + totalDue) * 0.25));
+    const volScore =
+      totalRepairs === 0 && totalDue === 0
+        ? 2
+        : Math.min(4, Math.max(1, 1.8 + (totalRepairs + totalDue) * 0.2));
     const allocated = allocateAutoCalibratedDailyPlan({
       volumeScore: volScore,
       sectionScores: secUrgency,
@@ -960,7 +966,7 @@ export async function decidePracticeQuestionOrderWithGemini<
     config: input.config,
     nowIso: input.nowIso,
     seed: input.seed,
-    poolLimit: 24,
+    poolLimit: Math.max(24, deterministicQuestions.length * 2),
   });
 
   if (candidates.length === 0 || targetCount === 0) {
@@ -1048,14 +1054,52 @@ export async function decidePracticeQuestionOrderWithGemini<
     )
     .sort((a, b) => b.combinedRank - a.combinedRank);
 
-  // Order cleanly while respecting section caps and avoiding identical consecutive skills when variety exists
-  const chosen: T[] = [];
-  const seenIds = new Set<string>();
-  const sectionCounts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
-  const remaining = [...scoredCandidates];
+  // Keep Reading questions grouped cohesively by passage (`stimulusId`), while
+  // ordering other sections with skill variety and respecting section caps.
+  const readCap =
+    input.sectionFilter === 'READ'
+      ? targetCount
+      : effectiveCaps
+        ? Math.max(0, Number(effectiveCaps.READ ?? 0))
+        : 0;
 
-  while (chosen.length < targetCount && remaining.length > 0) {
-    const lastSkill = chosen.length > 0 ? chosen[chosen.length - 1].parts[0]?.skillId : undefined;
+  const cohesiveReadBlocks: { rank: number; items: T[] }[] = [];
+  const chosenReadIds = new Set<string>();
+  if (readCap > 0) {
+    const readRows = scoredCandidates.filter((row) => row.cand.q.section === 'READ');
+    const rankById = new Map(readRows.map((row) => [row.cand.q.questionId, row.combinedRank]));
+    const cohesiveRead = pickReadingCohesive(
+      readRows.map((row) => ({ q: row.cand.q, priority: row.combinedRank })),
+      Math.min(readCap, targetCount)
+    );
+    for (const item of cohesiveRead) {
+      chosenReadIds.add(item.q.questionId);
+      const qRank = rankById.get(item.q.questionId) ?? 0;
+      const prevBlock = cohesiveReadBlocks[cohesiveReadBlocks.length - 1];
+      if (prevBlock && item.q.stimulusId && prevBlock.items[0]?.stimulusId === item.q.stimulusId) {
+        prevBlock.items.push(item.q);
+        prevBlock.rank = Math.max(prevBlock.rank, qRank);
+      } else {
+        cohesiveReadBlocks.push({ rank: qRank, items: [item.q] });
+      }
+    }
+  }
+
+  // Pick non-READ items in priority order (avoiding identical consecutive skills when variety exists)
+  const nonReadTarget = Math.max(0, targetCount - chosenReadIds.size);
+  const nonReadChosen: { rank: number; q: T }[] = [];
+  const seenIds = new Set<string>(chosenReadIds);
+  const sectionCounts: Record<SectionCode, number> = {
+    READ: chosenReadIds.size,
+    MATH: 0,
+    THINK: 0,
+    WRIT: 0,
+  };
+  const remaining = scoredCandidates.filter((row) => row.cand.q.section !== 'READ');
+
+  while (nonReadChosen.length < nonReadTarget && remaining.length > 0) {
+    const lastSkill =
+      nonReadChosen.length > 0 ? nonReadChosen[nonReadChosen.length - 1].q.parts[0]?.skillId : undefined;
     let pickIdx = remaining.findIndex((row) => {
       if (seenIds.has(row.cand.q.questionId)) return false;
       if (effectiveCaps) {
@@ -1079,10 +1123,18 @@ export async function decidePracticeQuestionOrderWithGemini<
 
     if (pickIdx === -1) break;
     const [picked] = remaining.splice(pickIdx, 1);
-    chosen.push(picked.cand.q);
+    nonReadChosen.push({ rank: picked.combinedRank, q: picked.cand.q });
     seenIds.add(picked.cand.q.questionId);
     sectionCounts[picked.cand.q.section] += 1;
   }
+
+  // Interleave cohesive Reading passage blocks with non-Reading items by rank so
+  // the highest-priority item goes first while every Reading passage stays consecutive.
+  const orderedBlocks: { rank: number; items: T[] }[] = [
+    ...cohesiveReadBlocks,
+    ...nonReadChosen.map((entry) => ({ rank: entry.rank, items: [entry.q] })),
+  ].sort((a, b) => b.rank - a.rank);
+  const chosen: T[] = orderedBlocks.flatMap((b) => b.items);
 
   if (chosen.length === 0) {
     return deterministicFallback();

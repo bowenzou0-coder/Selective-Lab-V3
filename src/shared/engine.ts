@@ -480,6 +480,80 @@ function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(inp
   return { scored, effectiveCaps };
 }
 
+/**
+ * Selects Reading questions cohesively by passage (`stimulusId`) so students read
+ * 1 passage for a small set (e.g. 4 Qs) or ~2 passages for a larger set (e.g. 10 Qs),
+ * rather than reading 4 unrelated texts for 1 question each.
+ * Items within each selected passage are ordered naturally by questionId.
+ */
+export function pickReadingCohesive<
+  Q extends SelectionQuestion,
+  T extends { q: Q; priority: number },
+>(candidates: T[], limit: number): T[] {
+  if (limit <= 0 || candidates.length === 0) return [];
+
+  // Deduplicate by questionFamilyId keeping highest-priority item
+  const bestByFamily = new Map<string, T>();
+  for (const item of candidates) {
+    const prev = bestByFamily.get(item.q.questionFamilyId);
+    if (!prev || item.priority > prev.priority) {
+      bestByFamily.set(item.q.questionFamilyId, item);
+    }
+  }
+
+  // Group by stimulusId (standalone items without stimulusId stay in 1-item groups)
+  const groupsMap = new Map<string, { stimulusId?: string; items: T[] }>();
+  for (const item of bestByFamily.values()) {
+    const key = item.q.stimulusId ? `stim::${item.q.stimulusId}` : `solo::${item.q.questionId}`;
+    const existing = groupsMap.get(key);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groupsMap.set(key, { stimulusId: item.q.stimulusId, items: [item] });
+    }
+  }
+
+  const remainingGroups = Array.from(groupsMap.values());
+  const selected: T[] = [];
+
+  while (selected.length < limit && remainingGroups.length > 0) {
+    const needed = limit - selected.length;
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < remainingGroups.length; i++) {
+      const grp = remainingGroups[i];
+      const byPriority = [...grp.items].sort((a, b) => b.priority - a.priority);
+      const takeSlice = byPriority.slice(0, needed);
+      const avgPrio = takeSlice.reduce((s, it) => s + it.priority, 0) / takeSlice.length;
+      const topPrio = takeSlice[0].priority;
+      // Prefer cohesive multi-question passages over scattered singletons when we need >= 2 questions
+      const multiBonus = grp.stimulusId && grp.items.length >= 2 && needed >= 2 ? 0.85 : 0;
+      // Extra nudge when a single passage covers the entire remaining reading quota
+      const fullFitBonus = grp.stimulusId && grp.items.length >= needed && needed >= 2 ? 0.45 : 0;
+      const score = avgPrio * 0.75 + topPrio * 0.25 + multiBonus + fullFitBonus;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    const [chosenGroup] = remainingGroups.splice(bestIdx, 1);
+    const chosenItems =
+      chosenGroup.items.length <= needed
+        ? [...chosenGroup.items]
+        : [...chosenGroup.items].sort((a, b) => b.priority - a.priority).slice(0, needed);
+
+    // Order consecutive questions from the same passage in natural reading order
+    chosenItems.sort((a, b) =>
+      a.q.questionId.localeCompare(b.q.questionId, undefined, { numeric: true })
+    );
+    selected.push(...chosenItems);
+  }
+
+  return selected;
+}
+
 export function selectPracticeCandidates<T extends SelectionQuestion = QuestionItem>(
   input: PracticeSelectionInput<T> & { poolLimit?: number }
 ): {
@@ -487,19 +561,20 @@ export function selectPracticeCandidates<T extends SelectionQuestion = QuestionI
   targetCount: number;
   effectiveCaps?: Record<SectionCode, number>;
 } {
-  const poolLimit = Math.max(4, input.poolLimit ?? 24);
   const { scored, sectionLimit, effectiveCaps } = scorePracticeCandidates(input);
 
   if (sectionLimit !== undefined) {
     const targetCount = Math.min(sectionLimit, scored.length);
-    const candidates = pickWithDiversity<T, PracticeCandidateInfo<T>>(
-      scored,
-      Math.min(scored.length, Math.max(targetCount * 2, poolLimit))
-    );
+    const poolLimit = Math.max(4, input.poolLimit ?? Math.max(24, targetCount * 2));
+    const desiredPool = Math.min(scored.length, Math.max(targetCount * 2, poolLimit));
+    const candidates =
+      input.sectionFilter === 'READ'
+        ? pickReadingCohesive<T, PracticeCandidateInfo<T>>(scored, desiredPool)
+        : pickWithDiversity<T, PracticeCandidateInfo<T>>(scored, desiredPool);
     return { candidates, targetCount };
   }
 
-  const caps = effectiveCaps || { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
+  const caps = effectiveCaps || { READ: 10, MATH: 10, THINK: 10, WRIT: 0 };
   const candidates: PracticeCandidateInfo<T>[] = [];
   let targetCount = 0;
 
@@ -509,9 +584,14 @@ export function selectPracticeCandidates<T extends SelectionQuestion = QuestionI
     const secScored = scored.filter((x) => x.q.section === sec);
     targetCount += Math.min(cap, secScored.length);
     const secPoolCap = Math.min(secScored.length, Math.max(cap * 2, Math.min(8, cap + 4)));
-    candidates.push(...pickWithDiversity<T, PracticeCandidateInfo<T>>(secScored, secPoolCap));
+    if (sec === 'READ') {
+      candidates.push(...pickReadingCohesive<T, PracticeCandidateInfo<T>>(secScored, secPoolCap));
+    } else {
+      candidates.push(...pickWithDiversity<T, PracticeCandidateInfo<T>>(secScored, secPoolCap));
+    }
   }
 
+  const poolLimit = Math.max(targetCount, input.poolLimit ?? Math.max(24, targetCount * 2));
   return {
     candidates: candidates.slice(0, poolLimit),
     targetCount,
@@ -525,20 +605,23 @@ export function selectPracticeSession<T extends SelectionQuestion = QuestionItem
   const { scored, sectionLimit, effectiveCaps } = scorePracticeCandidates(input);
 
   if (sectionLimit !== undefined) {
+    if (input.sectionFilter === 'READ') {
+      return pickReadingCohesive<T, PracticeCandidateInfo<T>>(scored, sectionLimit).map((item) => item.q);
+    }
     return pickWithDiversity<T, PracticeCandidateInfo<T>>(scored, sectionLimit).map((item) => item.q);
   }
 
-  const caps = effectiveCaps || { READ: 2, MATH: 3, THINK: 3, WRIT: 0 };
+  const caps = effectiveCaps || { READ: 10, MATH: 10, THINK: 10, WRIT: 0 };
   const picked: T[] = [];
   for (const sec of ['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]) {
     const cap = Math.max(0, Number(caps[sec] ?? 0));
     if (cap <= 0) continue;
-    picked.push(
-      ...pickWithDiversity<T, PracticeCandidateInfo<T>>(
-        scored.filter((x) => x.q.section === sec),
-        cap
-      ).map((item) => item.q)
-    );
+    const secScored = scored.filter((x) => x.q.section === sec);
+    if (sec === 'READ') {
+      picked.push(...pickReadingCohesive<T, PracticeCandidateInfo<T>>(secScored, cap).map((item) => item.q));
+    } else {
+      picked.push(...pickWithDiversity<T, PracticeCandidateInfo<T>>(secScored, cap).map((item) => item.q));
+    }
   }
   return picked;
 }
@@ -737,6 +820,9 @@ export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionIt
     const scored = eligible
       .map((q) => ({ q, priority: scoreForFreshMock(q) }))
       .sort((a, b) => b.priority - a.priority);
+    if (sectionFilter === 'READ') {
+      return pickReadingCohesive<T, { q: T; priority: number }>(scored, cap).map((x) => x.q);
+    }
     return pickWithDiversity<T, { q: T; priority: number }>(scored, cap).map((x) => x.q);
   }
 
@@ -762,7 +848,11 @@ export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionIt
         .filter((q) => q.section === sec)
         .map((q) => ({ q, priority: scoreForFreshMock(q) }))
         .sort((a, b) => b.priority - a.priority);
-      picked.push(...pickWithDiversity<T, { q: T; priority: number }>(secScored, caps[sec]).map((x) => x.q));
+      if (sec === 'READ') {
+        picked.push(...pickReadingCohesive<T, { q: T; priority: number }>(secScored, caps[sec]).map((x) => x.q));
+      } else {
+        picked.push(...pickWithDiversity<T, { q: T; priority: number }>(secScored, caps[sec]).map((x) => x.q));
+      }
     }
     return picked;
   }
@@ -772,11 +862,19 @@ export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionIt
       .filter((q) => q.section === sec)
       .map((q) => ({ q, priority: scoreForFreshMock(q) }))
       .sort((a, b) => b.priority - a.priority);
-    picked.push(
-      ...pickWithDiversity<T, { q: T; priority: number }>(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map(
-        (x) => x.q
-      )
-    );
+    if (sec === 'READ') {
+      picked.push(
+        ...pickReadingCohesive<T, { q: T; priority: number }>(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map(
+          (x) => x.q
+        )
+      );
+    } else {
+      picked.push(
+        ...pickWithDiversity<T, { q: T; priority: number }>(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map(
+          (x) => x.q
+        )
+      );
+    }
   }
   return picked;
 }

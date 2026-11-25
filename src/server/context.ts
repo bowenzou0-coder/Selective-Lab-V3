@@ -40,16 +40,22 @@ export function createAppContext(repo: AppRepository, options: { skipSeed?: bool
       return config.primaryMonitoredStudentId;
     }
     const studentUsers = allUsers.filter((u) => u.role === 'student');
-    if (studentUsers.length === 0) return null;
-    if (studentUsers.length === 1) return studentUsers[0].uid;
+    const candidates = studentUsers.length > 0 ? studentUsers : allUsers;
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0].uid;
 
-    const activityById = await repo.getLearnerActivity(studentUsers.map((u) => u.uid));
-    const ranked = studentUsers.map((u) => {
+    const activityById = await repo.getLearnerActivity(candidates.map((u) => u.uid));
+    const ranked = candidates.map((u) => {
       const activity = activityById[u.uid];
       const latestMs = Math.max(Date.parse(u.updatedAtIso || '') || 0, Date.parse(activity?.lastActiveAtIso || '') || 0);
-      return { uid: u.uid, attemptsCount: activity?.attemptsCount ?? 0, latestMs };
+      return {
+        uid: u.uid,
+        sessionsCount: activity?.sessionsCount ?? 0,
+        attemptsCount: activity?.attemptsCount ?? 0,
+        latestMs,
+      };
     });
-    ranked.sort((a, b) => b.attemptsCount - a.attemptsCount || b.latestMs - a.latestMs);
+    ranked.sort((a, b) => b.attemptsCount - a.attemptsCount || b.sessionsCount - a.sessionsCount || b.latestMs - a.latestMs);
     return ranked[0].uid;
   }
 
