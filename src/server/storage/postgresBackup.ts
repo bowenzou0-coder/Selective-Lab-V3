@@ -1,6 +1,6 @@
 // Canonical backup export/restore for Postgres (kept out of the main repository file).
 import { type PoolClient } from 'pg';
-import type { DailyFocusPlan, ImportBatchRecord, LearningConfig, MediaAssetRecord, PartAttemptRecord, QuestionFlagRecord, QuestionItem, QuestionMasteryEvidence, QuestionMemoryState, SessionQuestionSnapshot, SessionRecord, SkillState, StimulusGroup, WritingEvaluationRecord } from '../../shared/contracts.ts';
+import type { BenchmarkReportRecord, DailyFocusPlan, ImportBatchRecord, LearnerPreferences, LearningConfig, MediaAssetRecord, PartAttemptRecord, QuestionFlagRecord, QuestionItem, QuestionMasteryEvidence, QuestionMemoryState, SessionQuestionSnapshot, SessionRecord, SkillState, StimulusGroup, WritingEvaluationRecord } from '../../shared/contracts.ts';
 import { type BackupRestoreReport, type CanonicalBackupBundle, type WritingSubmissionRecord } from './repository.ts';
 import { emptyRestoreReport, finalizeBackupBundle, validateIncomingBackupBundle } from './repositoryUtils.ts';
 
@@ -68,6 +68,12 @@ export async function exportPostgresBackup(transaction: Transaction): Promise<Ca
     const plansRes = await client.query<{ student_id: string; plan_date: string; data: DailyFocusPlan }>(
       'SELECT student_id, plan_date, data FROM daily_focus_plans ORDER BY student_id ASC, plan_date ASC'
     );
+    const reportsRes = await client.query<{ student_id: string; data: BenchmarkReportRecord }>(
+      'SELECT student_id, data FROM benchmark_reports ORDER BY student_id ASC, completed_at DESC, session_id ASC'
+    );
+    const prefsRes = await client.query<{ student_id: string; data: LearnerPreferences }>(
+      'SELECT student_id, data FROM learner_preferences ORDER BY student_id ASC'
+    );
 
     const uids = new Set<string>();
     for (const r of usersRes.rows) uids.add(r.uid);
@@ -79,6 +85,8 @@ export async function exportPostgresBackup(transaction: Transaction): Promise<Ca
     for (const r of memRes.rows) uids.add(r.student_id);
     for (const r of evRes.rows) uids.add(r.student_id);
     for (const r of plansRes.rows) uids.add(r.student_id);
+    for (const r of reportsRes.rows) uids.add(r.student_id);
+    for (const r of prefsRes.rows) uids.add(r.student_id);
 
     const sessionsByUid = new Map<string, SessionRecord[]>();
     for (const r of sessionsRes.rows) {
@@ -136,6 +144,13 @@ export async function exportPostgresBackup(transaction: Transaction): Promise<Ca
       list.push(r.data);
       plansByUid.set(r.student_id, list);
     }
+    const reportsByUid = new Map<string, BenchmarkReportRecord[]>();
+    for (const r of reportsRes.rows) {
+      const list = reportsByUid.get(r.student_id) || [];
+      list.push(r.data);
+      reportsByUid.set(r.student_id, list);
+    }
+    const prefsByUid = new Map(prefsRes.rows.map((r) => [r.student_id, r.data]));
 
     const usersMeta = new Map(usersRes.rows.map((r) => [r.uid, r]));
     const users = Array.from(uids)
@@ -165,6 +180,8 @@ export async function exportPostgresBackup(transaction: Transaction): Promise<Ca
           questionEvidence: evByUid.get(uid) || [],
           writingSubmissions: subsByUid.get(uid) || [],
           dailyFocusPlans: plansByUid.get(uid) || [],
+          benchmarkReports: reportsByUid.get(uid) || [],
+          learnerPreferences: prefsByUid.get(uid) ?? null,
         };
       });
 
@@ -207,7 +224,8 @@ export async function restorePostgresBackup(
       await client.query(
         `LOCK TABLE stimuli, questions, import_batches, admin_config_versions, media_assets, question_flags,
                     users, sessions, session_snapshots, part_attempts, skill_states, question_memory,
-                    question_evidence, writing_submissions, writing_evaluations, daily_focus_plans
+                    question_evidence, writing_submissions, writing_evaluations, daily_focus_plans,
+                    benchmark_reports, learner_preferences
          IN SHARE ROW EXCLUSIVE MODE`
       );
     }
@@ -251,11 +269,19 @@ export async function restorePostgresBackup(
         (r) => `${r.student_id}::${r.plan_date}`
       )
     );
+    const reportSet = new Set(
+      (await client.query<{ session_id: string }>('SELECT session_id FROM benchmark_reports')).rows.map((r) => r.session_id)
+    );
+    const prefsSet = new Set(
+      (await client.query<{ student_id: string }>('SELECT student_id FROM learner_preferences')).rows.map((r) => r.student_id)
+    );
 
     const totalSessions = bundle.users.reduce((n, u) => n + u.sessions.length, 0);
     const totalAttempts = bundle.users.reduce((n, u) => n + u.partAttempts.length, 0);
     const totalSubs = bundle.users.reduce((n, u) => n + u.writingSubmissions.length, 0);
     const totalPlans = bundle.users.reduce((n, u) => n + (u.dailyFocusPlans?.length ?? 0), 0);
+    const totalReports = bundle.users.reduce((n, u) => n + (u.benchmarkReports?.length ?? 0), 0);
+    const totalPrefs = bundle.users.reduce((n, u) => n + (u.learnerPreferences ? 1 : 0), 0);
 
     const wouldCreate = {
       stimuli: bundle.stimuli.filter((s) => !stimSet.has(s.stimulusId)).length,
@@ -275,6 +301,11 @@ export async function restorePostgresBackup(
         (n, u) => n + (u.dailyFocusPlans || []).filter((p) => !planSet.has(`${u.uid}::${p.planDate}`)).length,
         0
       ),
+      benchmarkReports: bundle.users.reduce(
+        (n, u) => n + (u.benchmarkReports || []).filter((r) => !reportSet.has(r.sessionId)).length,
+        0
+      ),
+      learnerPreferences: bundle.users.filter((u) => u.learnerPreferences && !prefsSet.has(u.uid)).length,
     };
     const wouldSkipExisting = {
       stimuli: bundle.stimuli.length - wouldCreate.stimuli,
@@ -288,6 +319,8 @@ export async function restorePostgresBackup(
       attempts: totalAttempts - wouldCreate.attempts,
       writingSubmissions: totalSubs - wouldCreate.writingSubmissions,
       dailyFocusPlans: totalPlans - wouldCreate.dailyFocusPlans,
+      benchmarkReports: totalReports - wouldCreate.benchmarkReports,
+      learnerPreferences: totalPrefs - wouldCreate.learnerPreferences,
     };
 
     if (options.dryRun) {
@@ -319,6 +352,8 @@ export async function restorePostgresBackup(
       writingSubmissions: 0,
       writingEvaluations: 0,
       dailyFocusPlans: 0,
+      benchmarkReports: 0,
+      learnerPreferences: 0,
     };
 
     for (const s of bundle.stimuli) {
@@ -514,6 +549,25 @@ export async function restorePostgresBackup(
           [u.uid, plan.planDate, JSON.stringify({ ...plan, studentId: u.uid })]
         );
         applied.dailyFocusPlans += pRes.rowCount ?? 0;
+      }
+      for (const report of u.benchmarkReports || []) {
+        const rRes = await client.query(
+          `INSERT INTO benchmark_reports (session_id, student_id, completed_at, data)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (session_id) DO NOTHING`,
+          [report.sessionId, u.uid, report.completedAtIso, JSON.stringify({ ...report, studentId: u.uid })]
+        );
+        applied.benchmarkReports += rRes.rowCount ?? 0;
+      }
+      if (u.learnerPreferences) {
+        const prefs = u.learnerPreferences;
+        const prRes = await client.query(
+          `INSERT INTO learner_preferences (student_id, data, updated_at)
+           VALUES ($1, $2, COALESCE($3::timestamptz, NOW()))
+           ON CONFLICT (student_id) DO NOTHING`,
+          [u.uid, JSON.stringify(prefs), prefs.updatedAtIso || null]
+        );
+        applied.learnerPreferences += prRes.rowCount ?? 0;
       }
     }
 

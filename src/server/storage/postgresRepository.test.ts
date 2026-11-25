@@ -5,6 +5,7 @@ import { Client, Pool } from 'pg';
 import {
   DEFAULT_LEARNING_CONFIG,
   type BankImportManifest,
+  type BenchmarkReportRecord,
   type DailyFocusPlan,
   type PartAttemptRecord,
   type QuestionFlagRecord,
@@ -240,6 +241,8 @@ const BACKUP_TABLES = [
   'writing_submissions',
   'writing_evaluations',
   'daily_focus_plans',
+  'benchmark_reports',
+  'learner_preferences',
 ] as const;
 
 async function snapshotTableCounts(pool: Pool): Promise<Record<string, number>> {
@@ -469,6 +472,36 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   };
   await srcRepo.saveDailyFocusPlan('learner_plan_only', planOnlyPlan);
 
+  // Learner who ONLY has a benchmark_reports row, and one who ONLY has learner_preferences
+  const benchSection = (code: 'READ' | 'MATH' | 'THINK' | 'WRIT') => ({
+    section: code, correct: 18, total: 30, unanswered: 2, accuracyPct: 60, band: 'next_25' as const, estimatedPercentile: 64,
+  });
+  const benchReport: BenchmarkReportRecord = {
+    reportId: 'bench_sess_report_only',
+    sessionId: 'sess_report_only',
+    studentId: 'learner_report_only',
+    batchLabel: '2026-11-20_b01',
+    title: 'Official sample A',
+    completedAtIso: '2026-11-22T09:30:00.000Z',
+    elapsedSec: 7000,
+    timeLimitSec: 9000,
+    difficulty: 'official_sample',
+    scaledScore120: 84,
+    uncertaintyHalfWidth120: 7,
+    estimatedPercentile: 70,
+    estimatedStateRank: 4500,
+    estimatedApplicantPool: 15000,
+    writingStatus: 'missing',
+    sections: { READ: benchSection('READ'), MATH: benchSection('MATH'), THINK: benchSection('THINK'), WRIT: benchSection('WRIT') },
+    weakSkillStats: [],
+  };
+  await srcRepo.saveBenchmarkReport(benchReport);
+  const savedPrefs = await srcRepo.saveLearnerPreferences('learner_prefs_only', {
+    dailyGoalMinutes: 40,
+    adminOverrideLocked: true,
+    updatedBy: 'admin',
+  });
+
   // Learner who ONLY has a question_evidence row
   await srcRepo.upsertQuestionEvidence([{ ...qEv, evidenceKey: 'fam_only__rev1', questionFamilyId: 'fam_only' }], 'learner_ev_only');
 
@@ -505,6 +538,10 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.equal(backup.counts.dailyFocusPlans, 3);
   assert.ok(backup.users.some((u) => u.uid === 'learner_plan_only' && u.dailyFocusPlans?.length === 1));
   assert.ok(backup.users.some((u) => u.uid === 'learner_ev_only' && u.questionEvidence.length === 1));
+  assert.equal(backup.counts.benchmarkReports, 1);
+  assert.equal(backup.counts.learnerPreferences, 1);
+  assert.deepEqual(backup.users.find((u) => u.uid === 'learner_report_only')?.benchmarkReports, [benchReport]);
+  assert.deepEqual(backup.users.find((u) => u.uid === 'learner_prefs_only')?.learnerPreferences, savedPrefs);
 
   // Finding 3: Force a late insert failure on daily_focus_plans (the final table in restore) and prove ZERO partial rows remain
   const beforeCounts = await snapshotTableCounts(dstPool);
@@ -522,6 +559,8 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.equal(dry.wouldCreate.importBatches, backup.importBatches.length);
   assert.equal(dry.wouldCreate.mediaAssets, 1);
   assert.equal(dry.wouldCreate.dailyFocusPlans, 3);
+  assert.equal(dry.wouldCreate.benchmarkReports, 1);
+  assert.equal(dry.wouldCreate.learnerPreferences, 1);
   assert.deepEqual(await snapshotTableCounts(dstPool), beforeCounts);
 
   const restored = await dstRepo.restoreFullBackup(backup, { dryRun: false });
@@ -530,8 +569,10 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.equal(restored.applied.importBatches, backup.importBatches.length);
   assert.equal(restored.applied.mediaAssets, 1);
   assert.equal(restored.applied.dailyFocusPlans, 3);
+  assert.equal(restored.applied.benchmarkReports, 1);
+  assert.equal(restored.applied.learnerPreferences, 1);
 
-  // Compare ALL 16 tables and fields between source and destination
+  // Compare ALL 18 tables and fields between source and destination
   const dstExport = await dstRepo.exportFullBackup();
   assert.deepEqual(dstExport.stimuli, backup.stimuli);
   assert.deepEqual(dstExport.questions, backup.questions);
@@ -560,6 +601,8 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.deepEqual(restoredBytes, pngBytes);
   // Verify plan-only learner restored cleanly
   assert.deepEqual(await dstRepo.getDailyFocusPlan('learner_plan_only', '2026-11-21'), planOnlyPlan);
+  assert.deepEqual(await dstRepo.getBenchmarkReport('sess_report_only', 'learner_report_only'), benchReport);
+  assert.deepEqual(await dstRepo.getLearnerPreferences('learner_prefs_only'), savedPrefs);
 
   // Replay must be a clean no-op
   const countsAfterRestore = await snapshotTableCounts(dstPool);
@@ -569,9 +612,11 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   for (const val of Object.values(replay.applied)) assert.equal(val, 0);
   assert.deepEqual(await snapshotTableCounts(dstPool), countsAfterRestore);
 
-  // Backwards compatibility: older canonical bundle without dailyFocusPlans in users or counts
-  const legacyUsers = backup.users.map(({ dailyFocusPlans: _omitted, ...rest }) => rest);
-  const { dailyFocusPlans: _omittedCount, ...legacyCounts } = backup.counts;
+  // Backwards compatibility: older canonical bundle without dailyFocusPlans, benchmarkReports or learnerPreferences
+  const legacyUsers = backup.users.map(
+    ({ dailyFocusPlans: _omitted, benchmarkReports: _r, learnerPreferences: _p, ...rest }) => rest
+  );
+  const { dailyFocusPlans: _omittedCount, benchmarkReports: _rc, learnerPreferences: _pc, ...legacyCounts } = backup.counts;
   const legacyChecksums = {
     ...backup.checksums,
     users: sha256Json(legacyUsers),
@@ -596,6 +641,9 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.equal(legacyApplied.applied.questions, backup.questions.length);
   assert.equal(legacyApplied.applied.sessions, 1);
   assert.equal(legacyApplied.applied.dailyFocusPlans, 0);
+  assert.equal(legacyApplied.applied.benchmarkReports, 0);
+  assert.equal(legacyApplied.applied.learnerPreferences, 0);
+  assert.equal(await legacyRepo.getBenchmarkReport('sess_report_only'), null);
   assert.equal(await legacyRepo.getDailyFocusPlan('learner_full', '2026-11-20'), null);
 });
 

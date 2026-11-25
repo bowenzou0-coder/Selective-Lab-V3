@@ -277,6 +277,8 @@ export interface BackupSectionCounts {
   questionEvidence: number;
   writingSubmissions: number;
   dailyFocusPlans?: number;
+  benchmarkReports?: number;
+  learnerPreferences?: number;
 }
 
 export interface CanonicalBackupBundle {
@@ -311,6 +313,10 @@ export interface CanonicalBackupBundle {
     questionEvidence: QuestionMasteryEvidence[];
     writingSubmissions: (WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] })[];
     dailyFocusPlans?: DailyFocusPlan[];
+    /** Saved official-benchmark reports. Absent in bundles exported before benchmarks shipped. */
+    benchmarkReports?: BenchmarkReportRecord[];
+    /** Personal daily-plan settings and admin locks. Absent (or null) when the learner has none. */
+    learnerPreferences?: LearnerPreferences | null;
   }[];
 }
 

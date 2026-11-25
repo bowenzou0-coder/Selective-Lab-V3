@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { BankImportManifest } from '../../shared/contracts';
+import type { BankImportManifest, BenchmarkReportRecord, LearnerPreferences } from '../../shared/contracts';
 import { V3_STARTER_MANIFEST_EXAMPLE } from '../../shared/v3Schema';
 import { validateAndDryRunManifest } from '../manifestValidator';
 import { MemoryRepository } from './memoryRepository';
@@ -224,4 +224,102 @@ test('MemoryRepository backup/restore includes plan-only learners and stays comp
   assert.equal(legacyApplied.valid, true);
   assert.equal(legacyApplied.checksumVerified, true);
   assert.equal(legacyApplied.applied.dailyFocusPlans, 0);
+});
+
+function benchmarkReportFixture(studentId: string, sessionId: string): BenchmarkReportRecord {
+  const section = (code: 'READ' | 'MATH' | 'THINK' | 'WRIT') => ({
+    section: code,
+    correct: 20,
+    total: 30,
+    unanswered: 1,
+    accuracyPct: 66.7,
+    band: 'next_15' as const,
+    estimatedPercentile: 78,
+  });
+  return {
+    reportId: `bench_${sessionId}`,
+    sessionId,
+    studentId,
+    batchLabel: '2026-11-20_b01',
+    title: 'Official sample A',
+    completedAtIso: '2026-11-22T09:30:00.000Z',
+    elapsedSec: 7200,
+    timeLimitSec: 9000,
+    difficulty: 'official_sample',
+    scaledScore120: 88,
+    uncertaintyHalfWidth120: 6,
+    estimatedPercentile: 81,
+    estimatedStateRank: 2400,
+    estimatedApplicantPool: 15000,
+    writingStatus: 'pending',
+    sections: { READ: section('READ'), MATH: section('MATH'), THINK: section('THINK'), WRIT: section('WRIT') },
+    weakSkillStats: [{ skillId: 'MATH.NUM.FRACTIONS_RATIOS', section: 'MATH', missed: 3, total: 6, unanswered: 0 }],
+  };
+}
+
+test('MemoryRepository backup/restore round-trips benchmark reports and learner preferences, and accepts bundles without them', async () => {
+  const repo = new MemoryRepository();
+  const report = benchmarkReportFixture('report_only_student', 'sess_bench_1');
+  await repo.saveBenchmarkReport(report);
+  const savedPrefs = await repo.saveLearnerPreferences('prefs_only_student', {
+    dailyGoalMinutes: 35,
+    dailyQuestionLimitBySection: { READ: 5, MATH: 6, THINK: 5, WRIT: 1 },
+    adminOverrideLocked: true,
+    updatedBy: 'admin',
+  } satisfies LearnerPreferences);
+
+  const backup = await repo.exportFullBackup();
+  assert.equal(backup.counts.benchmarkReports, 1);
+  assert.equal(backup.counts.learnerPreferences, 1);
+  const reportUser = backup.users.find((u) => u.uid === 'report_only_student');
+  const prefsUser = backup.users.find((u) => u.uid === 'prefs_only_student');
+  assert.deepEqual(reportUser?.benchmarkReports, [report]);
+  assert.equal(reportUser?.learnerPreferences, null);
+  assert.deepEqual(prefsUser?.learnerPreferences, savedPrefs);
+  assert.deepEqual(prefsUser?.benchmarkReports, []);
+
+  const target = new MemoryRepository();
+  const dry = await target.restoreFullBackup(backup, { dryRun: true });
+  assert.equal(dry.valid, true);
+  assert.equal(dry.wouldCreate.benchmarkReports, 1);
+  assert.equal(dry.wouldCreate.learnerPreferences, 1);
+  assert.equal(await target.getBenchmarkReport('sess_bench_1'), null);
+  assert.equal(await target.getLearnerPreferences('prefs_only_student'), null);
+
+  const applied = await target.restoreFullBackup(backup, { dryRun: false });
+  assert.equal(applied.applied.benchmarkReports, 1);
+  assert.equal(applied.applied.learnerPreferences, 1);
+  assert.deepEqual(await target.getBenchmarkReport('sess_bench_1', 'report_only_student'), report);
+  // Preferences restore verbatim, including the original updatedAtIso stamp.
+  assert.deepEqual(await target.getLearnerPreferences('prefs_only_student'), savedPrefs);
+
+  const replay = await target.restoreFullBackup(backup, { dryRun: false });
+  assert.equal(replay.applied.benchmarkReports, 0);
+  assert.equal(replay.applied.learnerPreferences, 0);
+  assert.equal(replay.wouldSkipExisting.benchmarkReports, 1);
+  assert.equal(replay.wouldSkipExisting.learnerPreferences, 1);
+
+  // Bundles exported before these sections existed still verify and restore.
+  const legacyUsers = backup.users.map(({ benchmarkReports: _r, learnerPreferences: _p, ...rest }) => rest);
+  const { benchmarkReports: _rc, learnerPreferences: _pc, ...legacyCounts } = backup.counts;
+  const legacyChecksums = { ...backup.checksums, users: sha256Json(legacyUsers) };
+  const legacyBundle = {
+    ...backup,
+    counts: legacyCounts,
+    checksums: legacyChecksums,
+    bundleSha256: sha256Json({ schemaVersion: backup.schemaVersion, counts: legacyCounts, checksums: legacyChecksums }),
+    users: legacyUsers,
+  };
+  const legacyTarget = new MemoryRepository();
+  const legacyApplied = await legacyTarget.restoreFullBackup(legacyBundle, { dryRun: false });
+  assert.equal(legacyApplied.valid, true);
+  assert.equal(legacyApplied.checksumVerified, true);
+  assert.equal(legacyApplied.applied.benchmarkReports, 0);
+  assert.equal(legacyApplied.applied.learnerPreferences, 0);
+
+  // Malformed sections are rejected before any write.
+  const badUsers = backup.users.map((u) => ({ ...u, benchmarkReports: 'oops' as unknown as BenchmarkReportRecord[] }));
+  const bad = await new MemoryRepository().restoreFullBackup({ ...backup, users: badUsers }, { dryRun: false });
+  assert.equal(bad.valid, false);
+  assert.ok(bad.errors.some((e) => e.includes('benchmarkReports')));
 });

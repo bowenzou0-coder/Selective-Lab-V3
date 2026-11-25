@@ -1345,6 +1345,8 @@ export class MemoryRepository implements AppRepository {
       const sep = key.lastIndexOf('::');
       uids.add(sep >= 0 ? key.slice(0, sep) : plan.studentId || DEFAULT_STUDENT_ID);
     }
+    for (const r of this.benchmarkReportsBySession.values()) uids.add(r.studentId || DEFAULT_STUDENT_ID);
+    for (const k of this.learnerPreferencesByStudent.keys()) uids.add(k);
 
     const users = Array.from(uids)
       .sort()
@@ -1362,6 +1364,11 @@ export class MemoryRepository implements AppRepository {
           }
         }
         dailyFocusPlans.sort((a, b) => a.planDate.localeCompare(b.planDate));
+        const benchmarkReports = Array.from(this.benchmarkReportsBySession.values())
+          .filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === uid)
+          .sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso) || a.sessionId.localeCompare(b.sessionId))
+          .map((r) => structuredClone(r));
+        const prefs = this.learnerPreferencesByStudent.get(uid);
         return {
           uid,
           role: u?.role || 'student',
@@ -1380,6 +1387,8 @@ export class MemoryRepository implements AppRepository {
               evaluations: structuredClone(this.writingEvaluations.filter((e) => e.submissionId === ws.submissionId)),
             })),
           dailyFocusPlans,
+          benchmarkReports,
+          learnerPreferences: prefs ? structuredClone(prefs) : null,
         };
       });
 
@@ -1404,6 +1413,8 @@ export class MemoryRepository implements AppRepository {
     const bundle = validated.bundle;
     const totalSessions = bundle.users.reduce((n, u) => n + u.sessions.length, 0);
     const totalPlans = bundle.users.reduce((n, u) => n + (u.dailyFocusPlans?.length ?? 0), 0);
+    const totalReports = bundle.users.reduce((n, u) => n + (u.benchmarkReports?.length ?? 0), 0);
+    const totalPrefs = bundle.users.reduce((n, u) => n + (u.learnerPreferences ? 1 : 0), 0);
     const wouldCreate = {
       stimuli: bundle.stimuli.filter((s) => !this.stimuli.has(s.stimulusId)).length,
       questions: bundle.questions.filter((q) => !this.questions.has(q.questionId)).length,
@@ -1413,6 +1424,11 @@ export class MemoryRepository implements AppRepository {
         (n, u) => n + (u.dailyFocusPlans || []).filter((p) => !this.dailyPlansByStudent.has(`${u.uid}::${p.planDate}`)).length,
         0
       ),
+      benchmarkReports: bundle.users.reduce(
+        (n, u) => n + (u.benchmarkReports || []).filter((r) => !this.benchmarkReportsBySession.has(r.sessionId)).length,
+        0
+      ),
+      learnerPreferences: bundle.users.filter((u) => u.learnerPreferences && !this.learnerPreferencesByStudent.has(u.uid)).length,
     };
     const wouldSkipExisting = {
       stimuli: bundle.stimuli.length - wouldCreate.stimuli,
@@ -1420,6 +1436,8 @@ export class MemoryRepository implements AppRepository {
       configVersions: bundle.configVersions.length - wouldCreate.configVersions,
       sessions: totalSessions - wouldCreate.sessions,
       dailyFocusPlans: totalPlans - wouldCreate.dailyFocusPlans,
+      benchmarkReports: totalReports - wouldCreate.benchmarkReports,
+      learnerPreferences: totalPrefs - wouldCreate.learnerPreferences,
     };
 
     if (options.dryRun) {
@@ -1443,6 +1461,8 @@ export class MemoryRepository implements AppRepository {
       attempts: 0,
       evidence: 0,
       dailyFocusPlans: 0,
+      benchmarkReports: 0,
+      learnerPreferences: 0,
     };
     for (const s of bundle.stimuli) {
       if (!this.stimuli.has(s.stimulusId)) {
@@ -1521,6 +1541,17 @@ export class MemoryRepository implements AppRepository {
           this.dailyPlansByStudent.set(key, structuredClone({ ...plan, studentId: u.uid }));
           applied.dailyFocusPlans++;
         }
+      }
+      for (const report of u.benchmarkReports || []) {
+        if (!this.benchmarkReportsBySession.has(report.sessionId)) {
+          this.benchmarkReportsBySession.set(report.sessionId, structuredClone({ ...report, studentId: u.uid }));
+          applied.benchmarkReports++;
+        }
+      }
+      if (u.learnerPreferences && !this.learnerPreferencesByStudent.has(u.uid)) {
+        // Restore verbatim (keep the original updatedAtIso) instead of re-stamping via saveLearnerPreferences.
+        this.learnerPreferencesByStudent.set(u.uid, structuredClone(u.learnerPreferences));
+        applied.learnerPreferences++;
       }
     }
 

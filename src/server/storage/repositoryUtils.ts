@@ -249,6 +249,8 @@ export function finalizeBackupBundle(
     questionEvidence: partial.users.reduce((sum, u) => sum + u.questionEvidence.length, 0),
     writingSubmissions: partial.users.reduce((sum, u) => sum + u.writingSubmissions.length, 0),
     dailyFocusPlans: partial.users.reduce((sum, u) => sum + (u.dailyFocusPlans?.length ?? 0), 0),
+    benchmarkReports: partial.users.reduce((sum, u) => sum + (u.benchmarkReports?.length ?? 0), 0),
+    learnerPreferences: partial.users.reduce((sum, u) => sum + (u.learnerPreferences ? 1 : 0), 0),
   };
 
   const checksums: Record<string, string> = {
@@ -317,6 +319,13 @@ export function validateIncomingBackupBundle(raw: unknown): {
     for (const user of obj.users) {
       if (user?.dailyFocusPlans !== undefined && !Array.isArray(user.dailyFocusPlans)) {
         errors.push(`Invalid "dailyFocusPlans" field for user "${String(user?.uid || '')}".`);
+      }
+      if (user?.benchmarkReports !== undefined && !Array.isArray(user.benchmarkReports)) {
+        errors.push(`Invalid "benchmarkReports" field for user "${String(user?.uid || '')}".`);
+      }
+      const prefs = user?.learnerPreferences;
+      if (prefs !== undefined && prefs !== null && (typeof prefs !== 'object' || Array.isArray(prefs))) {
+        errors.push(`Invalid "learnerPreferences" field for user "${String(user?.uid || '')}".`);
       }
     }
   }
