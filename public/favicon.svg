@@ -1,6 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <title>Selective Lab</title>
+  <defs>
+    <linearGradient id="liquid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F9CAA7"/>
+      <stop offset="0.35" stop-color="#F29A63"/>
+      <stop offset="1" stop-color="#E6874C"/>
+    </linearGradient>
+  </defs>
   <rect width="64" height="64" rx="14" fill="#113C36"/>
-  <path d="M41.5 21.2c-2.4-2.5-5.8-3.9-9.6-3.9-6.2 0-10.6 3.5-10.6 8.6 0 4.6 3.3 6.8 9.4 8.3l2.2.5c3.9.9 5.3 2 5.3 4 0 2.4-2.4 4-5.9 4-3.6 0-6.5-1.6-8.4-4.3" fill="none" stroke="#F3EFE8" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="46" cy="45.5" r="4.2" fill="#F29A63"/>
+  <g transform="translate(32 34) scale(1.1) translate(-32 -32)">
+    <!-- liquid with a soft meniscus -->
+    <path d="M22.1 38Q27 36.2 32 37.6T41.9 38L46.2 45.5Q48.5 50 43.5 50H20.5Q15.5 50 17.8 45.5Z" fill="url(#liquid)"/>
+    <!-- bubbles: two in the liquid, two drifting up out of the neck -->
+    <circle cx="27.6" cy="44.4" r="1.7" fill="#F3EFE8" opacity="0.9"/>
+    <circle cx="34.6" cy="41.6" r="1.1" fill="#F3EFE8" opacity="0.75"/>
+    <circle cx="32" cy="21.5" r="1.1" fill="#F9CAA7"/>
+    <circle cx="35.6" cy="9.6" r="1" fill="#F9CAA7" opacity="0.8"/>
+    <circle cx="39.6" cy="5.4" r="1.5" fill="#F9CAA7" opacity="0.9"/>
+    <!-- glass -->
+    <path d="M28.5 14V24Q28.5 27 27 29.5L17.8 45.5Q15.5 50 20.5 50H43.5Q48.5 50 46.2 45.5L37 29.5Q35.5 27 35.5 24V14M25.5 14H38.5" fill="none" stroke="#F3EFE8" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- glint on the glass -->
+    <path d="M42.6 41.4L44.4 44.6" fill="none" stroke="#F3EFE8" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+  </g>
 </svg>
