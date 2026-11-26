@@ -27,6 +27,20 @@ import { computeEvidenceRevision } from '../../shared/mastery.ts';
 import { computeCanonicalHash, validateAndDryRunManifest } from '../manifestValidator.ts';
 import { buildMediaMigrationManifest } from '../mediaService.ts';
 import { getPostgresPoolConfig } from './postgresConfig.ts';
+import {
+  deleteLearnerPreferencesRow,
+  deleteUserAccountRows,
+  insertQuestionFlag,
+  queryIsUserAdmin,
+  queryLearnerPreferences,
+  queryListUsers,
+  queryProgressCounts,
+  queryQuestionFlags,
+  resetStudentProgressRows,
+  resolveQuestionFlagRow,
+  upsertLearnerPreferencesRow,
+  upsertUserRow,
+} from './postgresAccountQueries.ts';
 import { exportPostgresBackup, restorePostgresBackup } from './postgresBackup.ts';
 import {
   queryAdminBankStatusSummary,
@@ -71,12 +85,7 @@ import {
   type TodayAttemptCounts,
   type WritingSubmissionRecord,
 } from './repository.ts';
-import {
-  emptyRestoreReport,
-  finalizeBackupBundle,
-  selectLatestByFamily,
-  validateIncomingBackupBundle,
-} from './repositoryUtils.ts';
+import { selectLatestByFamily } from './repositoryUtils.ts';
 
 const DEFAULT_STUDENT_ID = 'default-student';
 
@@ -378,147 +387,45 @@ export class PostgresRepository implements AppRepository {
     isBootstrappedAdmin: boolean;
   }): Promise<{ role: 'student' | 'admin' }> {
     await this.ensureSchema();
-    const role: 'student' | 'admin' = input.isBootstrappedAdmin ? 'admin' : 'student';
-    const displayName = (input.displayName || input.email.split('@')[0] || 'Learner').slice(0, 120);
-    await this.pool.query(
-      `INSERT INTO users (uid, role, display_name, email, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (uid) DO UPDATE SET role = EXCLUDED.role, display_name = EXCLUDED.display_name, email = EXCLUDED.email, updated_at = NOW()`,
-      [input.uid, role, displayName, input.email]
-    );
-    return { role };
+    return upsertUserRow(this.pool, input);
   }
 
   async isUserAdmin(uid: string): Promise<boolean> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT role FROM users WHERE uid = $1', [uid]);
-    return rows[0]?.role === 'admin';
+    return queryIsUserAdmin(this.pool, uid);
   }
 
   async listUsers(): Promise<LearnerAccountRecord[]> {
     await this.ensureSchema();
-    const [usersRes, orphanRes] = await Promise.all([
-      this.pool.query<{
-        uid: string;
-        role: 'student' | 'admin';
-        display_name: string;
-        email: string | null;
-        updated_at: Date | string | null;
-      }>('SELECT uid, role, display_name, email, updated_at FROM users ORDER BY updated_at DESC NULLS LAST'),
-      this.pool.query<{ student_id: string }>(`
-        SELECT DISTINCT student_id FROM (
-          SELECT student_id FROM sessions
-          UNION
-          SELECT student_id FROM question_evidence
-          UNION
-          SELECT student_id FROM question_memory
-        ) AS active_ids
-      `),
-    ]);
-    const byUid = new Map<string, LearnerAccountRecord>();
-    for (const r of usersRes.rows) {
-      byUid.set(r.uid, {
-        uid: r.uid,
-        role: r.role === 'admin' ? 'admin' : 'student',
-        displayName: r.display_name || r.email || r.uid,
-        email: r.email || undefined,
-        updatedAtIso: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
-      });
-    }
-    for (const r of orphanRes.rows) {
-      if (r.student_id && !byUid.has(r.student_id)) {
-        byUid.set(r.student_id, {
-          uid: r.student_id,
-          role: 'student',
-          displayName: r.student_id,
-        });
-      }
-    }
-    return Array.from(byUid.values());
+    return queryListUsers(this.pool);
   }
 
   async getProgressCounts(studentId: string): Promise<ProgressCountsResponse> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query<ProgressCountsResponse>(`
-      SELECT (SELECT count(*)::int FROM sessions WHERE student_id = $1) AS "sessionsCount",
-             (SELECT count(*)::int FROM part_attempts WHERE student_id = $1) AS "attemptsCount",
-             (SELECT count(*)::int FROM question_evidence WHERE student_id = $1) AS "evidenceCount",
-             (SELECT count(*)::int FROM writing_submissions WHERE student_id = $1) AS "writingCount",
-             (SELECT count(DISTINCT question_family_id)::int FROM questions) AS "bankQuestionsCount"`,
-      [studentId]
-    );
-    return rows[0];
+    return queryProgressCounts(this.pool, studentId);
   }
 
   async resetStudentProgress(studentId: string): Promise<ProgressResetResponse> {
     await this.ensureSchema();
     return this.transaction(async (client) => {
       await this.lockStudentProgress(client, studentId);
-      await client.query(
-        `DELETE FROM session_snapshots
-         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
-        [studentId]
-      );
-      await client.query(
-        `DELETE FROM benchmark_reports
-         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
-        [studentId]
-      );
-      const sessions = await client.query('DELETE FROM sessions WHERE student_id = $1', [studentId]);
-      const attempts = await client.query('DELETE FROM part_attempts WHERE student_id = $1', [studentId]);
-      const skills = await client.query('DELETE FROM skill_states WHERE student_id = $1', [studentId]);
-      const memory = await client.query('DELETE FROM question_memory WHERE student_id = $1', [studentId]);
-      const evidence = await client.query('DELETE FROM question_evidence WHERE student_id = $1', [studentId]);
-      await client.query(`
-        DELETE FROM writing_evaluations e USING writing_submissions s
-        WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [studentId]);
-      const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [studentId]);
-      const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [studentId]);
-      const bank = await client.query<{ count: number }>('SELECT count(DISTINCT question_family_id)::int AS count FROM questions');
-      return {
-        ok: true,
-        clearedSessions: sessions.rowCount ?? 0,
-        clearedAttempts: attempts.rowCount ?? 0,
-        clearedSkillStates: skills.rowCount ?? 0,
-        clearedMemory: memory.rowCount ?? 0,
-        clearedEvidence: evidence.rowCount ?? 0,
-        clearedWriting: writing.rowCount ?? 0,
-        clearedDailyPlans: plans.rowCount ?? 0,
-        preservedQuestionsCount: bank.rows[0].count,
-      };
+      return resetStudentProgressRows(client, studentId);
     });
   }
 
   async getLearnerPreferences(studentId: string): Promise<LearnerPreferences | null> {
     await this.ensureSchema();
-    const sid = studentId || DEFAULT_STUDENT_ID;
-    const { rows } = await this.pool.query<{ data: LearnerPreferences }>(
-      'SELECT data FROM learner_preferences WHERE student_id = $1',
-      [sid]
-    );
-    return rows.length ? structuredClone(rows[0].data) : null;
+    return queryLearnerPreferences(this.pool, studentId || DEFAULT_STUDENT_ID);
   }
 
   async saveLearnerPreferences(studentId: string, prefs: LearnerPreferences): Promise<LearnerPreferences> {
     await this.ensureSchema();
-    const sid = studentId || DEFAULT_STUDENT_ID;
-    const stamped: LearnerPreferences = {
-      ...prefs,
-      updatedAtIso: new Date().toISOString(),
-    };
-    await this.pool.query(
-      `INSERT INTO learner_preferences (student_id, data, updated_at)
-       VALUES ($1, $2, NOW())
-       ON CONFLICT (student_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [sid, JSON.stringify(stamped)]
-    );
-    return structuredClone(stamped);
+    return upsertLearnerPreferencesRow(this.pool, studentId || DEFAULT_STUDENT_ID, prefs);
   }
 
   async deleteLearnerPreferences(studentId: string): Promise<void> {
     await this.ensureSchema();
-    const sid = studentId || DEFAULT_STUDENT_ID;
-    await this.pool.query('DELETE FROM learner_preferences WHERE student_id = $1', [sid]);
+    await deleteLearnerPreferencesRow(this.pool, studentId || DEFAULT_STUDENT_ID);
   }
 
   async deleteUserAccount(studentId: string): Promise<AccountDeleteResponse> {
@@ -526,43 +433,7 @@ export class PostgresRepository implements AppRepository {
     const sid = studentId || DEFAULT_STUDENT_ID;
     return this.transaction(async (client) => {
       await this.lockStudentProgress(client, sid);
-      await client.query(
-        `DELETE FROM session_snapshots
-         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
-        [sid]
-      );
-      await client.query(
-        `DELETE FROM benchmark_reports
-         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
-        [sid]
-      );
-      const sessions = await client.query('DELETE FROM sessions WHERE student_id = $1', [sid]);
-      const attempts = await client.query('DELETE FROM part_attempts WHERE student_id = $1', [sid]);
-      const skills = await client.query('DELETE FROM skill_states WHERE student_id = $1', [sid]);
-      const memory = await client.query('DELETE FROM question_memory WHERE student_id = $1', [sid]);
-      const evidence = await client.query('DELETE FROM question_evidence WHERE student_id = $1', [sid]);
-      await client.query(`
-        DELETE FROM writing_evaluations e USING writing_submissions s
-        WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [sid]);
-      const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [sid]);
-      const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [sid]);
-      await client.query('DELETE FROM learner_preferences WHERE student_id = $1', [sid]);
-      const flags = await client.query(`DELETE FROM question_flags WHERE data->>'studentId' = $1`, [sid]);
-      const userDel = await client.query('DELETE FROM users WHERE uid = $1', [sid]);
-      const bank = await client.query<{ count: number }>('SELECT count(DISTINCT question_family_id)::int AS count FROM questions');
-      return {
-        ok: true,
-        deletedUser: (userDel.rowCount ?? 0) > 0,
-        clearedSessions: sessions.rowCount ?? 0,
-        clearedAttempts: attempts.rowCount ?? 0,
-        clearedSkillStates: skills.rowCount ?? 0,
-        clearedMemory: memory.rowCount ?? 0,
-        clearedEvidence: evidence.rowCount ?? 0,
-        clearedWriting: writing.rowCount ?? 0,
-        clearedDailyPlans: plans.rowCount ?? 0,
-        clearedFlags: flags.rowCount ?? 0,
-        preservedQuestionsCount: bank.rows[0].count,
-      };
+      return deleteUserAccountRows(client, sid);
     });
   }
 
@@ -1826,34 +1697,17 @@ export class PostgresRepository implements AppRepository {
 
   async saveQuestionFlag(flag: QuestionFlagRecord): Promise<void> {
     await this.ensureSchema();
-    await this.pool.query(
-      'INSERT INTO question_flags (flag_id, question_id, status, data, created_at) VALUES ($1, $2, $3, $4, $5)',
-      [flag.flagId, flag.questionId, flag.status, JSON.stringify(flag), flag.createdAt]
-    );
+    await insertQuestionFlag(this.pool, flag);
   }
 
   async listQuestionFlags(studentId?: string): Promise<QuestionFlagRecord[]> {
     await this.ensureSchema();
-    const { rows } = studentId
-      ? await this.pool.query(
-          `SELECT data FROM question_flags WHERE data->>'studentId' = $1 ORDER BY created_at DESC`,
-          [studentId]
-        )
-      : await this.pool.query('SELECT data FROM question_flags ORDER BY created_at DESC');
-    return rows.map((r) => r.data as QuestionFlagRecord);
+    return queryQuestionFlags(this.pool, studentId);
   }
 
   async resolveQuestionFlag(flagId: string): Promise<void> {
     await this.ensureSchema();
-    const { rows } = await this.pool.query('SELECT data FROM question_flags WHERE flag_id = $1', [flagId]);
-    if (rows.length === 0) return;
-    const flag = rows[0].data as QuestionFlagRecord;
-    flag.status = 'resolved';
-    await this.pool.query('UPDATE question_flags SET status = $2, data = $3 WHERE flag_id = $1', [
-      flagId,
-      'resolved',
-      JSON.stringify(flag),
-    ]);
+    await resolveQuestionFlagRow(this.pool, flagId);
   }
 
   async saveMediaAsset(asset: MediaAssetRecord): Promise<void> {

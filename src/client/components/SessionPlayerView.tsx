@@ -1,16 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
-  ChevronDown,
-  CloudCheck,
-  CloudOff,
-  Flag,
-  Grid,
-  RefreshCw,
-  ShieldAlert,
-} from 'lucide-react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { api, type ApiError, type SessionDetailResponse } from '../api';
 import { CheckpointSaveQueue } from '../checkpointQueue';
 import type {
@@ -20,13 +9,15 @@ import type {
   SessionRecord,
   StudentQuestionView,
 } from '../../shared/contracts';
-import { LanguageToggle, useI18n } from '../i18n';
+import { useI18n } from '../i18n';
 import { QuestionWorkspace } from './QuestionWorkspace';
 import { createSessionClock, useClockValue } from '../sessionClock';
 import { AdminInspectorDrawer } from './session/AdminInspectorDrawer';
-import { ExamTimer } from './session/ExamTimer';
-import { QuestionNavigator } from './session/QuestionNavigator';
 import { SectionBreakView } from './session/SectionBreakView';
+import { CheckpointConflictBanner, DraftRecoveryBanner } from './session/DraftRecoveryBanner';
+import { clearLocalDraft, getDraftStorageKey, readLocalDraft, writeLocalDraft, type LocalDraftRecord } from './session/localDraft';
+import { SessionHeaderBar, type SaveStatus } from './session/SessionHeaderBar';
+import { SessionNavigatorDrawer } from './session/SessionNavigatorDrawer';
 import { SubmitConfirmDialog } from './session/SubmitConfirmDialog';
 
 // The review screen only renders after submission, so it ships as its own chunk
@@ -35,48 +26,6 @@ const loadPostSubmissionReview = () => import('./PostSubmissionReview');
 const PostSubmissionReview = lazy(() =>
   loadPostSubmissionReview().then((m) => ({ default: m.PostSubmissionReview }))
 );
-
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
-
-interface LocalDraftRecord {
-  checkpoint: SessionCheckpoint;
-  savedAtMs: number;
-}
-
-function getDraftStorageKey(studentId: string, sessionId: string): string {
-  return `selective_lab_draft:${studentId}:${sessionId}`;
-}
-
-function readLocalDraft(key: string): LocalDraftRecord | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as LocalDraftRecord;
-    if (parsed && parsed.checkpoint && typeof parsed.savedAtMs === 'number') {
-      return parsed;
-    }
-  } catch {
-    // ignore storage errors
-  }
-  return null;
-}
-
-function writeLocalDraft(key: string, cp: SessionCheckpoint): void {
-  try {
-    const record: LocalDraftRecord = { checkpoint: cp, savedAtMs: Date.now() };
-    window.localStorage.setItem(key, JSON.stringify(record));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function clearLocalDraft(key: string): void {
-  try {
-    window.localStorage.removeItem(key);
-  } catch {
-    // ignore storage errors
-  }
-}
 
 interface SessionPlayerViewProps {
   sessionId: string;
@@ -93,7 +42,7 @@ export function SessionPlayerView({
   onNavigate,
   onActiveSessionCleared,
 }: SessionPlayerViewProps) {
-  const { t, isZh, skillName, sectionLabel } = useI18n();
+  const { t, sectionLabel } = useI18n();
 
   // Warm the review chunk while the learner works, so submitting shows results without a wait.
   useEffect(() => {
@@ -997,264 +946,96 @@ export function SessionPlayerView({
 
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[#FAF8F5] text-[#113C36]">
-      {/* Quiet Exam Room 48px #F3EFE8 Top Rail */}
-      <header className="sticky top-0 z-30 border-b border-[#E5DFD5] bg-[#F3EFE8]">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 min-h-[48px] py-1.5 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-          {/* Left: Plain title + soft emerald Saved pill */}
-          <div className="flex items-center gap-2.5 min-w-0">
-            {!isLockedStudentSession && (
-              <button
-                type="button"
-                onClick={async () => {
-                  await flushCheckpoint();
-                  onNavigate(session.mode === 'admin_calibration' ? '/admin' : '/');
-                }}
-                aria-label={isAdminRun ? t('session.backToBank') : t('session.exitAria')}
-                className="inline-flex items-center gap-1.5 p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-colors"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                {isAdminRun && <span className="hidden sm:inline pr-1 text-xs font-sans-display font-semibold">{t('session.backToBank')}</span>}
-              </button>
-            )}
-
-            <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
-              <span className="font-sans-display font-semibold text-sm text-[#113C36] truncate">
-                {session.title || session.mode.replace(/_/g, ' ')}
-              </span>
-
-              {sectionState && activeSection && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#E5F0EA] border border-[#C5DDD1] text-[#113C36] text-[11px] font-sans-display font-semibold whitespace-nowrap">
-                  {t('session.sectionOfTotal', {
-                    current: sectionState.currentSectionIndex + 1,
-                    total: sectionState.sections.length,
-                  })}{' '}
-                  ({sectionLabel(activeSection.section)})
-                </span>
-              )}
-
-              {isAdminRun && (
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${
-                    session.isSandbox ? 'bg-[#E9E4F5] text-[#4B3B7A]' : 'bg-[#FDF0E2] text-[#A35116]'
-                  }`}
-                >
-                  {session.isSandbox ? t('session.sandboxBadge') : t('session.liveRunBadge')}
-                </span>
-              )}
-
-              {saveStatus === 'saving' && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white/80 border border-[#E5DFD5] text-[11px] font-medium text-[#4A5955] whitespace-nowrap">
-                  {t('session.saving')}
-                </span>
-              )}
-              {saveStatus === 'saved' && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#E5F3EC] text-[#1D6346] text-[11px] font-medium whitespace-nowrap">
-                  <CloudCheck className="w-3 h-3 shrink-0" />
-                  <span>{t('session.saved')}</span>
-                </span>
-              )}
-              {saveStatus === 'unsent' && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-medium whitespace-nowrap">
-                  <span>{t('session.unsentDraft')}</span>
-                  <button
-                    type="button"
-                    onClick={() => flushCheckpoint()}
-                    className="underline hover:text-[#113C36] cursor-pointer"
-                  >
-                    {t('session.saveNow')}
-                  </button>
-                </span>
-              )}
-              {saveStatus === 'failed' && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FDECEB] text-[#B42318] text-[11px] font-medium whitespace-nowrap">
-                  <CloudOff className="w-3 h-3 shrink-0" />
-                  <span>{t('session.saveFailed')}</span>
-                  <button
-                    type="button"
-                    onClick={() => flushCheckpoint()}
-                    className="inline-flex items-center gap-1 underline hover:text-[#113C36] cursor-pointer"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5 shrink-0" />
-                    {t('session.retry')}
-                  </button>
-                </span>
-              )}
-              {saveStatus === 'conflict' && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FDF0E2] text-[#A35116] text-[11px] font-semibold whitespace-nowrap">
-                  <AlertTriangle className="w-3 h-3 shrink-0" />
-                  <span>{t('session.conflictChip')}</span>
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Center: Prominent AnthropicMono Countdown Clock (click to hide) */}
-          <div className="flex items-center justify-center">
-            <ExamTimer clock={clock} hidden={timerHidden} onToggleHidden={toggleTimerHidden} />
-          </div>
-
-          {/* Right: Question X of Y, Flag, Navigator, Language, Finish test */}
-          <div className="flex items-center justify-start md:justify-end gap-2 flex-wrap">
-            <div className="text-xs font-medium text-[#4A5955] tabular-nums whitespace-nowrap mr-1">
-              {t('session.qOfTotal', { current: localIndex + 1, total: sectionQuestions.length })}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleToggleFlag(currentQuestion.questionId)}
-              aria-pressed={isFlagged}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
-                isFlagged
-                  ? 'border-[#A35116]/50 bg-[#FDF0E2] text-[#A35116]'
-                  : 'border-[#E5DFD5] bg-white text-[#4A5955] hover:text-[#113C36] hover:border-[#CFC6B9]'
-              }`}
-            >
-              <Flag className="w-3.5 h-3.5" />
-              <span>{isFlagged ? t('session.flagged') : t('session.flag')}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setNavOpen((v) => !v)}
-              aria-expanded={navOpen}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
-                navOpen
-                  ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
-                  : 'border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36]'
-              }`}
-            >
-              <Grid className="w-3.5 h-3.5" />
-              <span>{t('session.navigator')}</span>
-              <ChevronDown
-                className={`w-3.5 h-3.5 opacity-70 transition-transform ${
-                  navOpen ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
-
-            {isAdminRun && (
-              <button
-                type="button"
-                onClick={() => setInspectorOpen((v) => !v)}
-                aria-pressed={inspectorOpen}
-                aria-keyshortcuts="I"
-                title={t('session.inspectorToggleAria')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
-                  inspectorOpen
-                    ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
-                    : 'border-[#CFC6B9] bg-white text-[#113C36]'
-                }`}
-              >
-                <ShieldAlert className="w-3.5 h-3.5" />
-                <span>{t('session.inspector')}</span>
-                <kbd className="hidden sm:inline rounded border border-current/30 px-1 font-mono-code text-[10px] leading-4 opacity-70">I</kbd>
-              </button>
-            )}
-
-            <LanguageToggle compact />
-
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => setSubmitConfirmOpen(true)}
-              className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-colors"
-            >
-              {finishBtnLabel}
-            </button>
-          </div>
-        </div>
-
-        {navOpen && (
-          <QuestionNavigator
+      <SessionHeaderBar
+        title={session.title || session.mode.replace(/_/g, ' ')}
+        isLockedStudentSession={isLockedStudentSession}
+        isAdminRun={isAdminRun}
+        isSandbox={session.isSandbox}
+        sectionBadge={
+          sectionState && activeSection
+            ? {
+                current: sectionState.currentSectionIndex + 1,
+                total: sectionState.sections.length,
+                label: sectionLabel(activeSection.section),
+              }
+            : null
+        }
+        saveStatus={saveStatus}
+        clock={clock}
+        timerHidden={timerHidden}
+        questionNumber={localIndex + 1}
+        questionCount={sectionQuestions.length}
+        isFlagged={isFlagged}
+        navOpen={navOpen}
+        inspectorOpen={inspectorOpen}
+        submitting={submitting}
+        finishBtnLabel={finishBtnLabel}
+        onExit={async () => {
+          await flushCheckpoint();
+          onNavigate(session.mode === 'admin_calibration' ? '/admin' : '/');
+        }}
+        onSaveNow={() => flushCheckpoint()}
+        onToggleTimerHidden={toggleTimerHidden}
+        onToggleFlag={() => handleToggleFlag(currentQuestion.questionId)}
+        onToggleNav={() => setNavOpen((v) => !v)}
+        onToggleInspector={() => setInspectorOpen((v) => !v)}
+        onFinish={() => setSubmitConfirmOpen(true)}
+        navigator={
+          <SessionNavigatorDrawer
+            open={navOpen}
+            sectionStart={sectionStart}
+            currentIndex={currentIndex}
             questions={sectionQuestions}
-            currentIndex={localIndex}
             answersByPartId={answersByPartId}
             flaggedQuestionIds={flaggedQuestionIds}
             writingResponse={navigatorWritingResponse}
             answeredSlots={answeredSlotsCount}
             totalSlots={totalSlotsCount}
-            onGoIndex={(idx) => handleGoIndex(sectionStart + idx)}
+            onGoIndex={handleGoIndex}
           />
-        )}
-      </header>
+        }
+      />
 
       {/* Recoverable Unsent Local Draft Banner */}
       {recoverableDraft && !conflictState && (
-        <div className="border-b border-[#A35116]/25 bg-[#FDF0E2] px-6 py-2.5">
-          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[#A35116]">
-            <span>
-              {t('session.localDraftFound', {
-                time: new Date(recoverableDraft.savedAtMs).toLocaleTimeString(isZh ? 'zh-CN' : 'en-AU'),
-              })}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  applyCheckpointToState(recoverableDraft.checkpoint, questions.length);
-                  setRecoverableDraft(null);
-                  dirtyRef.current = true;
-                  saveQueueRef.current?.markDirty();
-                  void flushCheckpoint();
-                }}
-                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer whitespace-nowrap"
-              >
-                {t('session.restoreDraft')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  clearLocalDraft(draftStorageKey);
-                  setRecoverableDraft(null);
-                  setSaveStatus('saved');
-                }}
-                className="px-3 py-1 rounded-[8px] border border-[#A35116] font-sans-display font-semibold cursor-pointer whitespace-nowrap"
-              >
-                {t('session.discardDraft')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DraftRecoveryBanner
+          savedAtMs={recoverableDraft.savedAtMs}
+          onRestore={() => {
+            applyCheckpointToState(recoverableDraft.checkpoint, questions.length);
+            setRecoverableDraft(null);
+            dirtyRef.current = true;
+            saveQueueRef.current?.markDirty();
+            void flushCheckpoint();
+          }}
+          onDiscard={() => {
+            clearLocalDraft(draftStorageKey);
+            setRecoverableDraft(null);
+            setSaveStatus('saved');
+          }}
+        />
       )}
 
       {/* Optimistic Concurrency Conflict Resolution Banner (409) */}
       {conflictState && (
-        <div role="alert" className="border-b border-[#B42318]/25 bg-[#FDECEB] px-6 py-2.5">
-          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-[#B42318]">
-            <span>
-              {t('session.conflictBanner', { rev: conflictState.currentRevision })}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  checkpointRevisionRef.current = conflictState.currentRevision;
-                  saveQueueRef.current?.clearConflict(conflictState.currentRevision, true);
-                  applyCheckpointToState(conflictState.serverCheckpoint, questions.length);
-                  clearLocalDraft(draftStorageKey);
-                  dirtyRef.current = false;
-                  setConflictState(null);
-                  setSaveStatus('saved');
-                }}
-                className="px-3 py-1 rounded-[8px] bg-[#113C36] text-white font-sans-display font-semibold cursor-pointer whitespace-nowrap"
-              >
-                {t('session.loadLatestServer')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  checkpointRevisionRef.current = conflictState.currentRevision;
-                  saveQueueRef.current?.setRevision(conflictState.currentRevision);
-                  void flushCheckpoint(conflictState.currentRevision);
-                }}
-                className="px-3 py-1 rounded-[8px] border border-[#B42318] font-sans-display font-semibold cursor-pointer whitespace-nowrap"
-              >
-                {t('session.keepDeviceAnswers')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CheckpointConflictBanner
+          currentRevision={conflictState.currentRevision}
+          onLoadServer={() => {
+            checkpointRevisionRef.current = conflictState.currentRevision;
+            saveQueueRef.current?.clearConflict(conflictState.currentRevision, true);
+            applyCheckpointToState(conflictState.serverCheckpoint, questions.length);
+            clearLocalDraft(draftStorageKey);
+            dirtyRef.current = false;
+            setConflictState(null);
+            setSaveStatus('saved');
+          }}
+          onKeepDevice={() => {
+            checkpointRevisionRef.current = conflictState.currentRevision;
+            saveQueueRef.current?.setRevision(conflictState.currentRevision);
+            void flushCheckpoint(conflictState.currentRevision);
+          }}
+        />
       )}
+
 
       {isTimeUp && (
         <div

@@ -1,6 +1,5 @@
 import type { AdminLearnerSummary } from '../../api';
 
-export const QUICK_LEARNER_PILL_LIMIT = 4;
 export const LEARNERS_PAGE_SIZE = 20;
 export const LEARNER_PICKER_RESULT_LIMIT = 50;
 
@@ -22,46 +21,6 @@ function getLearnerLastActivityMs(
 
 function compareLearnerNames(a: AdminLearnerSummary, b: AdminLearnerSummary): number {
   return getLearnerDisplayName(a).localeCompare(getLearnerDisplayName(b));
-}
-
-/**
- * Selects up to `maxPills` learners for 1-click switching in the top bar
- * (always prioritizing the Primary learner and the currently focused learner),
- * plus the count of remaining hidden learners for the inline "+N more" picker.
- */
-export function buildQuickSwitchLearners(
-  learners: readonly AdminLearnerSummary[],
-  selectedLearnerId: string,
-  primaryLearnerId: string | null | undefined,
-  maxPills = QUICK_LEARNER_PILL_LIMIT
-): { quickLearners: AdminLearnerSummary[]; hiddenCount: number } {
-  if (maxPills <= 0 || learners.length === 0) {
-    return { quickLearners: [], hiddenCount: learners.length };
-  }
-
-  const quickLearners: AdminLearnerSummary[] = [];
-  const seen = new Set<string>();
-  const pushUnique = (learner?: AdminLearnerSummary | null) => {
-    if (!learner || seen.has(learner.uid) || quickLearners.length >= maxPills) return;
-    seen.add(learner.uid);
-    quickLearners.push(learner);
-  };
-
-  if (primaryLearnerId) {
-    pushUnique(learners.find((l) => l.uid === primaryLearnerId));
-  }
-  if (selectedLearnerId && selectedLearnerId !== 'none') {
-    pushUnique(learners.find((l) => l.uid === selectedLearnerId));
-  }
-  for (const learner of learners) {
-    if (quickLearners.length >= maxPills) break;
-    pushUnique(learner);
-  }
-
-  return {
-    quickLearners,
-    hiddenCount: Math.max(0, learners.length - quickLearners.length),
-  };
 }
 
 /**

@@ -25,6 +25,8 @@ import {
   getLearnerDisplayName,
 } from './admin/learnerScopeUtils';
 import { QuestionBankStudio } from './admin/QuestionBankStudio';
+import { StatusBanner } from './ui/StatusBanner';
+import { Toast } from './ui/Toast';
 
 // Secondary tabs load on first open; the bank (default tab) ships with the admin chunk.
 const LearnersPanel = lazy(() =>
@@ -576,39 +578,12 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
         />
       )}
 
-      {/* Shared Notice / Error Banners */}
-      {notice && (
-        <div
-          role="status"
-          className="px-4 py-3 rounded-[12px] bg-[#E5F0EA] border border-[#C5DDD1] text-[#113C36] text-xs font-medium flex items-center justify-between gap-3"
-        >
-          <span>{notice}</span>
-          <button
-            type="button"
-            aria-label={t('admin.dismissNotice')}
-            onClick={() => setNotice('')}
-            className="text-[#4A5955] hover:text-[#113C36] cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
+      {/* Shared notice toast (auto-dismisses) and persistent error banner */}
+      <Toast message={notice} onDismiss={() => setNotice('')} dismissLabel={t('admin.dismissNotice')} />
       {error && (
-        <div
-          role="alert"
-          className="px-4 py-3 rounded-[12px] bg-[#FDECEB] border border-[#B83A28]/25 text-[#B83A28] text-xs font-medium flex items-center justify-between gap-3"
-        >
-          <span>{error}</span>
-          <button
-            type="button"
-            aria-label={t('admin.dismissError')}
-            onClick={() => setError('')}
-            className="text-[#B83A28] cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        <StatusBanner onDismiss={() => setError('')} dismissLabel={t('admin.dismissError')}>
+          {error}
+        </StatusBanner>
       )}
 
       {/* 4 Clean Editorial Tabs */}

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   Award,
@@ -17,7 +16,9 @@ import {
 } from 'lucide-react';
 import { api, type CustomBatchOption } from '../api';
 import { useCachedResource } from '../useCachedResource';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import { Skeleton, SkeletonRegion } from './ui/Skeleton';
+import { StatusBanner } from './ui/StatusBanner';
 import { useI18n } from '../i18n';
 import type { BenchmarkReportRecord, SectionCode } from '../../shared/contracts';
 import {
@@ -81,15 +82,6 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
   const [launching, setLaunching] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [analyzeError, setAnalyzeError] = useState('');
-
-  useEffect(() => {
-    if (!pendingBatch) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !launching) setPendingBatch(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [pendingBatch, launching]);
 
   const reports = hub?.reports ?? [];
   const batches = hub?.benchmarkBatches ?? [];
@@ -285,86 +277,45 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
   return (
     <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
       {/* Locked Official Benchmark Confirmation Modal */}
-      {pendingBatch &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 m-0 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
-            role="presentation"
-            onClick={() => {
-              if (!launching) setPendingBatch(null);
-            }}
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="benchmark-ready-title"
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
-            >
-              <div className="space-y-1">
-                <p className="text-xs font-sans-display font-semibold text-[#1D6346]">
-                  {t('bm.modalEyebrow')}
-                </p>
-                <h2
-                  id="benchmark-ready-title"
-                  className="font-sans-display font-semibold text-xl tracking-[-0.015em] text-[#113C36]"
-                >
-                  {pendingBatch.batchLabel}
-                </h2>
+      <ConfirmDialog
+        open={pendingBatch !== null}
+        eyebrow={t('bm.modalEyebrow')}
+        title={pendingBatch?.batchLabel}
+        busy={launching}
+        confirmIcon={<Play className="w-3.5 h-3.5 fill-current" />}
+        confirmLabel={launching ? t('home.modalStarting') : t('bm.confirmStart')}
+        cancelLabel={t('home.modalCancel')}
+        onClose={() => setPendingBatch(null)}
+        onConfirm={handleConfirmStart}
+      >
+        {pendingBatch && (
+          <>
+            <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
+              <div>
+                <dt className="text-[#78756E]">{t('home.modalQuestions')}</dt>
+                <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
+                  {t('bm.fullPaperSummary', { count: pendingBatch.total })}
+                </dd>
               </div>
-
-              <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
-                <div>
-                  <dt className="text-[#78756E]">{t('home.modalQuestions')}</dt>
-                  <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
-                    {t('bm.fullPaperSummary', { count: pendingBatch.total })}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[#78756E]">{t('home.modalTimeAllowed')}</dt>
-                  <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
-                    {t('bm.lockedTimeLabel')}
-                  </dd>
-                </div>
-              </dl>
-
-              <div className="p-3.5 rounded-[12px] bg-[#FDF0E2] border border-[#A35116]/20 text-xs text-[#A35116] flex items-start gap-2.5 leading-relaxed">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{t('bm.lockedWarning')}</span>
+              <div>
+                <dt className="text-[#78756E]">{t('home.modalTimeAllowed')}</dt>
+                <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
+                  {t('bm.lockedTimeLabel')}
+                </dd>
               </div>
+            </dl>
 
-              <div className="flex items-center justify-end gap-2.5 pt-1">
-                <button
-                  type="button"
-                  disabled={launching}
-                  onClick={() => setPendingBatch(null)}
-                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
-                >
-                  {t('home.modalCancel')}
-                </button>
-                <button
-                  type="button"
-                  disabled={launching}
-                  onClick={handleConfirmStart}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>{launching ? t('home.modalStarting') : t('bm.confirmStart')}</span>
-                </button>
-              </div>
+            <div className="p-3.5 rounded-[12px] bg-[#FDF0E2] border border-[#A35116]/20 text-xs text-[#A35116] flex items-start gap-2.5 leading-relaxed">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{t('bm.lockedWarning')}</span>
             </div>
-          </div>,
-          document.body
+          </>
         )}
+      </ConfirmDialog>
 
       {header}
 
-      {error && (
-        <div role="alert" className="p-3.5 rounded-[12px] bg-[#FDECEB] text-[#B42318] text-sm font-medium">
-          {error}
-        </div>
-      )}
+      {error && <StatusBanner size="md">{error}</StatusBanner>}
 
       {/* Section 1: Reserved Official Benchmark Holdout Papers */}
       <section className="space-y-3">

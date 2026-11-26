@@ -716,6 +716,11 @@ export const MESSAGES_ZH: Record<MessageKey, string> = {
 
   // Admin studio v2 (metrics strip, filters popover, simulator, inspector tabs, learner pill)
   'common.close': '关闭',
+  'common.dismiss': '关闭',
+  'common.decreaseValue': '减少{label}',
+  'common.increaseValue': '增加{label}',
+  'common.valueFallback': '数值',
+  'common.rangeHint': '允许范围 {min} 至 {max}',
   'bank.simulate': '模拟练习…',
   'bank.simulateTitle': '模拟一次练习',
   'bank.simulateDesc': '以学生考试界面打开这些题目。沙盒模式不会改变任何学生的进度。',

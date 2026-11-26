@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { AlertTriangle, Library, Search, Star, Trash2, UserRound, X } from 'lucide-react';
 import type { AdminLearnerSummary, AdminLearnersResponse } from '../../api';
 import { useI18n } from '../../i18n';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import {
   LEARNERS_PAGE_SIZE,
   filterAndSortLearners,
@@ -418,104 +418,60 @@ export function LearnersPanel({
       </section>
 
       {/* Admin Delete Learner Confirmation Modal */}
-      {pendingDelete &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-[#113C36]/35 backdrop-blur-[2px] p-4"
-            role="presentation"
-            onClick={() => {
-              if (!deleting) {
-                setPendingDelete(null);
-                setDeleteConfirmInput('');
-              }
-            }}
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="admin-delete-learner-title"
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-[18px] bg-white border border-[#E5DFD5] p-6 space-y-5 shadow-[0_18px_40px_rgba(17,60,54,0.16)]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-full bg-[#FDECEB] text-[#B83A28] flex items-center justify-center shrink-0">
-                  <AlertTriangle className="w-4 h-4" />
-                </div>
-                <div className="space-y-1 min-w-0">
-                  <h3
-                    id="admin-delete-learner-title"
-                    className="font-sans-display font-semibold text-lg text-[#113C36]"
-                  >
-                    {t('learners.deleteModalTitle', {
-                      name: getLearnerDisplayName(pendingDelete),
-                    })}
-                  </h3>
-                  {pendingDelete.email && (
-                    <p className="text-xs text-[#78756E] truncate">{pendingDelete.email}</p>
-                  )}
-                </div>
-              </div>
-
-              <p className="text-xs text-[#4A5955] leading-relaxed">
-                {t('learners.deleteModalBody', {
-                  sessions: pendingDelete.sessionsCount,
-                  attempts: pendingDelete.attemptsCount,
-                })}
-              </p>
-
-              <div className="space-y-2 rounded-[12px] bg-[#FDECEB] border border-[#B83A28]/25 p-3.5">
-                <p className="text-xs text-[#B83A28]">
-                  {t('settings.deleteConfirmPrefix')}{' '}
-                  <strong className="font-mono-code">DELETE</strong>{' '}
-                  {t('data.resetConfirmSuffix')}
-                </p>
-                <input
-                  type="text"
-                  autoFocus
-                  aria-label={t('settings.deletePlaceholder')}
-                  value={deleteConfirmInput}
-                  onChange={(e) => setDeleteConfirmInput(e.target.value)}
-                  placeholder={t('settings.deletePlaceholder')}
-                  className="w-full px-3 py-2 rounded-[10px] border border-[#B83A28]/40 bg-white text-xs font-mono-code text-[#113C36] focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={deleting}
-                  onClick={() => {
-                    setPendingDelete(null);
-                    setDeleteConfirmInput('');
-                  }}
-                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer disabled:opacity-50"
-                >
-                  {t('home.modalCancel')}
-                </button>
-                <button
-                  type="button"
-                  disabled={deleting || deleteConfirmInput.trim().toUpperCase() !== 'DELETE'}
-                  onClick={async () => {
-                    if (!onDeleteLearner || !pendingDelete) return;
-                    setDeleting(true);
-                    try {
-                      await onDeleteLearner(pendingDelete);
-                      setPendingDelete(null);
-                      setDeleteConfirmInput('');
-                    } finally {
-                      setDeleting(false);
-                    }
-                  }}
-                  className="px-4 py-2 rounded-[10px] bg-[#B83A28] hover:bg-[#962D1E] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-40"
-                >
-                  {deleting ? t('settings.deletingAccount') : t('learners.deleteConfirmBtn')}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        tone="danger"
+        icon={<AlertTriangle className="w-4 h-4" />}
+        title={pendingDelete ? t('learners.deleteModalTitle', { name: getLearnerDisplayName(pendingDelete) }) : ''}
+        description={pendingDelete?.email}
+        busy={deleting}
+        confirmDisabled={deleteConfirmInput.trim().toUpperCase() !== 'DELETE'}
+        confirmLabel={deleting ? t('settings.deletingAccount') : t('learners.deleteConfirmBtn')}
+        cancelLabel={t('home.modalCancel')}
+        onClose={() => {
+          setPendingDelete(null);
+          setDeleteConfirmInput('');
+        }}
+        onConfirm={async () => {
+          if (!onDeleteLearner || !pendingDelete) return;
+          setDeleting(true);
+          try {
+            await onDeleteLearner(pendingDelete);
+            setPendingDelete(null);
+            setDeleteConfirmInput('');
+          } catch {
+            // AdminView surfaces the error banner; keep the dialog open for a retry.
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      >
+        {pendingDelete && (
+          <p className="text-xs text-[#4A5955] leading-relaxed">
+            {t('learners.deleteModalBody', {
+              sessions: pendingDelete.sessionsCount,
+              attempts: pendingDelete.attemptsCount,
+            })}
+          </p>
         )}
+
+        <div className="space-y-2 rounded-[12px] bg-[#FDECEB] border border-[#B83A28]/25 p-3.5">
+          <p className="text-xs text-[#B83A28]">
+            {t('settings.deleteConfirmPrefix')}{' '}
+            <strong className="font-mono-code">DELETE</strong>{' '}
+            {t('data.resetConfirmSuffix')}
+          </p>
+          <input
+            type="text"
+            data-autofocus
+            aria-label={t('settings.deletePlaceholder')}
+            value={deleteConfirmInput}
+            onChange={(e) => setDeleteConfirmInput(e.target.value)}
+            placeholder={t('settings.deletePlaceholder')}
+            className="w-full px-3 py-2 rounded-[10px] border border-[#B83A28]/40 bg-white text-xs font-mono-code text-[#113C36] focus:outline-none"
+          />
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

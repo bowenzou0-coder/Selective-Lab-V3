@@ -12,7 +12,6 @@ import {
   Sparkles,
   Trash2,
   UserRound,
-  X,
 } from 'lucide-react';
 import {
   api,
@@ -21,7 +20,11 @@ import {
   type LearnerDailySettingsView,
   type StudentSettingsResponse,
 } from '../api';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+import { NumericInput } from './ui/NumericInput';
 import { Skeleton, SkeletonRegion } from './ui/Skeleton';
+import { StatusBanner } from './ui/StatusBanner';
+import { Toast } from './ui/Toast';
 import { useI18n } from '../i18n';
 import {
   DEFAULT_AUTO_CALIBRATE,
@@ -34,79 +37,6 @@ import {
 export interface SettingsViewProps {
   onAccountDeleted: (result?: AccountDeleteResponse) => void;
   onReplayTour: () => void;
-}
-
-function NumericField({
-  id,
-  value,
-  min,
-  max,
-  disabled = false,
-  onCommit,
-}: {
-  id: string;
-  value: number;
-  min: number;
-  max: number;
-  disabled?: boolean;
-  onCommit: (next: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  const [focused, setFocused] = useState(false);
-
-  useEffect(() => {
-    if (!focused) setDraft(String(value));
-  }, [value, focused]);
-
-  const commitClamped = (raw: string) => {
-    const parsed = Number(raw);
-    if (raw.trim() === '' || Number.isNaN(parsed)) {
-      setDraft(String(value));
-      return;
-    }
-    const clamped = Math.min(max, Math.max(min, Math.round(parsed)));
-    setDraft(String(clamped));
-    if (clamped !== value) onCommit(clamped);
-  };
-
-  return (
-    <input
-      id={id}
-      type="number"
-      min={min}
-      max={max}
-      disabled={disabled}
-      value={draft}
-      onFocus={(e) => {
-        setFocused(true);
-        e.target.select();
-      }}
-      onChange={(e) => {
-        const nextRaw = e.target.value;
-        if (nextRaw.trim() === '') {
-          setDraft('');
-          return;
-        }
-        const parsed = Number(nextRaw);
-        if (Number.isNaN(parsed)) return;
-        const rounded = Math.round(parsed);
-        if (rounded > max) {
-          setDraft(String(max));
-          if (max !== value) onCommit(max);
-          return;
-        }
-        setDraft(nextRaw);
-        if (rounded >= min) {
-          if (rounded !== value) onCommit(rounded);
-        }
-      }}
-      onBlur={() => {
-        setFocused(false);
-        commitClamped(draft);
-      }}
-      className="w-full px-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] tabular-nums disabled:bg-[#F3EFE8] disabled:text-[#78756E] disabled:cursor-not-allowed focus:outline-none focus:border-[#113C36]"
-    />
-  );
 }
 
 const FALLBACK_DAILY: LearnerDailySettingsView = {
@@ -380,38 +310,11 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
         <p className="text-[14.5px] text-[#4A5955]">{t('settings.subtitle')}</p>
       </header>
 
-      {notice && (
-        <div
-          role="status"
-          className="px-4 py-3 rounded-[12px] bg-[#E5F0EA] border border-[#C5DDD1] text-[#113C36] text-xs font-medium flex items-center justify-between gap-3"
-        >
-          <span>{notice}</span>
-          <button
-            type="button"
-            aria-label={t('admin.dismissNotice')}
-            onClick={() => setNotice('')}
-            className="text-[#4A5955] hover:text-[#113C36] cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
+      <Toast message={notice} onDismiss={() => setNotice('')} dismissLabel={t('admin.dismissNotice')} />
       {error && (
-        <div
-          role="alert"
-          className="px-4 py-3 rounded-[12px] bg-[#FDECEB] border border-[#B83A28]/25 text-[#B83A28] text-xs font-medium flex items-center justify-between gap-3"
-        >
-          <span>{error}</span>
-          <button
-            type="button"
-            aria-label={t('admin.dismissError')}
-            onClick={() => setError('')}
-            className="text-[#B83A28] cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        <StatusBanner onDismiss={() => setError('')} dismissLabel={t('admin.dismissError')}>
+          {error}
+        </StatusBanner>
       )}
 
       {/* 1. Personal Daily Practice Plan */}
@@ -501,8 +404,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                 <label htmlFor="settings-min-q" className="block text-xs font-sans-display font-semibold text-[#113C36]">
                   {t('cfg.minDailyQ')}
                 </label>
-                <NumericField
+                <NumericInput
                   id="settings-min-q"
+                  integer
+                  showRange
+                  stepper
+                  label={t('cfg.minDailyQ')}
                   value={form.autoCalibrate.minDailyQuestions}
                   min={3}
                   max={30}
@@ -515,8 +422,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                 <label htmlFor="settings-max-q" className="block text-xs font-sans-display font-semibold text-[#113C36]">
                   {t('cfg.maxDailyQ')}
                 </label>
-                <NumericField
+                <NumericInput
                   id="settings-max-q"
+                  integer
+                  showRange
+                  stepper
+                  label={t('cfg.maxDailyQ')}
                   value={form.autoCalibrate.maxDailyQuestions}
                   min={form.autoCalibrate.minDailyQuestions}
                   max={40}
@@ -607,8 +518,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                   <label htmlFor={`settings-manual-${sec}`} className="block text-xs font-medium text-[#4A5955]">
                     {t('cfg.sectionPerDay', { section: sectionShortLabel(sec) })}
                   </label>
-                  <NumericField
+                  <NumericInput
                     id={`settings-manual-${sec}`}
+                    integer
+                    showRange
+                    stepper
+                    label={t('cfg.sectionPerDay', { section: sectionShortLabel(sec) })}
                     value={form.dailyQuestionLimitBySection[sec]}
                     min={0}
                     max={sec === 'WRIT' ? 2 : 30}
@@ -621,8 +536,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                 <label htmlFor="settings-goal-min" className="block text-xs font-medium text-[#4A5955]">
                   {t('cfg.dailyGoalMin')}
                 </label>
-                <NumericField
+                <NumericInput
                   id="settings-goal-min"
+                  integer
+                  showRange
+                  stepper
+                  label={t('cfg.dailyGoalMin')}
                   value={form.dailyGoalMinutes}
                   min={5}
                   max={120}
@@ -647,8 +566,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
               <label htmlFor="settings-drill-count" className="block text-xs font-medium text-[#4A5955]">
                 {t('cfg.drillCountLabel')}
               </label>
-              <NumericField
+              <NumericInput
                 id="settings-drill-count"
+                integer
+                showRange
+                stepper
+                label={t('cfg.drillCountLabel')}
                 value={form.sectionDrillQuestionCount}
                 min={3}
                 max={40}
@@ -660,8 +583,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
               <label htmlFor="settings-drill-min" className="block text-xs font-medium text-[#4A5955]">
                 {t('cfg.drillMinutesLabel')}
               </label>
-              <NumericField
+              <NumericInput
                 id="settings-drill-min"
+                integer
+                showRange
+                stepper
+                label={t('cfg.drillMinutesLabel')}
                 value={form.sectionDrillTimeMinutes}
                 min={3}
                 max={60}
@@ -762,79 +689,35 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
           </div>
         </div>
 
-        {!resetOpen ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => api.downloadFile('/api/student/export?format=json', 'selective-lab-progress.json')}
-                className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{t('settings.exportJson')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => api.downloadFile('/api/student/export?format=csv', 'selective-lab-progress.csv')}
-                className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{t('settings.exportCsv')}</span>
-              </button>
-            </div>
-
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setResetOpen(true)}
-              className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+              onClick={() => api.downloadFile('/api/student/export?format=json', 'selective-lab-progress.json')}
+              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{t('data.resetProgressBtn')}</span>
+              <Download className="w-3.5 h-3.5" />
+              <span>{t('settings.exportJson')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => api.downloadFile('/api/student/export?format=csv', 'selective-lab-progress.csv')}
+              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{t('settings.exportCsv')}</span>
             </button>
           </div>
-        ) : (
-          <div className="rounded-[14px] bg-[#FDECEB] border border-[#B83A28]/30 p-4 space-y-3">
-            <div className="flex items-start gap-2.5 text-xs text-[#B83A28]">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <div className="font-sans-display font-semibold">{t('data.resetConfirmTitle')}</div>
-                <p className="leading-relaxed">
-                  {t('data.resetConfirmPrefix')}{' '}
-                  <strong className="font-mono-code">RESET</strong> {t('data.resetConfirmSuffix')}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <input
-                type="text"
-                aria-label={t('data.resetPlaceholder')}
-                value={resetInput}
-                onChange={(e) => setResetInput(e.target.value)}
-                placeholder={t('data.resetPlaceholder')}
-                className="px-3 py-2 rounded-[10px] border border-[#B83A28]/40 bg-white text-xs font-mono-code text-[#113C36] w-44 focus:outline-none"
-              />
-              <button
-                type="button"
-                disabled={resetting || resetInput.trim().toUpperCase() !== 'RESET'}
-                onClick={handleConfirmResetProgress}
-                className="px-4 py-2 rounded-[10px] bg-[#B83A28] hover:bg-[#962D1E] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-40"
-              >
-                {resetting ? t('data.clearing') : t('data.confirmReset')}
-              </button>
-              <button
-                type="button"
-                disabled={resetting}
-                onClick={() => {
-                  setResetOpen(false);
-                  setResetInput('');
-                }}
-                className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer"
-              >
-                {t('home.modalCancel')}
-              </button>
-            </div>
-          </div>
-        )}
+
+          <button
+            type="button"
+            onClick={() => setResetOpen(true)}
+            className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{t('data.resetProgressBtn')}</span>
+          </button>
+        </div>
       </section>
 
       {/* 3. Your Flagged Questions */}
@@ -939,63 +822,90 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
             </div>
           )}
 
-          {!deleteOpen ? (
-            <button
-              type="button"
-              onClick={() => setDeleteOpen(true)}
-              className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{t('settings.deleteAccountBtn')}</span>
-            </button>
-          ) : (
-            <div className="rounded-[14px] bg-[#FDECEB] border border-[#B83A28]/30 p-4 space-y-3">
-              <div className="flex items-start gap-2.5 text-xs text-[#B83A28]">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <div className="font-sans-display font-semibold">
-                    {t('settings.deleteConfirmTitle')}
-                  </div>
-                  <p className="leading-relaxed">
-                    {t('settings.deleteConfirmPrefix')}{' '}
-                    <strong className="font-mono-code">DELETE</strong>{' '}
-                    {t('settings.deleteConfirmSuffix')}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <input
-                  type="text"
-                  aria-label={t('settings.deletePlaceholder')}
-                  value={deleteInput}
-                  onChange={(e) => setDeleteInput(e.target.value)}
-                  placeholder={t('settings.deletePlaceholder')}
-                  className="px-3 py-2 rounded-[10px] border border-[#B83A28]/40 bg-white text-xs font-mono-code text-[#113C36] w-44 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={deleting || deleteInput.trim().toUpperCase() !== 'DELETE'}
-                  onClick={handleConfirmDeleteAccount}
-                  className="px-4 py-2 rounded-[10px] bg-[#B83A28] hover:bg-[#962D1E] text-white text-xs font-sans-display font-semibold cursor-pointer disabled:opacity-40"
-                >
-                  {deleting ? t('settings.deletingAccount') : t('settings.confirmDeleteBtn')}
-                </button>
-                <button
-                  type="button"
-                  disabled={deleting}
-                  onClick={() => {
-                    setDeleteOpen(false);
-                    setDeleteInput('');
-                  }}
-                  className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer"
-                >
-                  {t('home.modalCancel')}
-                </button>
-              </div>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{t('settings.deleteAccountBtn')}</span>
+          </button>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={resetOpen}
+        tone="danger"
+        icon={<AlertTriangle className="w-4 h-4" />}
+        title={t('data.resetConfirmTitle')}
+        busy={resetting}
+        confirmDisabled={resetInput.trim().toUpperCase() !== 'RESET'}
+        confirmLabel={resetting ? t('data.clearing') : t('data.confirmReset')}
+        cancelLabel={t('home.modalCancel')}
+        onConfirm={() => void handleConfirmResetProgress()}
+        onClose={() => {
+          setResetOpen(false);
+          setResetInput('');
+        }}
+      >
+        <div className="space-y-2 rounded-[12px] bg-[#FDECEB] border border-[#B83A28]/25 p-3.5">
+          <p className="text-xs text-[#B83A28] leading-relaxed">
+            {t('data.resetConfirmPrefix')} <strong className="font-mono-code">RESET</strong>{' '}
+            {t('data.resetConfirmSuffix')}
+          </p>
+          {error && (
+            <p role="alert" className="text-xs font-medium text-[#B83A28]">
+              {error}
+            </p>
+          )}
+          <input
+            type="text"
+            data-autofocus
+            aria-label={t('data.resetPlaceholder')}
+            value={resetInput}
+            onChange={(e) => setResetInput(e.target.value)}
+            placeholder={t('data.resetPlaceholder')}
+            className="w-full px-3 py-2 rounded-[10px] border border-[#B83A28]/40 bg-white text-xs font-mono-code text-[#113C36] focus:outline-none focus:border-[#B83A28]"
+          />
+        </div>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        tone="danger"
+        icon={<AlertTriangle className="w-4 h-4" />}
+        title={t('settings.deleteConfirmTitle')}
+        busy={deleting}
+        confirmDisabled={deleteInput.trim().toUpperCase() !== 'DELETE'}
+        confirmLabel={deleting ? t('settings.deletingAccount') : t('settings.confirmDeleteBtn')}
+        cancelLabel={t('home.modalCancel')}
+        onConfirm={() => void handleConfirmDeleteAccount()}
+        onClose={() => {
+          setDeleteOpen(false);
+          setDeleteInput('');
+        }}
+      >
+        <div className="space-y-2 rounded-[12px] bg-[#FDECEB] border border-[#B83A28]/25 p-3.5">
+          <p className="text-xs text-[#B83A28] leading-relaxed">
+            {t('settings.deleteConfirmPrefix')} <strong className="font-mono-code">DELETE</strong>{' '}
+            {t('settings.deleteConfirmSuffix')}
+          </p>
+          {error && (
+            <p role="alert" className="text-xs font-medium text-[#B83A28]">
+              {error}
+            </p>
+          )}
+          <input
+            type="text"
+            data-autofocus
+            aria-label={t('settings.deletePlaceholder')}
+            value={deleteInput}
+            onChange={(e) => setDeleteInput(e.target.value)}
+            placeholder={t('settings.deletePlaceholder')}
+            className="w-full px-3 py-2 rounded-[10px] border border-[#B83A28]/40 bg-white text-xs font-mono-code text-[#113C36] focus:outline-none focus:border-[#B83A28]"
+          />
+        </div>
+      </ConfirmDialog>
     </main>
   );
 }

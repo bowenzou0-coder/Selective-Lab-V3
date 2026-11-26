@@ -712,6 +712,11 @@ export const MESSAGES_EN = {
 
   // Admin studio v2 (metrics strip, filters popover, simulator, inspector tabs, learner pill)
   'common.close': 'Close',
+  'common.dismiss': 'Dismiss',
+  'common.decreaseValue': 'Decrease {label}',
+  'common.increaseValue': 'Increase {label}',
+  'common.valueFallback': 'value',
+  'common.rangeHint': 'Allowed range {min} to {max}',
   'bank.simulate': 'Simulate…',
   'bank.simulateTitle': 'Simulate a practice run',
   'bank.simulateDesc': 'Opens these questions in the student exam view. Sandbox runs never change learner progress.',
