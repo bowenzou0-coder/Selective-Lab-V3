@@ -1,5 +1,6 @@
+import { createSession } from '../../sessionLaunch';
 import { useCallback, useRef, useState } from 'react';
-import { api, type ApiError } from '../../api';
+import type { ApiError } from '../../api';
 import { useI18n } from '../../i18n';
 
 /**
@@ -19,7 +20,7 @@ export function useRepairDrillLaunch(onLaunched: (sessionId: string) => void) {
       setLaunching(true);
       setError('');
       try {
-        const res = await api.createSession(payload);
+        const res = await createSession(payload);
         onLaunched(res.sessionId);
       } catch (err) {
         const apiErr = err as ApiError;

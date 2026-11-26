@@ -84,8 +84,7 @@ export function registerSessionRoutes(app: Express, ctx: AppContext): void {
             reviewResults[pair.question.questionId] = results;
           }
         }
-        const allSubs = await repo.listWritingSubmissions(session.studentId || req.auth!.studentId);
-        const sessionSubs = allSubs.filter((s) => s.sessionId === session.sessionId);
+        const sessionSubs = await repo.listWritingSubmissions(session.studentId || req.auth!.studentId, session.sessionId);
         if (sessionSubs.length > 0) {
           writingReview = sessionSubs.map((s) => ({
             submissionId: s.submissionId,

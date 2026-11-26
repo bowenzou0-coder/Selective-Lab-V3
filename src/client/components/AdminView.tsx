@@ -135,8 +135,8 @@ function LearnerScopeBar({
   }, [learners, learnersData.primaryMonitoredStudentId, currentUserId, selectedLearner]);
 
   const filteredSearchLearners = useMemo(
-    () => filterAndSortLearners(learners, { query: searchQuery }),
-    [learners, searchQuery]
+    () => searchOpen ? filterAndSortLearners(learners, { query: searchQuery }) : [],
+    [learners, searchOpen, searchQuery]
   );
   const visibleSearchLearners = filteredSearchLearners.slice(0, LEARNER_PICKER_RESULT_LIMIT);
 
@@ -400,29 +400,18 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
   const [focusQid, setFocusQid] = useState(() => readAdminDeepLink(window.location.search).qid);
 
   const loadStatus = useCallback(async () => {
-    try {
-      const [statusRes, learnersRes] = await Promise.all([
-        api.getAdminStatus(),
-        api.getAdminLearners().catch(() => null),
-      ]);
-      setStatus(statusRes);
-      if (learnersRes) {
-        setLearnersData(learnersRes);
-        setSelectedLearnerId((prev) => {
-          if (
-            prev &&
-            (prev === 'none' || learnersRes.learners.some((l) => l.uid === prev))
-          ) {
-            return prev;
-          }
-          return learnersRes.defaultMonitoredStudentId ?? 'none';
-        });
-      }
-    } catch {
-      // ignore initial status fetch errors; individual panels surface errors
-    } finally {
-      setLearnersLoaded(true);
-    }
+    // The bank can request its page as soon as the learner scope is known.
+    await Promise.allSettled([
+      api.getAdminStatus().then(setStatus),
+      api.getAdminLearners().then((result) => {
+        setLearnersData(result);
+        setSelectedLearnerId((prev) =>
+          prev === 'none' || result.learners.some((learner) => learner.uid === prev)
+            ? prev
+            : result.defaultMonitoredStudentId ?? 'none'
+        );
+      }).finally(() => setLearnersLoaded(true)),
+    ]);
   }, []);
 
   const monitoredStudentId =
@@ -683,7 +672,8 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
         />
       )}
 
-      {tab === 'batches' && (
+      {(tab === 'batches' || tab === 'data') && !learnersLoaded && <TabFallback />}
+      {tab === 'batches' && learnersLoaded && (
         <BatchImporterPanel
           onOpenBatchInBank={handleOpenBatchInBank}
           onOpenSession={onOpenSession}
@@ -694,7 +684,7 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
         />
       )}
 
-      {tab === 'data' && (
+      {tab === 'data' && learnersLoaded && (
         <DataAndDesignPanel
           onOpenQuestion={handleOpenQuestionInBank}
           onNotice={handleNotice}

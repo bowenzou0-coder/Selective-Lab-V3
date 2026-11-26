@@ -288,6 +288,11 @@ test('Postgres concurrent initialization, manifest retries, rollback, and accoun
   };
   await assert.rejects(repo.saveWritingEvaluation(evaluation, 'student-b'), /Writing submission not found/);
   await repo.saveWritingEvaluation(evaluation, account.uid);
+  const [review] = await repo.listWritingSubmissions(account.uid, active.sessionId);
+  assert.equal(review.submissionId, 'writing-a');
+  assert.deepEqual(review.evaluations.map((e) => e.evaluationId), ['evaluation-a']);
+  assert.deepEqual(await repo.listWritingSubmissions(account.uid, 'session-other'), []);
+  assert.deepEqual(await repo.listWritingSubmissions('student-b', active.sessionId), []);
   assert.equal((await repo.getProgressCounts(account.uid)).writingCount, 1);
   const reset = await repo.resetStudentProgress(account.uid);
   assert.equal(reset.clearedSessions, 1);

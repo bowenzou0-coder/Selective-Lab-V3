@@ -42,6 +42,8 @@ type ExamUndoEntry =
   | { kind: 'highlight'; stimulusId: string; prev: string[]; next: string[]; questionIndex: number };
 
 const MAX_UNDO_HISTORY = 60;
+const EMPTY_HIGHLIGHTS: string[] = [];
+const EMPTY_WRITING_DRAFT = { planNotes: '', responseText: '' };
 
 interface SessionPlayerViewProps {
   sessionId: string;
@@ -467,6 +469,41 @@ export function SessionPlayerView({
     },
     [draftStorageKey, clock]
   );
+
+  const currentQuestionId = currentQuestion?.questionId;
+  const currentStimId = currentQuestion?.stimulus?.stimulusId || currentQuestionId;
+  const updateHighlights = useCallback((text?: string) => {
+    if (!currentStimId) return;
+    const prevMap = checkpointRef.current.passageHighlightsByStimulusId ?? {};
+    const prevList = prevMap[currentStimId] ?? EMPTY_HIGHLIGHTS;
+    if (text === undefined ? prevList.length === 0 : prevList.includes(text)) return;
+    const nextList = text === undefined ? [] : [...prevList, text];
+    pushUndoEntry({
+      kind: 'highlight',
+      stimulusId: currentStimId,
+      prev: prevList,
+      next: nextList,
+      questionIndex: checkpointRef.current.currentIndex ?? 0,
+    });
+    const nextMap = { ...prevMap, [currentStimId]: nextList };
+    setHighlightsByStimulusId(nextMap);
+    persistDraftPatch({ passageHighlightsByStimulusId: nextMap });
+  }, [currentStimId, persistDraftPatch, pushUndoEntry]);
+  const handleClearHighlights = useCallback(() => updateHighlights(), [updateHighlights]);
+
+  const updateWritingDraft = useCallback((field: 'planNotes' | 'responseText', value: string) => {
+    if (!currentQuestionId) return;
+    const cp = checkpointRef.current;
+    const drafts = cp.writingDraftsByQuestionId ?? {};
+    const previous = drafts[currentQuestionId] ?? cp.writingDraft ?? EMPTY_WRITING_DRAFT;
+    const updated = { ...previous, [field]: value };
+    const nextMap = { ...drafts, [currentQuestionId]: updated };
+    setWritingDraft(updated);
+    setWritingDraftsByQuestionId(nextMap);
+    persistDraftPatch({ writingDraft: updated, writingDraftsByQuestionId: nextMap });
+  }, [currentQuestionId, persistDraftPatch]);
+  const handleWritingPlan = useCallback((value: string) => updateWritingDraft('planNotes', value), [updateWritingDraft]);
+  const handleWritingResponse = useCallback((value: string) => updateWritingDraft('responseText', value), [updateWritingDraft]);
 
   const handleSelectAnswer = useCallback(
     (partId: string, key: string | null) => {
@@ -983,6 +1020,47 @@ export function SessionPlayerView({
     return writingDraftsByQuestionId[writQ.questionId]?.responseText ?? writingDraft.responseText;
   }, [sectionQuestions, writingDraftsByQuestionId, writingDraft.responseText]);
 
+  const finishBtnLabel = submitting
+    ? t('session.submitting')
+    : sectionState && activeSection && !isLastSection
+      ? t('session.finishSectionBtn', { section: sectionLabel(activeSection.section) })
+      : t('session.finishTest');
+  const footerNav = useMemo(() => (
+    <div className="pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-3">
+      <button
+        type="button"
+        disabled={currentIndex <= sectionStart}
+        onClick={() => handleGoIndex(currentIndex - 1)}
+        className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-tactile"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        <span>{t('session.previous')}</span>
+      </button>
+
+      <div className="flex items-center gap-2">
+        {currentIndex < sectionEnd - 1 ? (
+          <button
+            type="button"
+            onClick={() => handleGoIndex(currentIndex + 1)}
+            className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-tactile"
+          >
+            <span>{t('session.next')}</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => setSubmitConfirmOpen(true)}
+            className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-tactile"
+          >
+            {finishBtnLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  ), [currentIndex, sectionStart, sectionEnd, handleGoIndex, t, submitting, finishBtnLabel]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-sm text-[var(--text-secondary)]">
@@ -1064,7 +1142,6 @@ export function SessionPlayerView({
   }
 
   const isFlagged = flaggedQuestionIds.includes(currentQuestion.questionId);
-  const currentStimId = currentQuestion.stimulus?.stimulusId || currentQuestion.questionId;
   const activeInspectorQ = inspectorMap[currentQuestion.questionId];
   const localIndex = Math.max(0, currentIndex - sectionStart);
   const passageCue = passageCues.get(currentQuestion.questionId);
@@ -1075,11 +1152,7 @@ export function SessionPlayerView({
         total: passageCue.total,
       })
     : undefined;
-  const finishBtnLabel = submitting
-    ? t('session.submitting')
-    : sectionState && activeSection && !isLastSection
-      ? t('session.finishSectionBtn', { section: sectionLabel(activeSection.section) })
-      : t('session.finishTest');
+
 
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[#FAF8F5] text-[#113C36]">
@@ -1215,102 +1288,17 @@ export function SessionPlayerView({
         writingClock={clock}
         answersByPartId={answersByPartId}
         eliminatedByPartId={eliminatedByPartId}
-        highlights={highlightsByStimulusId[currentStimId] || []}
+        highlights={(currentStimId && highlightsByStimulusId[currentStimId]) || EMPTY_HIGHLIGHTS}
         activeGapIndex={activeGapIndex}
         onSelectGapIndex={setActiveGapIndex}
         onSelectAnswer={handleSelectAnswer}
         onToggleEliminate={handleToggleEliminate}
-        onAddHighlight={(text) => {
-          const prevMap = checkpointRef.current.passageHighlightsByStimulusId || {};
-          const prevList = prevMap[currentStimId] || [];
-          const nextList = Array.from(new Set([...prevList, text]));
-          if (nextList.length === prevList.length) return;
-          pushUndoEntry({
-            kind: 'highlight',
-            stimulusId: currentStimId,
-            prev: prevList,
-            next: nextList,
-            questionIndex: checkpointRef.current.currentIndex ?? 0,
-          });
-          const next = { ...prevMap, [currentStimId]: nextList };
-          setHighlightsByStimulusId(next);
-          persistDraftPatch({ passageHighlightsByStimulusId: next });
-        }}
-        onClearHighlights={() => {
-          const prevMap = checkpointRef.current.passageHighlightsByStimulusId || {};
-          const prevList = prevMap[currentStimId] || [];
-          if (prevList.length === 0) return;
-          pushUndoEntry({
-            kind: 'highlight',
-            stimulusId: currentStimId,
-            prev: prevList,
-            next: [],
-            questionIndex: checkpointRef.current.currentIndex ?? 0,
-          });
-          const next = { ...prevMap, [currentStimId]: [] };
-          setHighlightsByStimulusId(next);
-          persistDraftPatch({ passageHighlightsByStimulusId: next });
-        }}
-        writingDraft={
-          writingDraftsByQuestionId[currentQuestion.questionId] ?? writingDraft
-        }
-        onChangeWritingPlan={(val) => {
-          const qid = currentQuestion.questionId;
-          setWritingDraftsByQuestionId((prev) => {
-            const cur = prev[qid] ?? writingDraft;
-            const updatedEntry = { ...cur, planNotes: val };
-            const nextMap = { ...prev, [qid]: updatedEntry };
-            setWritingDraft(updatedEntry);
-            persistDraftPatch({ writingDraft: updatedEntry, writingDraftsByQuestionId: nextMap });
-            return nextMap;
-          });
-        }}
-        onChangeWritingResponse={(val) => {
-          const qid = currentQuestion.questionId;
-          setWritingDraftsByQuestionId((prev) => {
-            const cur = prev[qid] ?? writingDraft;
-            const updatedEntry = { ...cur, responseText: val };
-            const nextMap = { ...prev, [qid]: updatedEntry };
-            setWritingDraft(updatedEntry);
-            persistDraftPatch({ writingDraft: updatedEntry, writingDraftsByQuestionId: nextMap });
-            return nextMap;
-          });
-        }}
-        footerNav={
-          <div className="pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-3">
-            <button
-              type="button"
-              disabled={currentIndex <= sectionStart}
-              onClick={() => handleGoIndex(currentIndex - 1)}
-              className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-tactile"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>{t('session.previous')}</span>
-            </button>
-
-            <div className="flex items-center gap-2">
-              {currentIndex < sectionEnd - 1 ? (
-                <button
-                  type="button"
-                  onClick={() => handleGoIndex(currentIndex + 1)}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-tactile"
-                >
-                  <span>{t('session.next')}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => setSubmitConfirmOpen(true)}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-tactile"
-                >
-                  {finishBtnLabel}
-                </button>
-              )}
-            </div>
-          </div>
-        }
+        onAddHighlight={updateHighlights}
+        onClearHighlights={handleClearHighlights}
+        writingDraft={writingDraftsByQuestionId[currentQuestion.questionId] ?? writingDraft}
+        onChangeWritingPlan={handleWritingPlan}
+        onChangeWritingResponse={handleWritingResponse}
+        footerNav={footerNav}
       />
 
       <SubmitConfirmDialog

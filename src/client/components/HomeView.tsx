@@ -1,3 +1,4 @@
+import { createSession } from '../sessionLaunch';
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Play, RotateCcw } from 'lucide-react';
 import { api, peekCachedResource, type DashboardResponse } from '../api';
@@ -105,12 +106,12 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
 
   const launch = async (
     key: string,
-    payload: Parameters<typeof api.createSession>[0]
+    payload: Parameters<typeof createSession>[0]
   ) => {
     setLaunching(key);
     setError('');
     try {
-      const res = await api.createSession(payload);
+      const res = await createSession(payload);
       setPendingLaunch(null);
       onOpenSession(res.sessionId, true);
     } catch (err) {
@@ -473,8 +474,8 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
                   <SectionThumbnail kind={inferSessionThumbKind(s.title, s.mode)} />
                   <div className="min-w-0">
                     <div className="font-sans-display font-semibold text-[14px] text-[#113C36] truncate">
-                      {s.mode === 'repair_drill' && s.plannedQuestionIds?.length
-                        ? t('repair.sessionTitle', { count: s.plannedQuestionIds.length })
+                      {s.mode === 'repair_drill' && s.plannedQuestionCount
+                        ? t('repair.sessionTitle', { count: s.plannedQuestionCount })
                         : s.title || (s.mode === 'spaced_review' ? t('home.dailyPracticeSet') : s.mode.replace(/_/g, ' '))}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#615E57] tabular-nums">

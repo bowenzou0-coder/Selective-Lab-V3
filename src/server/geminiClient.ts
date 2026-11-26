@@ -1,5 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-
 /**
  * Gemini Decisions 1 ('gemini-decision-1'): System 1 calibrated Decisions API model
  * powering daily focus skill ranking, algorithm weights and session question selection.
@@ -38,7 +36,7 @@ export function isGeminiConfigured(): boolean {
   return getGeminiApiKey() !== null;
 }
 
-export function createDecisionsClient(): GoogleGenAI {
+export async function createGeminiClient(apiVersion?: 'v1beta') {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
     throw new GeminiServiceError(
@@ -46,26 +44,9 @@ export function createDecisionsClient(): GoogleGenAI {
       'GEMINI_API_KEY is not configured. Add GEMINI_API_KEY in Settings > Secrets to enable Gemini features.'
     );
   }
+  const { GoogleGenAI } = await import('@google/genai');
   return new GoogleGenAI({
-    apiKey,
-    apiVersion: 'v1beta',
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
-
-export function createGeminiClient(): GoogleGenAI {
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    throw new GeminiServiceError(
-      503,
-      'GEMINI_API_KEY is not configured. Add GEMINI_API_KEY in Settings > Secrets to enable Gemini features.'
-    );
-  }
-  return new GoogleGenAI({
+    apiVersion,
     apiKey,
     httpOptions: {
       headers: {

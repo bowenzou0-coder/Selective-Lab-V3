@@ -2,12 +2,11 @@ import crypto from 'node:crypto';
 import type { Express } from 'express';
 import { requireAdmin, requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { GeminiServiceError } from '../geminiClient.ts';
-import { evaluateWritingWithGemini } from '../geminiWriting.ts';
 import type { QuestionFlagRecord, WritingDeterministicMetrics } from '../../shared/contracts.ts';
 import { SKILLS_TAXONOMY } from '../../shared/skills.ts';
 import { buildBenchmarkReportRecord } from '../../shared/nswBenchmark.ts';
 import { gradeSubmission } from '../../shared/engine.ts';
-import { ensureBenchmarkReportForSession, resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
+import { backfillBenchmarkReports, resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
 import { enforceAiRateLimit } from '../rateLimit.ts';
 import { NotFoundError } from '../storage/repository.ts';
 import type { AppContext } from '../context.ts';
@@ -55,6 +54,7 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
           }
           const metrics = JSON.parse(sub.deterministicMetricsJson) as WritingDeterministicMetrics;
           evalPromise = (async () => {
+            const { evaluateWritingWithGemini } = await import('../geminiWriting.ts');
             const evaluation = await evaluateWritingWithGemini({
               submissionId: sub.submissionId,
               question: pair.question,
@@ -163,44 +163,36 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
     try {
       await ctx.ensureSeeded();
       const studentId = req.auth!.studentId;
-      const [configData, skillStates, sessions, writingSubmissions, savedReports] = await Promise.all([
+      const [configData, skillStates, sessions, writingSubmissions, savedReports, stats] = await Promise.all([
         repo.getActiveConfig(),
         repo.getSkillStates(studentId),
-        repo.listSessions(200, studentId, false, { omitSubmissionSummary: true }),
+        req.query.view === 'summary'
+          ? repo.listSessionSummaries(200, studentId, false)
+          : repo.listSessions(200, studentId, false, { omitSubmissionSummary: true }),
         repo.listWritingSubmissions(studentId),
         repo.listBenchmarkReports(studentId, 20),
+        repo.getStudentProgressStats({
+          studentId,
+          writingSubmissionsCount: 0,
+          writingEvaluatedCount: 0,
+        }),
       ]);
 
-      const savedIds = new Set(savedReports.map((r) => r.sessionId));
-      const missingBenchmarks = sessions.filter(
-        (s) => s.mode === 'benchmark_exam' && s.status === 'submitted' && !s.isSandbox && !savedIds.has(s.sessionId)
-      );
-      const benchmarkReports = [...savedReports];
-      for (const s of missingBenchmarks) {
-        const created = await ensureBenchmarkReportForSession(repo, s.sessionId, studentId);
-        if (created) benchmarkReports.push(created);
-      }
-      benchmarkReports.sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso));
+      const writingQuestionIds = [...new Set(writingSubmissions.map((w) => w.questionId))];
+      const [benchmarkReports, promptTitleByQuestionId] = await Promise.all([
+        backfillBenchmarkReports(repo, studentId, savedReports, sessions),
+        repo.getPromptTitlesByQuestionId(writingQuestionIds),
+      ]);
 
-      const stats = await repo.getStudentProgressStats({
-        studentId,
-        writingSubmissionsCount: writingSubmissions.length,
-        writingEvaluatedCount: writingSubmissions.filter((w) => w.evaluations.length > 0).length,
-        policyVersion: configData.config.masteryPolicy?.policyVersion,
-      });
-
-      // Prompt titles let the essay comparison name what each piece answered.
-      const writingQuestionIds = Array.from(new Set(writingSubmissions.map((w) => w.questionId)));
-      const writingQuestions = writingQuestionIds.length > 0 ? await repo.listQuestionsByIds(writingQuestionIds) : [];
-      const writingStimulusIds = Array.from(
-        new Set(writingQuestions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
-      );
-      const writingStimuli = writingStimulusIds.length > 0 ? await repo.listStimuliByIds(writingStimulusIds) : {};
-      const promptTitleByQuestionId = new Map<string, string>();
-      for (const q of writingQuestions) {
-        const title = (q.stimulusId ? writingStimuli[q.stimulusId]?.title : undefined)?.trim();
-        if (title) promptTitleByQuestionId.set(q.questionId, title);
-      }
+      const masterySummary = {
+        ...stats.masterySummary,
+        policyVersion: configData.config.masteryPolicy?.policyVersion || stats.masterySummary.policyVersion,
+        writingSummary: {
+          ...stats.masterySummary.writingSummary,
+          submissionsCount: writingSubmissions.length,
+          evaluatedCount: writingSubmissions.filter((w) => w.evaluations.length > 0).length,
+        },
+      };
 
       const skills = SKILLS_TAXONOMY.map((def) => ({
         ...def,
@@ -216,7 +208,7 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
           promptTitle: promptTitleByQuestionId.get(w.questionId),
         })),
         totalAttempts: stats.totalAttempts,
-        masterySummary: stats.masterySummary,
+        masterySummary,
         benchmarkReports,
       });
     } catch (err) {

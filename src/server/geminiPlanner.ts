@@ -21,7 +21,7 @@ import {
 } from '../shared/engine.ts';
 import { VALID_SKILL_IDS } from '../shared/skills.ts';
 import {
-  createDecisionsClient,
+  createGeminiClient,
   GEMINI_DECISION_MODEL,
   GeminiServiceError,
   isGeminiConfigured,
@@ -139,7 +139,7 @@ export async function runDecisionsApi(
     return decideFn({ inputText, questions });
   }
   return withGeminiRetry(async () => {
-    const decisionsAi = createDecisionsClient();
+    const decisionsAi = await createGeminiClient('v1beta');
     const response = await decisionsAi.decisions.create({
       model: GEMINI_DECISION_MODEL,
       input: [{ type: 'text', text: inputText }],

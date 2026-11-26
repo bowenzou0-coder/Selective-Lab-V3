@@ -256,7 +256,7 @@ export async function generateBenchmarkAiCoaching(
   if (isGeminiConfigured()) {
     try {
       const modelId = getGeminiWritingModel();
-      const ai = createGeminiClient();
+      const ai = await createGeminiClient();
       const prompt = [
         'You are an NSW Selective High School exam coach writing a concise, reassuring, concrete parent debrief.',
         'STRICT RULE: Never invent or alter any numbers, scores, ranks, or school cutoffs. Only cite the exact frozen facts below.',

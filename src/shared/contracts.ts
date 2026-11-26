@@ -659,7 +659,12 @@ export interface BenchmarkReportRecord {
   completedAtIso: string;
   elapsedSec: number;
   timeLimitSec: number;
-  difficulty: 'official_sample' | 'real_exam' | 'selective_lab_timed' | 'selective_lab_hard';
+  difficulty:
+    | 'official_sample'
+    | 'real_exam'
+    | 'selective_lab_standard'
+    | 'selective_lab_timed'
+    | 'selective_lab_hard';
   scaledScore120: number;
   uncertaintyHalfWidth120: number;
   estimatedPercentile: number;

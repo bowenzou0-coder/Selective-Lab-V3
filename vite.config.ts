@@ -20,6 +20,13 @@ export default defineConfig(() => {
           codeSplitting: {
             groups: [
               { name: 'react-vendor', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 20 },
+              // Home, settings and the exam share these small controls. Packing them together
+              // avoids a separate request per primitive on the first authenticated navigation.
+              {
+                name: 'studio-controls',
+                test: /[\\/]ui[\\/](ConfirmDialog|focusTrap|NumericInput|SegmentedControl|Skeleton|StatusBanner|useSlidingIndicator)\./,
+                includeDependenciesRecursively: false,
+              },
               { name: 'icons', test: /node_modules[\\/]lucide-react[\\/]/, priority: 10 },
             ],
           },

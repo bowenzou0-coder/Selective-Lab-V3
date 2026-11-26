@@ -68,11 +68,13 @@ test('higher scores and harder difficulty presets produce strictly higher scaled
   };
   const onSample = evaluateNswBenchmark({ ...sameRaw, difficulty: 'official_sample' });
   const onReal = evaluateNswBenchmark({ ...sameRaw, difficulty: 'real_exam' });
+  const onStandard = evaluateNswBenchmark({ ...sameRaw, difficulty: 'selective_lab_standard' });
   const onTimed = evaluateNswBenchmark({ ...sameRaw, difficulty: 'selective_lab_timed' });
   const onHard = evaluateNswBenchmark({ ...sameRaw, difficulty: 'selective_lab_hard' });
 
   assert.ok(onSample.scaledScore120 < onReal.scaledScore120);
-  assert.ok(onReal.scaledScore120 < onTimed.scaledScore120);
+  assert.ok(onReal.scaledScore120 < onStandard.scaledScore120);
+  assert.ok(onStandard.scaledScore120 < onTimed.scaledScore120);
   assert.ok(onTimed.scaledScore120 < onHard.scaledScore120);
 
   // Strong score on real exam reaches top tier
@@ -125,6 +127,31 @@ test('extractBenchmarkScoresFromSession parses multi-section review results and 
   assert.deepEqual(extracted.math, { score: 1, maxScore: 1 });
   assert.deepEqual(extracted.think, { score: 1, maxScore: 1 });
   assert.equal(extracted.suggestedDifficulty, 'selective_lab_hard');
+
+  assert.equal(
+    extractBenchmarkScoresFromSession({
+      sessionTitle: 'Benchmark: benchmark_1_2x_2026_11_26',
+      questions: [],
+      reviewResults: {},
+    }).suggestedDifficulty,
+    'selective_lab_standard'
+  );
+  assert.equal(
+    extractBenchmarkScoresFromSession({
+      sessionTitle: 'Benchmark: benchmark_1_35x_2026_11_26',
+      questions: [],
+      reviewResults: {},
+    }).suggestedDifficulty,
+    'selective_lab_timed'
+  );
+  assert.equal(
+    extractBenchmarkScoresFromSession({
+      sessionTitle: 'Benchmark: benchmark_1_5x_2026_11_26',
+      questions: [],
+      reviewResults: {},
+    }).suggestedDifficulty,
+    'selective_lab_hard'
+  );
 });
 
 test('buildParentVerdict produces clear parent headline and buildBenchmarkReportRecord captures unanswered/weak skills', () => {

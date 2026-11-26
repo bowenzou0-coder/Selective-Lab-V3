@@ -188,6 +188,18 @@ test('Repair drill API: empty pool, needs_repair only, quarantine filtering, exp
     const bobRes = await srv.call('/api/student/sessions', { method: 'POST', cookie: bob, body: { mode: 'repair_drill' } });
     assert.equal(bobRes.status, 400);
 
+    for (const [tab, field] of [['dashboard', 'recentSessions'], ['progress', 'sessions']] as const) {
+      const response = await srv.call(`/api/student/${tab}?view=summary`, { cookie: alice });
+      assert.equal(response.status, 200);
+      const history = (await response.json())[field] as Record<string, unknown>[];
+      const row = history.find((s) => s.sessionId === explicit.sessionId);
+      assert.ok(row);
+      assert.equal(row.plannedQuestionCount, 1);
+      assert.equal(row.status, 'submitted');
+      assert.equal('checkpoint' in row, false);
+      assert.equal('plannedQuestionIds' in row, false);
+    }
+
     // Progress reports the repair count the drill draws from.
     const progress = (await (await srv.call('/api/student/progress', { cookie: alice })).json()) as {
       masterySummary: { needsRepairCount: number };

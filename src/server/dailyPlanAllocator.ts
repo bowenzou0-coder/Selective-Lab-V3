@@ -12,6 +12,7 @@ import {
   type SectionCode,
   type SkillState,
 } from '../shared/contracts.ts';
+import { findEvidenceForQuestion } from '../shared/bankStatus.ts';
 import { clampAlgorithmAdjustments, type SelectionQuestion } from '../shared/engine.ts';
 import { SKILLS_TAXONOMY, VALID_SKILL_IDS } from '../shared/skills.ts';
 
@@ -67,17 +68,7 @@ export function computeRankedSkillCandidates(input: {
       unseenCount: 0,
     };
 
-    const evKey = q.evidenceRevision ? `${q.questionFamilyId}__${q.evidenceRevision}` : '';
-    let ev = evKey ? input.evidenceMap[evKey] : undefined;
-    if (!ev) {
-      const prefix = `${q.questionFamilyId}__`;
-      for (const [k, v] of Object.entries(input.evidenceMap)) {
-        if (k.startsWith(prefix)) {
-          ev = v;
-          break;
-        }
-      }
-    }
+    const ev = findEvidenceForQuestion(q, input.evidenceMap);
 
     const mem = input.questionMemory[q.questionFamilyId];
     const isRepair = ev?.status === 'needs_repair';

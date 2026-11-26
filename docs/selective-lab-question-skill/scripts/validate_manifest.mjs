@@ -461,8 +461,11 @@ export function validateManifestObject(raw) {
     questions.some((q) => q?.provenance?.sourceType === 'official_doe') &&
     questions.every((q) => q?.provenance?.sourceType === 'official_doe' || isStandIn(q));
   const batchLabel = typeof raw.batchLabel === 'string' ? raw.batchLabel.trim() : '';
+  const BENCHMARK_BATCH_RE = /^benchmark_[0-9]+_[0-9]+x_\d{4}_\d{2}_\d{2}$/;
   const hasStandardBatch =
-    BATCH_LABEL_RE.test(batchLabel) || (isAllOfficial && OFFICIAL_BATCH_RE.test(batchLabel));
+    BATCH_LABEL_RE.test(batchLabel) ||
+    (isAllOfficial && OFFICIAL_BATCH_RE.test(batchLabel)) ||
+    (raw.defaultPoolType === 'benchmark_holdout' && BENCHMARK_BATCH_RE.test(batchLabel));
   if (!batchLabel) {
     errors.push('batchLabel must be a non-empty string.');
   } else if (batchLabel.length > 200) {

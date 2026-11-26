@@ -610,6 +610,23 @@ export class PostgresRepository implements AppRepository {
     return rows.map((r) => deepFreeze(r.data));
   }
 
+  async getPromptTitlesByQuestionId(questionIds: string[]): Promise<Map<string, string>> {
+    if (!questionIds.length) return new Map();
+    await this.ensureSchema();
+    const { rows } = await this.pool.query<{ question_id: string; title: string | null }>(
+      `SELECT q.question_id, s.data->>'title' AS title
+       FROM questions q JOIN stimuli s ON s.stimulus_id = q.stimulus_id
+       WHERE q.question_id = ANY($1::text[])`,
+      [questionIds]
+    );
+    const titles = new Map<string, string>();
+    for (const row of rows) {
+      const title = row.title?.trim();
+      if (title) titles.set(row.question_id, title);
+    }
+    return titles;
+  }
+
   async listQuestionsByFamilies(familyIds: string[], questionIds: string[] = []): Promise<QuestionItem[]> {
     await this.ensureSchema();
     const fams = Array.from(new Set(familyIds.filter(Boolean)));
@@ -672,7 +689,8 @@ export class PostgresRepository implements AppRepository {
 
   async listQuestionsPaginated(params?: QuestionQueryParams): Promise<QuestionQueryResult> {
     await this.ensureSchema();
-    return queryQuestionsPaginatedSql(this.pool, params || {}, this.listImportBatchSummaries());
+    const batches = params?.includeSummary === false ? Promise.resolve([]) : this.listImportBatchSummaries();
+    return queryQuestionsPaginatedSql(this.pool, params || {}, batches);
   }
 
   async listQuestionVersions(questionFamilyId: string): Promise<QuestionVersionSummary[]> {
@@ -1621,28 +1639,18 @@ export class PostgresRepository implements AppRepository {
     return { ...sub, evaluations: evalRes.rows.map((r) => r.data as WritingEvaluationRecord) };
   }
 
-  async listWritingSubmissions(studentId = DEFAULT_STUDENT_ID) {
+  async listWritingSubmissions(studentId = DEFAULT_STUDENT_ID, sessionId?: string) {
     await this.ensureSchema();
-    const subRes = await this.pool.query(
-      'SELECT data FROM writing_submissions WHERE student_id = $1 ORDER BY submitted_at DESC',
-      [studentId]
+    const { rows } = await this.pool.query<{ data: WritingSubmissionRecord; evaluations: WritingEvaluationRecord[] }>(
+      `SELECT s.data,
+              COALESCE((SELECT json_agg(e.data ORDER BY e.created_at DESC)
+                        FROM writing_evaluations e WHERE e.submission_id = s.submission_id), '[]') AS evaluations
+       FROM writing_submissions s
+       WHERE s.student_id = $1 ${sessionId === undefined ? '' : 'AND s.session_id = $2'}
+       ORDER BY s.submitted_at DESC`,
+      sessionId === undefined ? [studentId] : [studentId, sessionId]
     );
-    const evalRes = await this.pool.query(
-      `SELECT e.submission_id, e.data FROM writing_evaluations e
-       JOIN writing_submissions s ON s.submission_id = e.submission_id
-       WHERE s.student_id = $1 ORDER BY e.created_at DESC`,
-      [studentId]
-    );
-    const evalMap = new Map<string, WritingEvaluationRecord[]>();
-    for (const row of evalRes.rows) {
-      const list = evalMap.get(row.submission_id) || [];
-      list.push(row.data as WritingEvaluationRecord);
-      evalMap.set(row.submission_id, list);
-    }
-    return subRes.rows.map((r) => {
-      const sub = r.data as WritingSubmissionRecord;
-      return { ...sub, evaluations: evalMap.get(sub.submissionId) || [] };
-    });
+    return rows.map(({ data, evaluations }) => ({ ...data, evaluations }));
   }
 
   async saveWritingEvaluation(ev: WritingEvaluationRecord, studentId?: string): Promise<void> {
@@ -1845,6 +1853,16 @@ export class PostgresRepository implements AppRepository {
         ])
       : await this.pool.query('SELECT data FROM benchmark_reports WHERE session_id = $1', [sessionId]);
     return rows.length ? (rows[0].data as BenchmarkReportRecord) : null;
+  }
+
+  async listBenchmarkReportsBySessionIds(studentId: string, sessionIds: string[]): Promise<BenchmarkReportRecord[]> {
+    if (!sessionIds.length) return [];
+    await this.ensureSchema();
+    const { rows } = await this.pool.query<{ data: BenchmarkReportRecord }>(
+      'SELECT data FROM benchmark_reports WHERE student_id = $1 AND session_id = ANY($2::text[])',
+      [studentId, sessionIds]
+    );
+    return rows.map((r) => r.data);
   }
 
   async listBenchmarkReports(studentId: string, limit = 50): Promise<BenchmarkReportRecord[]> {

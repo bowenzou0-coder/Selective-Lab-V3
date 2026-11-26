@@ -1,6 +1,6 @@
-import { OAuth2Client } from 'google-auth-library';
+import type { OAuth2Client } from 'google-auth-library';
 
-const googleClient = new OAuth2Client();
+let googleClient: OAuth2Client | undefined;
 const defaultAdminEmails = 'bowenzou0@gmail.com,yolandayue0319@gmail.com';
 const googleSubjectPattern = /^[A-Za-z0-9_-]{1,255}$/;
 const legacyStudentIdPattern = /^[A-Za-z0-9_-]{1,128}$/;
@@ -70,6 +70,10 @@ export function getGoogleStudentId(sub: string): string {
 }
 
 export async function verifyGoogleCredential(credential: string, clientId: string, nonce: string) {
+  if (!googleClient) {
+    const { OAuth2Client } = await import('google-auth-library');
+    googleClient ??= new OAuth2Client();
+  }
   const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: clientId });
   const payload = ticket.getPayload();
   if (!payload || typeof payload.sub !== 'string' || !googleSubjectPattern.test(payload.sub) ||

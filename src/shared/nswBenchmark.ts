@@ -14,6 +14,7 @@ export type ApplicantGenderFilter = 'all' | 'girls' | 'boys';
 export type BenchmarkDifficultyPreset =
   | 'official_sample'
   | 'real_exam'
+  | 'selective_lab_standard'
   | 'selective_lab_timed'
   | 'selective_lab_hard';
 export type BenchmarkWeightingMode = 'official_2025_equal' | 'legacy_2021_2024';
@@ -155,6 +156,11 @@ export const DIFFICULTY_CALIBRATION: Record<BenchmarkDifficultyPreset, Difficult
   real_exam: {
     id: 'real_exam',
     cohortMeanPct: { READ: 63, MATH: 55, THINK: 56, WRIT: 57.5 },
+    cohortSdPct: { READ: 14.5, MATH: 16.5, THINK: 15.5, WRIT: 14.0 },
+  },
+  selective_lab_standard: {
+    id: 'selective_lab_standard',
+    cohortMeanPct: { READ: 60, MATH: 51.5, THINK: 52.5, WRIT: 57.5 },
     cohortSdPct: { READ: 14.5, MATH: 16.5, THINK: 15.5, WRIT: 14.0 },
   },
   selective_lab_timed: {
@@ -697,6 +703,23 @@ export function evaluateNswBenchmark(input: BenchmarkScoreInput): NswBenchmarkRe
   };
 }
 
+export function detectBenchmarkDifficulty(labelOrTitle: string): BenchmarkDifficultyPreset {
+  const lower = labelOrTitle.toLowerCase();
+  if (lower.includes('pt1') || lower.includes('pt2') || lower.includes('pt3') || lower.includes('official')) {
+    return 'official_sample';
+  }
+  if (lower.includes('1_5x') || lower.includes('1.5x') || lower.includes('2026-11-23') || lower.includes('b11') || lower.includes('b12')) {
+    return 'selective_lab_hard';
+  }
+  if (lower.includes('1_35x') || lower.includes('1.35x')) {
+    return 'selective_lab_timed';
+  }
+  if (lower.includes('1_2x') || lower.includes('1.2x')) {
+    return 'selective_lab_standard';
+  }
+  return 'selective_lab_timed';
+}
+
 /**
  * Extracts per-section raw scores from a completed mock/benchmark session for instant estimator seeding.
  */
@@ -749,13 +772,7 @@ export function extractBenchmarkScoresFromSession(input: {
     return { score: c.correct, maxScore: c.total };
   };
 
-  const titleLower = (input.sessionTitle || '').toLowerCase();
-  let suggestedDifficulty: BenchmarkDifficultyPreset = 'selective_lab_timed';
-  if (titleLower.includes('pt1') || titleLower.includes('pt2') || titleLower.includes('pt3') || titleLower.includes('official')) {
-    suggestedDifficulty = 'official_sample';
-  } else if (titleLower.includes('2026-11-23') || titleLower.includes('b11') || titleLower.includes('b12')) {
-    suggestedDifficulty = 'selective_lab_hard';
-  }
+  const suggestedDifficulty = detectBenchmarkDifficulty(input.sessionTitle || '');
 
   return {
     hasObjectiveMultiSection,
@@ -945,13 +962,7 @@ export function buildBenchmarkReportRecord(input: {
       latestWritingEval.criteriaScores.reduce((sum, c) => sum + Math.round(c.score), 0)
     : 14; // Neutral Band B/C placeholder while awaiting Writing grading
 
-  const labelLower = `${detectedBatchLabel} ${session.title || ''}`.toLowerCase();
-  let difficulty: BenchmarkDifficultyPreset = 'selective_lab_timed';
-  if (labelLower.includes('pt1') || labelLower.includes('pt2') || labelLower.includes('pt3') || labelLower.includes('official')) {
-    difficulty = 'official_sample';
-  } else if (labelLower.includes('2026-11-23') || labelLower.includes('b11') || labelLower.includes('b12')) {
-    difficulty = 'selective_lab_hard';
-  }
+  const difficulty = detectBenchmarkDifficulty(`${detectedBatchLabel} ${session.title || ''}`);
 
   const evaluated = evaluateNswBenchmark({
     read: {

@@ -423,7 +423,7 @@ async function generateWritingJsonWithModel(
 ): Promise<string> {
   return withGeminiRetry(
     async () => {
-      const ai = createGeminiClient();
+      const ai = await createGeminiClient();
       const response = await ai.models.generateContent({
         model: modelId,
         contents: prompt,

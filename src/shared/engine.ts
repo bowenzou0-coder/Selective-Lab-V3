@@ -1,3 +1,4 @@
+import { findEvidenceByFamily } from './bankStatus';
 import type {
   AlgorithmAdjustments,
   DifficultyPreset,
@@ -353,11 +354,7 @@ function findFamilyEvidence(
     // Exact revision match: never let an older revision's retained status retire a revised question
     return evidenceMap[`${q.questionFamilyId}__${q.evidenceRevision}`];
   }
-  const prefix = `${q.questionFamilyId}__`;
-  for (const [k, ev] of Object.entries(evidenceMap)) {
-    if (k.startsWith(prefix)) return ev;
-  }
-  return undefined;
+  return findEvidenceByFamily(q.questionFamilyId, evidenceMap);
 }
 
 function pickWithDiversity<Q extends SelectionQuestion, T extends { q: Q; priority: number }>(

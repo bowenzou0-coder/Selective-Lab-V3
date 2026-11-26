@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
 import { useI18n } from '../i18n';
-import type { StudentQuestionView, WritingTaskSpec } from '../../shared/contracts';
+import type { StimulusGroup, StudentQuestionView, WritingTaskSpec } from '../../shared/contracts';
 import { computeWritingMetrics } from '../../shared/engine';
 import { useClockValue, type SessionClock } from '../sessionClock';
 import { FormattedText } from './FormattedText';
@@ -126,9 +126,15 @@ const PacingNote = memo(function PacingNote({
   );
 });
 
-export function WritingStimulusPane({ question }: { question: StudentQuestionView }) {
+export const WritingStimulusPane = memo(function WritingStimulusPane({
+  question,
+  stimulus,
+}: {
+  question: StudentQuestionView;
+  stimulus?: StimulusGroup;
+}) {
   const { t } = useI18n();
-  const stim = question.stimulus;
+  const stim = stimulus ?? question.stimulus;
   const spec = question.writingSpec;
   const bodyMarkdown =
     stim?.mainTextMarkdown?.trim() || question.parts[0]?.promptText?.trim() || '';
@@ -185,7 +191,7 @@ export function WritingStimulusPane({ question }: { question: StudentQuestionVie
       <VisualRenderer visual={stim?.visual || question.visual} />
     </div>
   );
-}
+});
 
 export function WritingAnswerPane({
   question,

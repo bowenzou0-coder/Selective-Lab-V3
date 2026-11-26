@@ -106,15 +106,21 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
                         section: mode === 'writing_sprint' ? ('WRIT' as SectionCode) : sectionFilter,
                       };
 
+      // Fixed exams select by batch, repair drills use evidence alone, and fresh-pool
+      // mocks also use memory. Only adaptive practice uses skill states.
+      const isPractice = mode !== 'benchmark_exam' && mode !== 'repair_drill';
+      const isPoolMock = isPractice && mockSource === 'pool';
+      const isAdaptive = isPractice && !isPoolMock && !batchId && !mockBatch;
+      const needsMemory = isAdaptive || isPoolMock;
       const [existingSessions, configData, learnerPrefs, candidateQuestions, skillStates, questionMemory, evidenceMap] =
         await Promise.all([
           repo.listActiveSessions(studentId),
           repo.getActiveConfig(),
           repo.getLearnerPreferences(studentId),
           repo.listSelectionQuestions(selectionFilter),
-          repo.getSkillStates(studentId),
-          repo.getQuestionMemory(studentId),
-          repo.getQuestionEvidence(studentId),
+          isAdaptive ? repo.getSkillStates(studentId) : {},
+          needsMemory ? repo.getQuestionMemory(studentId) : {},
+          needsMemory || mode === 'repair_drill' ? repo.getQuestionEvidence(studentId) : {},
         ]);
       const effectiveConfig = resolveEffectiveLearningConfig(configData.config, learnerPrefs);
 

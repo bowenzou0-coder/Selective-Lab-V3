@@ -46,7 +46,7 @@ const dashboard = (studentId: string, streakDays = 1) => ({ studentId, streakDay
 beforeEach(() => {
   calls = [];
   manual = false;
-  autoBody = (url) => (url === '/api/student/dashboard' ? dashboard('stu_a') : { ok: true });
+  autoBody = (url) => (url === '/api/student/dashboard?view=summary' ? dashboard('stu_a') : { ok: true });
   installFetch();
   setApiCacheScope(null);
   clearApiCache();
@@ -96,8 +96,8 @@ test('stale copies still paint while a background revalidation runs', async () =
 
 test('mutations invalidate the views they change', async () => {
   autoBody = (url) => {
-    if (url === '/api/student/dashboard') return dashboard('stu_a');
-    if (url === '/api/student/progress') return { sessions: [] };
+    if (url === '/api/student/dashboard?view=summary') return dashboard('stu_a');
+    if (url === '/api/student/progress?view=summary') return { sessions: [] };
     if (url === '/api/student/benchmarks') return { benchmarkBatches: [], reports: [] };
     if (url === '/api/student/settings') return { flags: [], onboardingCompleted: false };
     return { ok: true, sessionId: 'sess_1' };
@@ -143,12 +143,12 @@ test('mutations invalidate the views they change', async () => {
 test('settings save and onboarding patch cached copies; analyze patches the report', async () => {
   const settings = { flags: [], onboardingCompleted: false, preferences: null } as unknown as StudentSettingsResponse;
   autoBody = (url) => {
-    if (url === '/api/student/dashboard') return { ...dashboard('stu_a'), shouldShowOnboarding: true };
+    if (url === '/api/student/dashboard?view=summary') return { ...dashboard('stu_a'), shouldShowOnboarding: true };
     if (url === '/api/student/settings') return settings;
     if (url === '/api/student/benchmarks') {
       return { benchmarkBatches: [], reports: [{ sessionId: 's1' }, { sessionId: 's2' }] };
     }
-    if (url === '/api/student/progress') return { sessions: [] };
+    if (url === '/api/student/progress?view=summary') return { sessions: [] };
     if (url === '/api/student/settings/daily-plan') {
       return { ok: true, preferences: { dailyGoalMinutes: 40 }, effectiveConfig: { dailyGoalMinutes: 40 }, adminOverrideLocked: false };
     }
@@ -211,7 +211,7 @@ test('switching accounts or signing out never leaks the previous learner cache',
   await api.studentLogin('1234');
   assert.equal(getApiCacheScope(), 'stu_c');
 
-  autoBody = (url) => (url === '/api/student/dashboard' ? dashboard('stu_c') : { ok: true });
+  autoBody = (url) => (url === '/api/student/dashboard?view=summary' ? dashboard('stu_c') : { ok: true });
   await api.getDashboard();
   await api.logout();
   assert.equal(getApiCacheScope(), null);

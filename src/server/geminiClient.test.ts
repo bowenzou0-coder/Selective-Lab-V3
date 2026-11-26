@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDecisionsClient } from './geminiClient.ts';
+import { createGeminiClient } from './geminiClient.ts';
 
 test('Decisions client sends the System 1 model to the v1beta Decisions endpoint', async () => {
   const previousFetch = globalThis.fetch;
@@ -20,7 +20,8 @@ test('Decisions client sends the System 1 model to the v1beta Decisions endpoint
   };
 
   try {
-    const response = await createDecisionsClient().decisions.create({
+    const client = await createGeminiClient('v1beta');
+    const response = await client.decisions.create({
       model: 'gemini-decision-1',
       input: [{ type: 'text', text: 'This learner has a review due today.' }],
       questions: {

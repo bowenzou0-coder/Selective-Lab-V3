@@ -1,3 +1,4 @@
+import { toSessionSummary } from '../../shared/sessionSummary.ts';
 import crypto from 'node:crypto';
 import type {
   BankImportManifest,
@@ -423,6 +424,16 @@ export class MemoryRepository implements AppRepository {
       if (q) out.push(deepFreeze(structuredClone(q)));
     }
     return out;
+  }
+
+  async getPromptTitlesByQuestionId(questionIds: string[]): Promise<Map<string, string>> {
+    const titles = new Map<string, string>();
+    for (const id of questionIds) {
+      const stimulusId = this.questions.get(id)?.stimulusId;
+      const title = stimulusId && this.stimuli.get(stimulusId)?.title?.trim();
+      if (title) titles.set(id, title);
+    }
+    return titles;
   }
 
   async listQuestionsByFamilies(familyIds: string[], questionIds: string[] = []): Promise<QuestionItem[]> {
@@ -1215,18 +1226,7 @@ export class MemoryRepository implements AppRepository {
       .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && (includeSandbox || !s.isSandbox))
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
       .slice(0, limit)
-      .map((s) => ({
-        sessionId: s.sessionId,
-        mode: s.mode,
-        status: s.status,
-        isSandbox: Boolean(s.isSandbox),
-        ...(s.sectionFilter ? { sectionFilter: s.sectionFilter } : {}),
-        startedAt: s.startedAt,
-        ...(s.completedAt ? { completedAt: s.completedAt } : {}),
-        correctSlots: s.correctSlots ?? 0,
-        totalSlots: s.totalSlots ?? 0,
-        elapsedSec: s.checkpoint?.elapsedSec ?? 0,
-      }));
+      .map(toSessionSummary);
   }
 
   async listActiveSessions(studentId: string): Promise<SessionRecord[]> {
@@ -1324,10 +1324,11 @@ export class MemoryRepository implements AppRepository {
   }
 
   async listWritingSubmissions(
-    studentId = DEFAULT_STUDENT_ID
+    studentId = DEFAULT_STUDENT_ID,
+    sessionId?: string
   ): Promise<(WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] })[]> {
     return Array.from(this.writingSubmissions.values())
-      .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId)
+      .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && (sessionId === undefined || s.sessionId === sessionId))
       .sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt))
       .map((s) => ({
         ...structuredClone(s),
@@ -1681,6 +1682,15 @@ export class MemoryRepository implements AppRepository {
     if (!found) return null;
     if (studentId && (found.studentId || DEFAULT_STUDENT_ID) !== studentId) return null;
     return structuredClone(found);
+  }
+
+  async listBenchmarkReportsBySessionIds(studentId: string, sessionIds: string[]): Promise<BenchmarkReportRecord[]> {
+    const reports: BenchmarkReportRecord[] = [];
+    for (const id of new Set(sessionIds)) {
+      const report = this.benchmarkReportsBySession.get(id);
+      if (report && (report.studentId || DEFAULT_STUDENT_ID) === studentId) reports.push(structuredClone(report));
+    }
+    return reports;
   }
 
   async listBenchmarkReports(studentId: string, limit = 50): Promise<BenchmarkReportRecord[]> {

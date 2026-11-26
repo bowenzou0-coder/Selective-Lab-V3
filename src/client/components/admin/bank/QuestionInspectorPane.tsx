@@ -1,4 +1,4 @@
-import { memo, useState, type ChangeEvent, type ReactNode, type Ref } from 'react';
+import { memo, useEffect, useState, type ChangeEvent, type ReactNode, type Ref } from 'react';
 import { Archive, BookOpen, CheckCircle2, Eye, History, KeyRound, PauseCircle, Trash2, Upload } from 'lucide-react';
 import {
   qcStatusToPoolStatus,
@@ -6,6 +6,8 @@ import {
   type QuestionProgressMeta,
 } from '../../../../shared/bankStatus';
 import type { EvidenceCitationRef, QuestionItem, StimulusGroup } from '../../../../shared/contracts';
+import { api } from '../../../api';
+import { Skeleton } from '../../ui/Skeleton';
 import { useI18n } from '../../../i18n';
 import { FormattedText } from '../../FormattedText';
 import { QuestionWorkspace } from '../../QuestionWorkspace';
@@ -18,7 +20,8 @@ interface QuestionInspectorPaneProps {
   question: QuestionItem;
   stimulus?: StimulusGroup;
   progress?: QuestionProgressMeta;
-  versions: QuestionItem[];
+  includeHistorical: boolean;
+  knownVersions?: QuestionItem[];
   statusBusy: boolean;
   onSetPoolStatus: (status: BankPoolStatus) => void;
   deleting: boolean;
@@ -147,7 +150,8 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
   question,
   stimulus,
   progress,
-  versions,
+  includeHistorical,
+  knownVersions,
   statusBusy,
   onSetPoolStatus,
   deleting,
@@ -159,6 +163,22 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
   const { t, poolStatusLabel, completionStatusLabel, formatDate } = useI18n();
   const baseId = useTabsBaseId();
   const [tab, setTab] = useState<InspectorTab>('preview');
+  const [history, setHistory] = useState<{ question: QuestionItem; versions: QuestionItem[] } | null>(null);
+  const versions = knownVersions ?? (history?.question === question ? history.versions : undefined);
+  const needsVersions = question.version > 1 || includeHistorical;
+  useEffect(() => {
+    if (tab !== 'history' || !needsVersions || versions) return;
+    let active = true;
+    api.getQuestionVersions(question.questionId).then(
+      (res) => {
+        if (active) setHistory({ question, versions: res.versions.map((v) => v.question) });
+      },
+      () => {
+        if (active) setHistory({ question, versions: [] });
+      }
+    );
+    return () => { active = false; };
+  }, [tab, needsVersions, versions, question]);
   const [evidenceRef, setEvidenceRef] = useState<EvidenceCitationRef | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shownQid, setShownQid] = useState(question.questionId);
@@ -278,7 +298,9 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
 
         <section className="space-y-2">
           <h4 className="font-sans-display font-semibold text-[#113C36]">{t('bank.versionHistoryTitle')}</h4>
-          {versions.length <= 1 ? (
+          {needsVersions && !versions ? (
+            <Skeleton className="h-8 w-full" />
+          ) : !versions || versions.length <= 1 ? (
             <p className="text-[#615E57]">{t('bank.singleVersion')}</p>
           ) : (
             <ol className="divide-y divide-[#F2EDE4] rounded-[12px] border border-[#E5DFD5]">

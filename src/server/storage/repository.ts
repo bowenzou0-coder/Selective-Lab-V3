@@ -1,3 +1,5 @@
+import type { SessionSummaryRow } from '../../shared/sessionSummary.ts';
+export type { SessionSummaryRow } from '../../shared/sessionSummary.ts';
 import type {
   BankPoolStatus,
   BatchDirectorySummary,
@@ -182,24 +184,6 @@ export interface LearnerActivityStats {
   sessionsCount: number;
   attemptsCount: number;
   lastActiveAtIso?: string;
-}
-
-/**
- * Slim per-session metadata for dashboard aggregates (streaks, today's minutes, counts).
- * Never carries checkpoint answers, planned ids, section state or submission summaries.
- */
-export interface SessionSummaryRow {
-  sessionId: string;
-  mode: SessionRecord['mode'];
-  status: SessionRecord['status'];
-  isSandbox: boolean;
-  sectionFilter?: SessionRecord['sectionFilter'];
-  startedAt: string;
-  completedAt?: string;
-  correctSlots: number;
-  totalSlots: number;
-  /** checkpoint.elapsedSec, or 0 when the session has no checkpoint yet. */
-  elapsedSec: number;
 }
 
 export interface ListSessionsOptions {
@@ -424,6 +408,7 @@ export interface AppRepository {
   }): Promise<QuestionItem[]>;
   /** Targeted fetch of full question bodies by ID (no full-bank scan). */
   listQuestionsByIds(questionIds: string[]): Promise<QuestionItem[]>;
+  getPromptTitlesByQuestionId(questionIds: string[]): Promise<Map<string, string>>;
   /** Targeted fetch of full question bodies matching families or IDs (used for manifest dry-run/import). */
   listQuestionsByFamilies(familyIds: string[], questionIds?: string[]): Promise<QuestionItem[]>;
   /** Slim selection-only projection of questions (no prompts, options, SVGs or explanations). */
@@ -535,7 +520,8 @@ export interface AppRepository {
     studentId?: string
   ): Promise<(WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] }) | null>;
   listWritingSubmissions(
-    studentId?: string
+    studentId?: string,
+    sessionId?: string
   ): Promise<(WritingSubmissionRecord & { evaluations: WritingEvaluationRecord[] })[]>;
   saveWritingEvaluation(ev: WritingEvaluationRecord, studentId?: string): Promise<void>;
 
@@ -548,6 +534,7 @@ export interface AppRepository {
 
   saveBenchmarkReport(report: BenchmarkReportRecord): Promise<void>;
   getBenchmarkReport(sessionId: string, studentId?: string): Promise<BenchmarkReportRecord | null>;
+  listBenchmarkReportsBySessionIds(studentId: string, sessionIds: string[]): Promise<BenchmarkReportRecord[]>;
   listBenchmarkReports(studentId: string, limit?: number): Promise<BenchmarkReportRecord[]>;
 
   saveQuestionFlag(flag: QuestionFlagRecord): Promise<void>;

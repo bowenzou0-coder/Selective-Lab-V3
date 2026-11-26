@@ -52,9 +52,34 @@ const EVIDENCE_FAMILY_EXPR = `coalesce(
        ELSE '' END
 )`;
 
+// Choose exact revision evidence first, then the first evidence key in the same family.
+// Compute family fallbacks once per learner instead of searching their history for every question.
+function evidenceCtes(studentFilter: string): string {
+  return `learner_evidence AS (
+    SELECT student_id, evidence_key, ${EVIDENCE_FAMILY_EXPR} AS fam_id, data
+    FROM question_evidence WHERE ${studentFilter}
+  ),
+  family_evidence AS (
+    SELECT DISTINCT ON (student_id, fam_id) student_id, fam_id, data
+    FROM learner_evidence ORDER BY student_id, fam_id, evidence_key
+  )`;
+}
+
+function evidenceJoins(student: string, revision: string, practiceOnly = false): string {
+  const scope = practiceOnly ? "AND q.pool_type = 'practice'" : '';
+  return `LEFT JOIN learner_evidence exact_ev
+    ON exact_ev.student_id = ${student} ${scope}
+   AND exact_ev.evidence_key = q.question_family_id || '__' || ${revision}
+  LEFT JOIN family_evidence family_ev
+    ON family_ev.student_id = ${student} ${scope}
+   AND family_ev.fam_id = q.question_family_id`;
+}
+
+const RESOLVED_EVIDENCE = 'coalesce(exact_ev.data, family_ev.data)';
+
 const COMPLETION_STATUS_EXPR = `CASE
-  WHEN ev.data IS NOT NULL THEN
-    CASE ev.data->>'status'
+  WHEN ${RESOLVED_EVIDENCE} IS NOT NULL THEN
+    CASE ${RESOLVED_EVIDENCE}->>'status'
       WHEN 'retained' THEN 'done'
       WHEN 'needs_repair' THEN 'needs_repair'
       WHEN 'correct_once' THEN 'in_review'
@@ -210,14 +235,7 @@ export async function queryStudentDashboardBankSummary(
      active_latest AS (
        SELECT * FROM latest WHERE qc_status = 'active'
      ),
-     ev_for_student AS (
-       SELECT
-         evidence_key,
-         ${EVIDENCE_FAMILY_EXPR} AS fam_id,
-         data
-       FROM question_evidence
-       WHERE student_id = $1
-     )
+     ${evidenceCtes('student_id = $1')}
      SELECT
        ${batchTagSql('q')} AS tag,
        q.section,
@@ -229,15 +247,7 @@ export async function queryStudentDashboardBankSummary(
        count(*)::int AS n
      FROM active_latest q
      LEFT JOIN import_batches ib ON ib.batch_id = q.data->>'batchId'
-     LEFT JOIN LATERAL (
-       SELECT e.data
-       FROM ev_for_student e
-       WHERE e.evidence_key = q.question_family_id || '__' || coalesce(q.data->>'evidenceRevision', '')
-          OR e.fam_id = q.question_family_id
-       ORDER BY (e.evidence_key = q.question_family_id || '__' || coalesce(q.data->>'evidenceRevision', '')) DESC,
-                e.evidence_key ASC
-       LIMIT 1
-     ) ev ON q.pool_type = 'practice'
+     ${evidenceJoins('$1', "coalesce(q.data->>'evidenceRevision', '')", true)}
      LEFT JOIN question_memory mem
        ON q.pool_type = 'practice'
       AND mem.student_id = $1
@@ -350,13 +360,24 @@ export async function queryTodayAttemptCounts(
   datePrefix: string
 ): Promise<TodayAttemptCounts> {
   const escaped = datePrefix.replace(/[\\%_]/g, '\\$&');
+  // Legacy imports can carry an offset. Use the timestamp index to narrow to
+  // adjacent UTC dates, then retain the exact stored date-prefix semantics.
+  const dayStart = /^\d{4}-\d{2}-\d{2}$/.test(datePrefix) ? Date.parse(datePrefix) : NaN;
+  const params = [studentId, `${escaped}%`];
+  let dateRange = '';
+  if (Number.isFinite(dayStart)) {
+    const dayMs = 86_400_000;
+    params.push(new Date(dayStart - dayMs).toISOString(), new Date(dayStart + 2 * dayMs).toISOString());
+    dateRange = 'AND created_at >= $3::timestamptz AND created_at < $4::timestamptz';
+  }
   const { rows } = await pool.query<{ attempted: number; correct: number }>(
     `SELECT
        count(*)::int AS attempted,
        count(*) FILTER (WHERE is_correct)::int AS correct
      FROM part_attempts
-     WHERE student_id = $1 AND NOT is_sandbox AND data->>'createdAt' LIKE $2 ESCAPE '\\'`,
-    [studentId, `${escaped}%`]
+     WHERE student_id = $1 AND NOT is_sandbox ${dateRange}
+       AND data->>'createdAt' LIKE $2 ESCAPE '\\'`,
+    params
   );
   return rows[0] || { attempted: 0, correct: 0 };
 }
@@ -377,6 +398,9 @@ export async function querySessionSummaries(
     mode: SessionSummaryRow['mode'];
     status: SessionSummaryRow['status'];
     is_sandbox: boolean;
+    title: string | null;
+    expired: string | null;
+    repair_count: number | null;
     section_filter: string | null;
     started_at: string | null;
     completed_at: string | null;
@@ -385,6 +409,9 @@ export async function querySessionSummaries(
     elapsed_sec: string | null;
   }>(
     `SELECT session_id, mode, status, is_sandbox,
+            data->>'title' AS title, data->>'expiredAutoSubmitted' AS expired,
+            CASE WHEN mode = 'repair_drill' AND jsonb_typeof(data->'plannedQuestionIds') = 'array'
+                 THEN jsonb_array_length(data->'plannedQuestionIds') END AS repair_count,
             data->>'sectionFilter' AS section_filter,
             data->>'startedAt' AS started_at,
             data->>'completedAt' AS completed_at,
@@ -393,7 +420,7 @@ export async function querySessionSummaries(
             data#>>'{checkpoint,elapsedSec}' AS elapsed_sec
      FROM sessions
      WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
-     ORDER BY started_at DESC
+     ORDER BY sessions.started_at DESC
      LIMIT $3`,
     [studentId, includeSandbox, limit]
   );
@@ -406,6 +433,9 @@ export async function querySessionSummaries(
     mode: r.mode,
     status: r.status,
     isSandbox: Boolean(r.is_sandbox),
+    ...(r.title != null && { title: r.title }),
+    ...(r.expired != null && { expiredAutoSubmitted: r.expired === 'true' }),
+    ...(r.mode === 'repair_drill' && { plannedQuestionCount: r.repair_count ?? 0 }),
     ...(r.section_filter ? { sectionFilter: r.section_filter as SectionCode } : {}),
     startedAt: r.started_at || '',
     ...(r.completed_at ? { completedAt: r.completed_at } : {}),
@@ -701,11 +731,7 @@ export async function queryPoolHealthByLearner(
        FROM latest_live
        WHERE qc_status = 'active' AND pool_type = 'practice'
      ),
-     ev_tagged AS (
-       SELECT student_id, evidence_key, ${EVIDENCE_FAMILY_EXPR} AS fam_id, data
-       FROM question_evidence
-       WHERE student_id = ANY($1::text[])
-     )
+     ${evidenceCtes('student_id = ANY($1::text[])')}
      SELECT
        sid.student_id AS "studentId",
        q.section,
@@ -713,18 +739,7 @@ export async function queryPoolHealthByLearner(
        count(*)::int AS n
      FROM unnest($1::text[]) AS sid(student_id)
      CROSS JOIN live_only q
-     LEFT JOIN LATERAL (
-       SELECT e.data
-       FROM ev_tagged e
-       WHERE e.student_id = sid.student_id
-         AND (
-           (coalesce(q.ev_rev, '') <> '' AND e.evidence_key = q.question_family_id || '__' || q.ev_rev)
-           OR e.fam_id = q.question_family_id
-         )
-       ORDER BY (coalesce(q.ev_rev, '') <> '' AND e.evidence_key = q.question_family_id || '__' || q.ev_rev) DESC,
-                e.evidence_key ASC
-       LIMIT 1
-     ) ev ON TRUE
+     ${evidenceJoins('sid.student_id', "nullif(q.ev_rev, '')")}
      LEFT JOIN question_memory mem
        ON mem.student_id = sid.student_id AND mem.question_family_id = q.question_family_id
      GROUP BY 1, 2, 3`,
@@ -817,11 +832,7 @@ export async function queryBatchSummaries(
          question_id, question_family_id, qc_status, data
        FROM questions ORDER BY question_family_id, version DESC
      ),
-     ev_for_student AS (
-       SELECT evidence_key, ${EVIDENCE_FAMILY_EXPR} AS fam_id, data
-       FROM question_evidence
-       WHERE $1::text IS NOT NULL AND student_id = $1
-     )
+     ${evidenceCtes('student_id = $1')}
      SELECT
        coalesce(nullif(q.data->>'batchId', ''), 'tag_' || (${batchTagSql('q')})) AS "resolvedBatchId",
        ${batchTagSql('q')} AS tag,
@@ -833,18 +844,7 @@ export async function queryBatchSummaries(
        ${COMPLETION_STATUS_EXPR} AS "completionStatus",
        array_agg(q.question_id ORDER BY q.question_id) AS "questionIds"
      FROM latest q
-     LEFT JOIN LATERAL (
-       SELECT e.data
-       FROM ev_for_student e
-       WHERE $1::text IS NOT NULL
-         AND (
-           e.evidence_key = q.question_family_id || '__' || coalesce(q.data->>'evidenceRevision', '')
-           OR e.fam_id = q.question_family_id
-         )
-       ORDER BY (e.evidence_key = q.question_family_id || '__' || coalesce(q.data->>'evidenceRevision', '')) DESC,
-                e.evidence_key ASC
-       LIMIT 1
-     ) ev ON TRUE
+     ${evidenceJoins('$1', "coalesce(q.data->>'evidenceRevision', '')")}
      LEFT JOIN question_memory mem
        ON $1::text IS NOT NULL AND mem.student_id = $1 AND mem.question_family_id = q.question_family_id
      GROUP BY 1, 2, 3, 7, 8`,
@@ -1052,27 +1052,12 @@ export async function queryQuestionsPaginatedSql(
     memData: QuestionMemoryState | null;
   }>(
     `WITH base AS (${baseSql}),
-     ev_for_student AS (
-       SELECT evidence_key, ${EVIDENCE_FAMILY_EXPR} AS fam_id, data
-       FROM question_evidence
-       WHERE ${studentParam}::text IS NOT NULL AND student_id = ${studentParam}
-     ),
+     ${evidenceCtes(`student_id = ${studentParam}`)},
      filtered AS (
-       SELECT q.question_id, q.version, q.data, ev.data AS ev_data, mem.data AS mem_data
+       SELECT q.question_id, q.version, q.data, ${RESOLVED_EVIDENCE} AS ev_data, mem.data AS mem_data
        FROM base q
        LEFT JOIN stimuli s ON s.stimulus_id = q.stimulus_id
-       LEFT JOIN LATERAL (
-         SELECT e.data
-         FROM ev_for_student e
-         WHERE ${studentParam}::text IS NOT NULL
-           AND (
-             (coalesce(q.data->>'evidenceRevision', '') <> '' AND e.evidence_key = q.question_family_id || '__' || (q.data->>'evidenceRevision'))
-             OR e.fam_id = q.question_family_id
-           )
-         ORDER BY (coalesce(q.data->>'evidenceRevision', '') <> '' AND e.evidence_key = q.question_family_id || '__' || (q.data->>'evidenceRevision')) DESC,
-                  e.evidence_key ASC
-         LIMIT 1
-       ) ev ON TRUE
+       ${evidenceJoins(studentParam, "nullif(q.data->>'evidenceRevision', '')")}
        LEFT JOIN question_memory mem
          ON ${studentParam}::text IS NOT NULL AND mem.student_id = ${studentParam} AND mem.question_family_id = q.question_family_id
        ${whereSql}
@@ -1125,7 +1110,7 @@ export async function queryQuestionsPaginatedSql(
   const [pageRes, flagsRes, batches] = await Promise.all([
     pageQuery,
     openFlagsQuery,
-    includeSummary ? importBatchesPromise : Promise.resolve([] as ImportBatchSummary[]),
+    importBatchesPromise,
   ]);
 
   const totalMatching = pageRes.rows[0]?.totalMatching ?? 0;
@@ -1215,20 +1200,10 @@ async function queryPoolHealthAndMastered(
            question_id, question_family_id, qc_status, pool_type, data->>'evidenceRevision' AS ev_rev
          FROM questions ORDER BY question_family_id, version DESC
        ),
-       ev_for_student AS (
-         SELECT evidence_key, ${EVIDENCE_FAMILY_EXPR} AS fam_id, data
-         FROM question_evidence WHERE student_id = $1
-       )
+       ${evidenceCtes('student_id = $1')}
        SELECT q.question_id
        FROM latest q
-       LEFT JOIN LATERAL (
-         SELECT e.data FROM ev_for_student e
-         WHERE (coalesce(q.ev_rev, '') <> '' AND e.evidence_key = q.question_family_id || '__' || q.ev_rev)
-            OR e.fam_id = q.question_family_id
-         ORDER BY (coalesce(q.ev_rev, '') <> '' AND e.evidence_key = q.question_family_id || '__' || q.ev_rev) DESC,
-                  e.evidence_key ASC
-         LIMIT 1
-       ) ev ON TRUE
+       ${evidenceJoins('$1', "nullif(q.ev_rev, '')")}
        LEFT JOIN question_memory mem ON mem.student_id = $1 AND mem.question_family_id = q.question_family_id
        WHERE q.qc_status = 'active' AND q.pool_type = 'practice'
          AND (${COMPLETION_STATUS_EXPR}) = 'done'`,

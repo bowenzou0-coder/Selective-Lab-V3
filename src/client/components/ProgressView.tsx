@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useI18n } from '../i18n';
-import { SegmentedControl } from './ui/SegmentedControl';
+import { SkillReadiness } from './SkillReadiness';
 import { Award, BookOpen, PenTool, ShieldCheck } from 'lucide-react';
 import { useCachedResource } from '../useCachedResource';
 import { Skeleton, SkeletonRegion } from './ui/Skeleton';
@@ -86,30 +86,9 @@ interface ProgressViewProps {
 }
 
 export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: ProgressViewProps) {
-  const { t, sectionLabel, sectionShortLabel, skillName, familyLabel, formatDate } = useI18n();
+  const { t, sectionLabel, formatDate } = useI18n();
   const { data, loading, error } = useCachedResource('progress', { fallbackError: 'Unable to load progress.' });
-  const [sectionFilter, setSectionFilter] = useState<'ALL' | SectionCode>('ALL');
-  const [onlyPracticed, setOnlyPracticed] = useState(false);
   const [compareEssaysOpen, setCompareEssaysOpen] = useState(false);
-
-  const filteredSkills = useMemo(() => {
-    if (!data) return [];
-    return data.skills.filter((s) => {
-      if (sectionFilter !== 'ALL' && s.section !== sectionFilter) return false;
-      if (onlyPracticed && (!s.state || s.state.attemptsCount === 0)) return false;
-      return true;
-    });
-  }, [data, sectionFilter, onlyPracticed]);
-
-  const groupedByFamily = useMemo(() => {
-    const map = new Map<string, typeof filteredSkills>();
-    for (const sk of filteredSkills) {
-      const arr = map.get(sk.familyCode) || [];
-      arr.push(sk);
-      map.set(sk.familyCode, arr);
-    }
-    return Array.from(map.entries());
-  }, [filteredSkills]);
 
   if (loading && !data) {
     return <ProgressSkeleton title={t('prog.title')} label={t('prog.loading')} />;
@@ -380,83 +359,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
         })}
       </section>
 
-      {/* Skill Readiness by Topic (Deep Pine progress bars, plain student language) */}
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-sans-display font-semibold text-[19px] tracking-[-0.015em] text-[#113C36]">
-              {t('prog.skillReadinessTitle')}
-            </h2>
-            <p className="text-xs text-[#4A5955] mt-0.5">
-              {t('prog.skillReadinessDesc')}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <SegmentedControl
-              ariaLabel={t('prog.skillReadinessTitle')}
-              tone="paper"
-              className="bg-[#F3EFE8] border-transparent"
-              segmentClassName="px-3 py-1"
-              value={sectionFilter}
-              onChange={setSectionFilter}
-              options={(['ALL', 'READ', 'MATH', 'THINK', 'WRIT'] as const).map((sec) => ({
-                value: sec,
-                label: sec === 'ALL' ? t('prog.allFilter') : sectionShortLabel(sec),
-              }))}
-            />
-            <label className="inline-flex items-center gap-2 text-xs text-[#4A5955] cursor-pointer whitespace-nowrap">
-              <input
-                type="checkbox"
-                checked={onlyPracticed}
-                onChange={(e) => setOnlyPracticed(e.target.checked)}
-                className="accent-[#113C36]"
-              />
-              <span>{t('prog.practicedOnly')}</span>
-            </label>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {groupedByFamily.map(([family, skills]) => (
-            <div
-              key={family}
-              className="p-5 rounded-[14px] bg-[#FAF8F5] border border-[#E5DFD5] space-y-3"
-            >
-              <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
-                {familyLabel(family)}
-              </div>
-              <div className="space-y-3">
-                {skills.map((sk) => {
-                  const pct = sk.state ? Math.round(sk.state.masteryScore * 100) : null;
-                  return (
-                    <div key={sk.skillId} className="space-y-1.5">
-                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
-                        <span className="text-[#113C36] font-medium min-w-0 break-words">
-                          {skillName(sk.skillId)}
-                        </span>
-                        <span className="tabular-nums text-[#4A5955] ml-auto text-right">
-                          {pct !== null
-                            ? `${pct}% (${sk.state!.correctCount}/${sk.state!.attemptsCount})`
-                            : t('prog.notTried')}
-                          {sk.state?.plateauStatus && sk.state.plateauStatus !== 'none'
-                            ? ` (${sk.state.plateauStatus})`
-                            : ''}
-                        </span>
-                      </div>
-                      <div className="h-2 w-full rounded-full bg-[#E5DFD5]/80 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-[#113C36] transition-[width] duration-500 ease-out"
-                          style={{ width: `${pct ?? 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <SkillReadiness skills={data.skills} />
 
       {/* Writing Archive */}
       <section className="space-y-3">
@@ -563,8 +466,8 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                 {data.sessions.map((s) => (
                   <tr key={s.sessionId}>
                     <td className="px-4 py-3 font-sans-display font-medium text-[#113C36]">
-                      {s.mode === 'repair_drill' && s.plannedQuestionIds?.length
-                        ? t('repair.sessionTitle', { count: s.plannedQuestionIds.length })
+                      {s.mode === 'repair_drill' && s.plannedQuestionCount
+                        ? t('repair.sessionTitle', { count: s.plannedQuestionCount })
                         : s.title || s.sessionId}
                     </td>
                     <td className="px-4 py-3 text-xs text-[#4A5955] capitalize">

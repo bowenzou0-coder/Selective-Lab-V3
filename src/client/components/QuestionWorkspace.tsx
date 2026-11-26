@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, CheckCircle2, Maximize2, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -20,13 +20,6 @@ import { useFocusTrap } from './ui/focusTrap';
 import { useSlidingIndicator } from './ui/useSlidingIndicator';
 import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
 import type { SessionClock } from '../sessionClock';
-
-export const SECTION_LABELS: Record<string, string> = {
-  READ: 'Reading',
-  MATH: 'Mathematical Reasoning',
-  THINK: 'Thinking Skills',
-  WRIT: 'Writing',
-};
 
 export const FORMAT_LABELS: Record<string, string> = {
   READ_FICTION_MCQ: 'Literary Comprehension',
@@ -73,23 +66,30 @@ interface QuestionWorkspaceProps {
   writingClock?: SessionClock;
 }
 
+const EMPTY_ANSWERS: Record<string, string | null> = {};
+const EMPTY_ELIMINATED: Record<string, string[]> = {};
+const EMPTY_HIGHLIGHTS: string[] = [];
+const EMPTY_WRITING_DRAFT = { planNotes: '', responseText: '' };
+const EMPTY_RESULTS: MarkingResult[] = [];
+const NOOP = () => undefined;
+
 export const QuestionWorkspace = memo(function QuestionWorkspace({
   mode,
   question,
   stimulus: stimulusProp,
-  answersByPartId = {},
-  eliminatedByPartId = {},
-  highlights = [],
+  answersByPartId = EMPTY_ANSWERS,
+  eliminatedByPartId = EMPTY_ELIMINATED,
+  highlights = EMPTY_HIGHLIGHTS,
   activeGapIndex: controlledGapIdx,
   onSelectGapIndex,
-  onSelectAnswer = () => undefined,
-  onToggleEliminate = () => undefined,
-  onAddHighlight = () => undefined,
-  onClearHighlights = () => undefined,
-  writingDraft = { planNotes: '', responseText: '' },
-  onChangeWritingPlan = () => undefined,
-  onChangeWritingResponse = () => undefined,
-  reviewResults = [],
+  onSelectAnswer = NOOP,
+  onToggleEliminate = NOOP,
+  onAddHighlight = NOOP,
+  onClearHighlights = NOOP,
+  writingDraft = EMPTY_WRITING_DRAFT,
+  onChangeWritingPlan = NOOP,
+  onChangeWritingResponse = NOOP,
+  reviewResults = EMPTY_RESULTS,
   activeEvidenceRef = null,
   onSelectEvidenceRef,
   footerNav,
@@ -127,10 +127,15 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
   const isWriting = question.formatType === 'WRIT_TYPED_TASK';
   const activePart = question.parts[0];
 
-  const reviewByPartId: Record<string, MarkingResult> = {};
-  for (const r of reviewResults) {
-    reviewByPartId[r.partId] = r;
-  }
+  const reviewByPartId = useMemo(() => {
+    const map: Record<string, MarkingResult> = {};
+    for (const r of reviewResults) {
+      map[r.partId] = r;
+    }
+    return map;
+  }, [reviewResults]);
+  const stimulusNeedsAnswers =
+    question.formatType === 'READ_GAPPED_TEXT' || question.formatType === 'READ_VOCAB_CLOZE';
 
   const handleCitationClick = (ref: EvidenceCitationRef) => {
     if (onSelectEvidenceRef) {
@@ -455,7 +460,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
             <ReadingStimulusPane
               question={question}
               stimulus={stim}
-              answersByPartId={answersByPartId}
+              answersByPartId={stimulusNeedsAnswers ? answersByPartId : EMPTY_ANSWERS}
               onSelectAnswer={onSelectAnswer}
               activeGapIndex={activeGapIndex}
               onSelectGapIndex={setActiveGapIndex}
@@ -468,7 +473,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
           )}
 
           {isWriting && (
-            <WritingStimulusPane question={{ ...question, stimulus: stim } as StudentQuestionView} />
+            <WritingStimulusPane question={question} stimulus={stim} />
           )}
 
           {!isReading && !isWriting && (
@@ -515,7 +520,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
 
             {isWriting && !readOnly && (
               <WritingAnswerPane
-                question={{ ...question, stimulus: stim } as StudentQuestionView}
+                question={question}
                 planNotes={writingDraft.planNotes}
                 responseText={writingDraft.responseText}
                 onChangePlan={onChangeWritingPlan}

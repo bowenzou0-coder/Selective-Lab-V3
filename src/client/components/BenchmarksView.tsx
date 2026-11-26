@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createSession } from '../sessionLaunch';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Award,
@@ -37,6 +38,8 @@ interface BenchmarksViewProps {
 }
 
 const BAND_ORDER: NswPerformanceBand[] = ['lowest_50', 'next_25', 'next_15', 'top_10'];
+const EMPTY_REPORTS: BenchmarkReportRecord[] = [];
+const EMPTY_BATCHES: CustomBatchOption[] = [];
 
 function bandIndex(band: NswPerformanceBand): number {
   return BAND_ORDER.indexOf(band);
@@ -88,8 +91,8 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [analyzeError, setAnalyzeError] = useState('');
 
-  const reports = hub?.reports ?? [];
-  const batches = hub?.benchmarkBatches ?? [];
+  const reports = hub?.reports ?? EMPTY_REPORTS;
+  const batches = hub?.benchmarkBatches ?? EMPTY_BATCHES;
   const benchmarkLock = hub?.benchmarkLock;
   const isBenchmarkLocked = Boolean(benchmarkLock?.isLocked);
 
@@ -98,31 +101,50 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
       if (batchLabel === 'official_pt1') return t('home.paperPT1');
       if (batchLabel === 'official_pt2') return t('home.paperPT2');
       if (batchLabel === 'official_pt3') return t('home.paperPT3');
+      if (batchLabel.includes('1_2x')) return t('bm.paperExam1');
+      if (batchLabel.includes('1_35x')) return t('bm.paperExam2');
+      if (batchLabel.includes('1_5x')) return t('bm.paperExam3');
       return batchLabel;
     },
     [t]
   );
 
-  const reportsForBatch = useCallback(
-    (b: CustomBatchOption): BenchmarkReportRecord[] =>
-      reports.filter(
-        (r) =>
-          (r.batchId && r.batchId === b.batchId) ||
-          r.batchLabel === b.batchLabel ||
-          r.batchLabel === displayBatchTitle(b.batchLabel)
-      ),
-    [reports, displayBatchTitle]
+  const displayTierLabel = useCallback(
+    (b: CustomBatchOption): string => {
+      if (b.poolType === 'official_calibration') return t('bm.tierOfficial');
+      if (b.batchLabel.includes('1_2x')) return t('bm.tierStandard');
+      if (
+        b.batchLabel.includes('1_5x') ||
+        b.batchLabel.includes('2026-11-23') ||
+        b.batchLabel.includes('b11') ||
+        b.batchLabel.includes('b12')
+      ) {
+        return t('bm.tierHard');
+      }
+      return t('bm.tierTimed');
+    },
+    [t]
   );
 
-  const unseenBatches = useMemo(
-    () => batches.filter((b) => reportsForBatch(b).length === 0),
-    [batches, reportsForBatch]
-  );
-
-  const completedBatches = useMemo(
-    () => batches.filter((b) => reportsForBatch(b).length > 0),
-    [batches, reportsForBatch]
-  );
+  const { unseenBatches, completedBatches } = useMemo(() => {
+    const unseenBatches: CustomBatchOption[] = [];
+    const completedBatches: { batch: CustomBatchOption; count: number; latestReport: BenchmarkReportRecord }[] = [];
+    for (const batch of batches) {
+      const title = displayBatchTitle(batch.batchLabel);
+      let count = 0;
+      let latestReport: BenchmarkReportRecord | undefined;
+      for (const report of reports) {
+        if ((report.batchId && report.batchId === batch.batchId) ||
+            report.batchLabel === batch.batchLabel || report.batchLabel === title) {
+          latestReport ??= report;
+          count++;
+        }
+      }
+      if (latestReport) completedBatches.push({ batch, count, latestReport });
+      else unseenBatches.push(batch);
+    }
+    return { unseenBatches, completedBatches };
+  }, [batches, reports, displayBatchTitle]);
 
   const handleToggleAdminUnlock = async (unlock: boolean) => {
     setUnlockBusy(true);
@@ -199,11 +221,13 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
     }
   }, []);
 
-  // Auto-generate coaching once when opening a saved report that has no cached coaching yet
+  // A failed request leaves the manual refresh available, without rerunning the effect in a loop.
+  const autoAnalyzedSessions = useRef(new Set<string>());
   useEffect(() => {
-    if (!activeReport || activeReport.aiCoaching || analyzingId === activeReport.sessionId) return;
+    if (!activeReport || activeReport.aiCoaching || autoAnalyzedSessions.current.has(activeReport.sessionId)) return;
+    autoAnalyzedSessions.current.add(activeReport.sessionId);
     void runAnalysis(activeReport.sessionId, false);
-  }, [activeReport, analyzingId, runAnalysis]);
+  }, [activeReport, runAnalysis]);
 
   useEffect(() => {
     setShowAllAboveCutoff(false);
@@ -214,7 +238,7 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
     setLaunching(true);
     setLaunchError('');
     try {
-      const res = await api.createSession({
+      const res = await createSession({
         mode: 'benchmark_exam',
         batchId: pendingBatch.batchId,
         timeMultiplier: 1,
@@ -490,16 +514,7 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {unseenBatches.map((b, idx) => {
               const isOfficial = b.poolType === 'official_calibration';
-              const isHard =
-                !isOfficial &&
-                (b.batchLabel.includes('2026-11-23') ||
-                  b.batchLabel.includes('b11') ||
-                  b.batchLabel.includes('b12'));
-              const tierLabel = isOfficial
-                ? t('bm.tierOfficial')
-                : isHard
-                  ? t('bm.tierHard')
-                  : t('bm.tierTimed');
+              const tierLabel = displayTierLabel(b);
               return (
                 <div
                   key={b.batchId}
@@ -564,10 +579,7 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
           </div>
 
           <div className="border-t border-b border-[#E5DFD5] divide-y divide-[#E5DFD5]">
-            {completedBatches.map((b) => {
-              const matchingReports = reportsForBatch(b);
-              const latestReport = matchingReports[0];
-              const isOfficial = b.poolType === 'official_calibration';
+            {completedBatches.map(({ batch: b, count, latestReport }) => {
               return (
                 <div
                   key={b.batchId}
@@ -580,11 +592,11 @@ export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksVie
                         {displayBatchTitle(b.batchLabel)}
                       </span>
                       <span className="text-xs text-[#615E57] tabular-nums">
-                        {t('bm.completedTimes', { count: matchingReports.length })}
+                        {t('bm.completedTimes', { count })}
                       </span>
                     </div>
                     <div className="pl-6 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[#4A5955] tabular-nums">
-                      <span>{isOfficial ? t('bm.tierOfficial') : t('bm.tierTimed')}</span>
+                      <span>{displayTierLabel(b)}</span>
                       {latestReport && (
                         <>
                           <span>{formatDate(latestReport.completedAtIso)}</span>

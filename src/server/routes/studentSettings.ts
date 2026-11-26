@@ -131,7 +131,7 @@ export function registerStudentSettingsRoutes(app: Express, ctx: AppContext): vo
         skillStates: () => repo.getSkillStates(studentId),
         evidenceMap: () => repo.getQuestionEvidence(studentId),
         questionMemory: () => repo.getQuestionMemory(studentId),
-        questions: () => repo.listSelectionQuestions({ qcStatus: 'active' }),
+        questions: () => repo.listSelectionQuestions({ qcStatus: 'active', poolType: 'practice' }),
         config: effectiveConfig,
       });
 
@@ -222,7 +222,7 @@ export function registerStudentSettingsRoutes(app: Express, ctx: AppContext): vo
       const [configData, existing, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
         repo.getActiveConfig(),
         repo.getLearnerPreferences(studentId),
-        repo.listSelectionQuestions({ qcStatus: 'active' }),
+        repo.listSelectionQuestions({ qcStatus: 'active', poolType: 'practice' }),
         repo.getSkillStates(studentId),
         repo.getQuestionEvidence(studentId),
         repo.getQuestionMemory(studentId),

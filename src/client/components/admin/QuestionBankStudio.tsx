@@ -62,7 +62,6 @@ export function QuestionBankStudio({
     }
   }
   const [checkedQids, setCheckedQids] = useState<string[]>([]);
-  const [versionsForSelected, setVersionsForSelected] = useState<QuestionItem[]>([]);
   const [simOpen, setSimOpen] = useState(false);
   const [launchingSim, setLaunchingSim] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -126,28 +125,6 @@ export function QuestionBankStudio({
   }, [questions, selectedQid, pinnedQid, focused]);
   const pinnedStatus = pinnedOutsideList ? (focused?.qid === pinnedQid ? focused.status : 'loading') : null;
 
-  useEffect(() => {
-    if (!selectedQuestion) {
-      setVersionsForSelected([]);
-      return;
-    }
-    if (selectedQuestion.version <= 1 && !filters.includeHistorical) {
-      setVersionsForSelected([selectedQuestion]);
-      return;
-    }
-    let active = true;
-    api
-      .getQuestionVersions(selectedQuestion.questionId)
-      .then((res) => {
-        if (active) setVersionsForSelected(res.versions.map((v) => v.question));
-      })
-      .catch(() => {
-        if (active) setVersionsForSelected([]);
-      });
-    return () => {
-      active = false;
-    };
-  }, [selectedQuestion, filters.includeHistorical]);
   const selectedStimulus = selectedQuestion?.stimulusId
     ? bank.stimuliById[selectedQuestion.stimulusId] ??
       (focused?.question?.questionId === selectedQuestion.questionId ? focused.stimulus : undefined)
@@ -468,7 +445,8 @@ export function QuestionBankStudio({
               question={selectedQuestion}
               stimulus={selectedStimulus}
               progress={bank.progressByQid[selectedQuestion.questionId]}
-              versions={versionsForSelected}
+              includeHistorical={filters.includeHistorical}
+              knownVersions={focused?.qid === selectedQuestion.questionId ? focused.versions : undefined}
               statusBusy={updatingStatusQid === selectedQuestion.questionId}
               onSetPoolStatus={(st) => void handleSetPoolStatus(selectedQuestion.questionId, st)}
               deleting={deletingBusy}

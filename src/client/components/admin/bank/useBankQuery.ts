@@ -88,6 +88,7 @@ export interface FocusedBankQuestion {
   status: 'loading' | 'ready' | 'missing';
   question?: QuestionItem;
   stimulus?: StimulusGroup;
+  versions?: QuestionItem[];
 }
 
 /**
@@ -215,7 +216,7 @@ export function useBankQuery({
         const match = res.versions.find((v) => v.question.questionId === focusQid) ?? res.versions[0];
         setFocused(
           match
-            ? { qid: focusQid, status: 'ready', question: match.question, stimulus: match.stimulus }
+            ? { qid: focusQid, status: 'ready', question: match.question, stimulus: match.stimulus, versions: res.versions.map((v) => v.question) }
             : { qid: focusQid, status: 'missing' }
         );
       })

@@ -1,3 +1,4 @@
+import type { SessionSummaryRow } from '../shared/sessionSummary';
 import type {
   AdminLearnerSummary,
   AutoCalibrateConfig,
@@ -89,8 +90,8 @@ export interface DashboardResponse {
   batchCounts: Record<MockTestBatch, Record<SectionCode, number>>;
   customBatches?: CustomBatchOption[];
   benchmarkBatches?: CustomBatchOption[];
-  activeSession: SessionRecord | null;
-  recentSessions: SessionRecord[];
+  activeSession: Pick<SessionRecord, 'sessionId'> | null;
+  recentSessions: SessionSummaryRow[];
   dailyFocusPlan?: DailyFocusPlan;
   serverNowIso?: string;
 }
@@ -130,7 +131,7 @@ export interface ProgressResponse {
     examWeightHint: number;
     state: SkillState | null;
   }[];
-  sessions: SessionRecord[];
+  sessions: SessionSummaryRow[];
   writingSubmissions: {
     submissionId: string;
     sessionId: string;
@@ -390,9 +391,9 @@ export interface CachedResourceMap {
 }
 
 const CACHED_RESOURCE_URLS: Record<CachedResourceKey, string> = {
-  dashboard: '/api/student/dashboard',
+  dashboard: '/api/student/dashboard?view=summary',
   benchmarks: '/api/student/benchmarks',
-  progress: '/api/student/progress',
+  progress: '/api/student/progress?view=summary',
   settings: '/api/student/settings',
 };
 
@@ -407,33 +408,23 @@ interface CacheEntry {
   data?: unknown;
   fetchedAtMs: number;
   inFlight?: Promise<unknown>;
-  /** Bumped on invalidation so a response that started earlier is never written back. */
-  generation: number;
 }
 
 const apiCache = new Map<CachedResourceKey, CacheEntry>();
 let apiCacheScope: string | null = null;
-let apiCacheEpoch = 0;
-const cacheListeners = new Set<(key: CachedResourceKey) => void>();
 
 function cacheEntry(key: CachedResourceKey): CacheEntry {
   let entry = apiCache.get(key);
   if (!entry) {
-    entry = { fetchedAtMs: 0, generation: 0 };
+    entry = { fetchedAtMs: 0 };
     apiCache.set(key, entry);
   }
   return entry;
 }
 
-function notifyCache(key: CachedResourceKey): void {
-  for (const listener of cacheListeners) listener(key);
-}
-
 /** Drop every cached response and in-flight dedupe (tests, sign-in/out, account delete). */
 export function clearApiCache(): void {
-  apiCacheEpoch++;
   apiCache.clear();
-  for (const key of ALL_CACHED_KEYS) notifyCache(key);
 }
 
 /**
@@ -453,13 +444,7 @@ export function getApiCacheScope(): string | null {
 /** Forget cached responses after a mutation; the next read fetches fresh data. */
 export function invalidateApiCache(keys: readonly CachedResourceKey[] = ALL_CACHED_KEYS): void {
   for (const key of keys) {
-    const entry = apiCache.get(key);
-    if (!entry) continue;
-    entry.generation++;
-    entry.data = undefined;
-    entry.fetchedAtMs = 0;
-    entry.inFlight = undefined;
-    notifyCache(key);
+    apiCache.delete(key);
   }
 }
 
@@ -473,10 +458,8 @@ export function patchCachedResource<K extends CachedResourceKey>(
 ): void {
   const entry = apiCache.get(key);
   if (!entry || entry.data === undefined) return;
-  entry.generation++;
   entry.inFlight = undefined;
   entry.data = update(entry.data as CachedResourceMap[K]);
-  notifyCache(key);
 }
 
 /** Synchronous read for first paint: returns a cached copy younger than the stale limit. */
@@ -496,14 +479,6 @@ export function isCachedResourceFresh(key: CachedResourceKey, nowMs = Date.now()
   return Boolean(entry && entry.data !== undefined && nowMs - entry.fetchedAtMs <= API_CACHE_FRESH_MS);
 }
 
-/** Subscribe to cache writes/invalidations (used by the SWR hook). */
-export function subscribeApiCache(listener: (key: CachedResourceKey) => void): () => void {
-  cacheListeners.add(listener);
-  return () => {
-    cacheListeners.delete(listener);
-  };
-}
-
 /**
  * Fetch a cached resource, deduplicating concurrent callers.
  * `force` skips the fresh window but still joins an in-flight request.
@@ -517,22 +492,18 @@ export function fetchCachedResource<K extends CachedResourceKey>(
   if (!options.force && isCachedResourceFresh(key)) {
     return Promise.resolve(entry.data as CachedResourceMap[K]);
   }
-  const generation = entry.generation;
-  const epoch = apiCacheEpoch;
   const promise = request<CachedResourceMap[K]>(CACHED_RESOURCE_URLS[key]).then(
     (data) => {
-      const current = apiCache.get(key);
-      if (epoch === apiCacheEpoch && current && current.generation === generation) {
-        current.data = data;
-        current.fetchedAtMs = Date.now();
-        current.inFlight = undefined;
-        notifyCache(key);
+      // A scope change or invalidation drops the entry. A patch detaches the old request.
+      if (apiCache.get(key) === entry && entry.inFlight === promise) {
+        entry.data = data;
+        entry.fetchedAtMs = Date.now();
+        entry.inFlight = undefined;
       }
       return data;
     },
     (err: unknown) => {
-      const current = apiCache.get(key);
-      if (current && current.inFlight === promise) current.inFlight = undefined;
+      if (entry.inFlight === promise) entry.inFlight = undefined;
       throw err;
     }
   );

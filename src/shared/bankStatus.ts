@@ -102,6 +102,13 @@ function evidenceByFamily(evidenceMap: Record<string, QuestionMasteryEvidence>):
   return index;
 }
 
+export function findEvidenceByFamily(
+  questionFamilyId: string,
+  evidenceMap: Record<string, QuestionMasteryEvidence>
+): QuestionMasteryEvidence | undefined {
+  return evidenceByFamily(evidenceMap).get(questionFamilyId);
+}
+
 export function findEvidenceForQuestion(
   q: ProgressQuestionRef,
   evidenceMap: Record<string, QuestionMasteryEvidence>
@@ -110,7 +117,7 @@ export function findEvidenceForQuestion(
     const exact = evidenceMap[`${q.questionFamilyId}__${q.evidenceRevision}`];
     if (exact) return exact;
   }
-  return evidenceByFamily(evidenceMap).get(q.questionFamilyId);
+  return findEvidenceByFamily(q.questionFamilyId, evidenceMap);
 }
 
 export function deriveQuestionProgressMeta(

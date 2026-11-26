@@ -11,17 +11,17 @@ import {
 } from './client/api';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
 import { ErrorBoundary } from './client/components/ErrorBoundary';
-import { HomeView } from './client/components/HomeView';
+import { createSession, loadSessionPlayer } from './client/sessionLaunch';
 import { StudioShell } from './client/components/TopNav';
 import { useI18n } from './client/i18n';
 
-// Route-level chunks: the dashboard ships in the entry bundle; everything else loads on demand.
+const loadHomeView = () => import('./client/components/HomeView');
 const loadAdminView = () => import('./client/components/AdminView');
 const loadBenchmarksView = () => import('./client/components/BenchmarksView');
 const loadProgressView = () => import('./client/components/ProgressView');
 const loadSettingsView = () => import('./client/components/SettingsView');
 const loadOnboardingTour = () => import('./client/components/OnboardingTour');
-const loadSessionPlayer = () => import('./client/components/SessionPlayerView');
+const HomeView = lazy(() => loadHomeView().then((m) => ({ default: m.HomeView })));
 const AdminView = lazy(() => loadAdminView().then((m) => ({ default: m.AdminView })));
 const BenchmarksView = lazy(() => loadBenchmarksView().then((m) => ({ default: m.BenchmarksView })));
 const ProgressView = lazy(() => loadProgressView().then((m) => ({ default: m.ProgressView })));
@@ -30,7 +30,7 @@ const OnboardingTour = lazy(() => loadOnboardingTour().then((m) => ({ default: m
 const SessionPlayerView = lazy(() => loadSessionPlayer().then((m) => ({ default: m.SessionPlayerView })));
 
 const PREFETCH_ROUTES: Record<string, { data?: CachedResourceKey; chunk?: () => Promise<unknown> }> = {
-  '/': { data: 'dashboard' },
+  '/': { data: 'dashboard', chunk: loadHomeView },
   '/benchmarks': { data: 'benchmarks', chunk: loadBenchmarksView },
   '/progress': { data: 'progress', chunk: loadProgressView },
   '/settings': { data: 'settings', chunk: loadSettingsView },
@@ -78,15 +78,6 @@ function setLocalOnboardingDone(studentId?: string | null, done = true): void {
 }
 
 const signedOut: AuthState = { authenticated: false, role: null, studentId: null };
-
-function whenIdle(work: () => void): () => void {
-  if (typeof window.requestIdleCallback === 'function') {
-    const id = window.requestIdleCallback(work, { timeout: 4000 });
-    return () => window.cancelIdleCallback(id);
-  }
-  const id = window.setTimeout(work, 1500);
-  return () => window.clearTimeout(id);
-}
 
 function RouteFallback({ label }: { label: string }) {
   return (
@@ -179,21 +170,19 @@ export default function App() {
     [auth]
   );
 
-  // Warm the chunk this account is most likely to open next while the browser is idle.
+  // Start a direct tab visit's data request while React loads its route chunk.
   useEffect(() => {
-    if (!auth?.authenticated) return;
-    return whenIdle(() => {
-      void loadSessionPlayer();
-      if (auth.role === 'admin') void loadAdminView();
-    });
-  }, [auth?.authenticated, auth?.role]);
+    if (!auth?.authenticated || auth.activeSessionId || getApiCacheScope() !== auth.studentId) return;
+    const resource = PREFETCH_ROUTES[path]?.data;
+    if (resource) prefetchCachedResource(resource);
+  }, [path, auth?.authenticated, auth?.activeSessionId, auth?.studentId]);
 
   // Hover/focus prefetch for sidebar + bottom-nav tabs (fetches are deduplicated in api.ts).
   const handlePrefetchRoute = useCallback(
     (href: string) => {
       if (!auth?.authenticated || auth.activeSessionId) return;
       if (href.startsWith('/admin')) {
-        if (auth.role === 'admin') void loadAdminView();
+        if (auth.role === 'admin') void loadAdminView().catch(() => undefined);
         return;
       }
       const target = PREFETCH_ROUTES[href];
@@ -205,10 +194,10 @@ export default function App() {
     [auth]
   );
 
-  // Lock onto a session created outside Home (repair drills from Progress or a review), then open it.
-  const handleLaunchSession = useCallback(
-    (id: string) => {
-      setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
+  // Active tests lock navigation. Opening an earlier review leaves the studio unlocked.
+  const handleOpenSession = useCallback(
+    (id: string, isLocked = true) => {
+      if (isLocked) setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
       navigate(`/session/${id}`);
     },
     [navigate]
@@ -253,11 +242,10 @@ export default function App() {
       setLocalOnboardingDone(auth.studentId, true);
       void api.setOnboardingStatus(true).catch(() => {});
     }
-    const res = await api.createSession({ mode: 'diagnostic' });
+    const res = await createSession({ mode: 'diagnostic' });
     setTourOpen(false);
-    setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: res.sessionId } : prev));
-    navigate(`/session/${res.sessionId}`);
-  }, [auth, navigate]);
+    handleOpenSession(res.sessionId);
+  }, [auth, handleOpenSession]);
 
   const handleAccountDeleted = useCallback(
     (result?: AccountDeleteResponse) => {
@@ -417,7 +405,7 @@ export default function App() {
               isAdmin={auth.role === 'admin'}
               onNavigate={navigate}
               onActiveSessionCleared={handleActiveSessionCleared}
-              onLaunchSession={handleLaunchSession}
+              onLaunchSession={handleOpenSession}
             />
           </Suspense>
         </ErrorBoundary>
@@ -454,34 +442,26 @@ export default function App() {
             <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
               <BenchmarksView
                 isAdmin={auth.role === 'admin'}
-                onOpenSession={(id, isLocked = true) => {
-                  if (isLocked) {
-                    setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
-                  }
-                  navigate(`/session/${id}`);
-                }}
+                onOpenSession={handleOpenSession}
               />
             </Suspense>
           ) : effectivePath.startsWith('/progress') ? (
             <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
               <ProgressView
                 onOpenSession={(id) => navigate(`/session/${id}`)}
-                onLaunchSession={handleLaunchSession}
+                onLaunchSession={handleOpenSession}
                 onNavigate={navigate}
               />
             </Suspense>
           ) : (
-            <HomeView
-              key={auth.studentId}
-              onOpenSession={(id, isLocked = true) => {
-                if (isLocked) {
-                  setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
-                }
-                navigate(`/session/${id}`);
-              }}
-              onNavigate={navigate}
-              onOnboardingEligible={handleOnboardingEligible}
-            />
+            <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+              <HomeView
+                key={auth.studentId}
+                onOpenSession={handleOpenSession}
+                onNavigate={navigate}
+                onOnboardingEligible={handleOnboardingEligible}
+              />
+            </Suspense>
           )}
         </ErrorBoundary>
         {tourOpen && !auth.activeSessionId && (

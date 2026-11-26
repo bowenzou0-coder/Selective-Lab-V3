@@ -730,10 +730,7 @@ export async function ensureBenchmarkReportForSession(
     }
   }
 
-  const allSubs = await repo.listWritingSubmissions(studentId);
-  const writingReview = allSubs
-    .filter((s) => s.sessionId === session.sessionId)
-    .map((s) => ({ submissionId: s.submissionId, evaluations: s.evaluations }));
+  const writingReview = await repo.listWritingSubmissions(studentId, session.sessionId);
 
   const built = buildBenchmarkReportRecord({
     session,
@@ -743,6 +740,30 @@ export async function ensureBenchmarkReportForSession(
   });
   await repo.saveBenchmarkReport(built);
   return built;
+}
+
+/** Include legacy submitted benchmarks that pre-date persisted reports. */
+export async function backfillBenchmarkReports(
+  repo: AppRepository,
+  studentId: string,
+  savedReports: BenchmarkReportRecord[],
+  sessions: Pick<SessionRecord, 'sessionId' | 'mode' | 'status' | 'isSandbox'>[]
+): Promise<BenchmarkReportRecord[]> {
+  const savedIds = new Set(savedReports.map((r) => r.sessionId));
+  const missing = sessions.filter((s) =>
+    s.mode === 'benchmark_exam' && s.status === 'submitted' && !s.isSandbox && !savedIds.has(s.sessionId)
+  );
+  // The history window can contain more benchmark exams than the report page.
+  // Fetch older saved reports together before rebuilding genuinely missing ones.
+  const olderReports = await repo.listBenchmarkReportsBySessionIds(studentId, missing.map((s) => s.sessionId));
+  const reports = [...savedReports, ...olderReports];
+  for (const r of olderReports) savedIds.add(r.sessionId);
+  for (const s of missing) {
+    if (savedIds.has(s.sessionId)) continue;
+    const report = await ensureBenchmarkReportForSession(repo, s.sessionId, studentId);
+    if (report) reports.push(report);
+  }
+  return reports.sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso));
 }
 
 /**
@@ -759,6 +780,7 @@ export async function computeBenchmarkLockStatus(input: {
   config: LearningConfig;
   learnerPrefs?: LearnerPreferences | null;
   reports?: BenchmarkReportRecord[];
+  recentSessions?: Pick<SessionRecord, 'mode' | 'status' | 'isSandbox' | 'completedAt'>[];
 }): Promise<BenchmarkLockStatus> {
   const { repo, studentId, config } = input;
   const requiredCorrect = Math.max(
@@ -784,7 +806,7 @@ export async function computeBenchmarkLockStatus(input: {
     }
   }
   if (!latestCompletedIso) {
-    const summaries = await repo.listSessionSummaries(50, studentId, false);
+    const summaries = input.recentSessions ?? await repo.listSessionSummaries(50, studentId, false);
     for (const s of summaries) {
       if (s.mode === 'benchmark_exam' && s.status === 'submitted' && !s.isSandbox && s.completedAt) {
         const ms = Date.parse(s.completedAt);

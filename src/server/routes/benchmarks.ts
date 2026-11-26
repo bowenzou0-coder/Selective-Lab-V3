@@ -3,7 +3,7 @@ import { requireAdmin, requireStudentOrAdmin, type AuthenticatedRequest } from '
 import type { AppContext } from '../context.ts';
 import { generateBenchmarkAiCoaching } from '../geminiBenchmarkCoach.ts';
 import { enforceAiRateLimit } from '../rateLimit.ts';
-import { computeBenchmarkLockStatus, ensureBenchmarkReportForSession } from '../sessionLifecycle.ts';
+import { backfillBenchmarkReports, computeBenchmarkLockStatus, ensureBenchmarkReportForSession } from '../sessionLifecycle.ts';
 
 /** Dedicated NSW Benchmark Exams & Saved Reports API (/api/student/benchmarks/*). */
 export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
@@ -16,22 +16,12 @@ export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
       const [bankSummary, savedReports, recentSessions, configData, learnerPrefs] = await Promise.all([
         repo.getStudentDashboardBankSummary(studentId, false),
         repo.listBenchmarkReports(studentId, 50),
-        repo.listSessions(50, studentId, false, { omitSubmissionSummary: true }),
+        repo.listSessionSummaries(50, studentId, false),
         repo.getActiveConfig(),
         repo.getLearnerPreferences(studentId),
       ]);
 
-      // Backfill any submitted benchmark_exam sessions that pre-date the benchmark_reports table
-      const savedIds = new Set(savedReports.map((r) => r.sessionId));
-      const missingBenchmarks = recentSessions.filter(
-        (s) => s.mode === 'benchmark_exam' && s.status === 'submitted' && !s.isSandbox && !savedIds.has(s.sessionId)
-      );
-      const allReports = [...savedReports];
-      for (const s of missingBenchmarks) {
-        const created = await ensureBenchmarkReportForSession(repo, s.sessionId, studentId);
-        if (created) allReports.push(created);
-      }
-      allReports.sort((a, b) => Date.parse(b.completedAtIso) - Date.parse(a.completedAtIso));
+      const allReports = await backfillBenchmarkReports(repo, studentId, savedReports, recentSessions);
 
       const benchmarkLock = await computeBenchmarkLockStatus({
         repo,
@@ -39,6 +29,7 @@ export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
         config: configData.config,
         learnerPrefs,
         reports: allReports,
+        recentSessions,
       });
 
       res.json({
