@@ -1192,3 +1192,38 @@ test('Postgres SQL-first pagination, search, status aggregates, progress stats, 
   assert.equal((await pgRepo.getQuestionWithStimulus('q_nat_2_v2'))?.question.qcStatus, 'retired');
   assert.equal((await pgRepo.getQuestionWithStimulus('q_read_vis_v1'))?.question.qcStatus, 'retired');
 });
+
+test('withdrawQuestionFlagRow deletes only the caller\'s open flag and explains misses', async () => {
+  const { withdrawQuestionFlagRow } = await import('./postgresAccountQueries.ts');
+  const flags = new Map<string, { studentId: string; status: string }>([
+    ['f_open', { studentId: 'stu_a', status: 'open' }],
+    ['f_done', { studentId: 'stu_a', status: 'resolved' }],
+  ]);
+  const statements: string[] = [];
+  const db = {
+    query: async (sql: string, params: unknown[]) => {
+      statements.push(sql);
+      const [flagId, studentId] = params as [string, string];
+      const row = flags.get(flagId);
+      const owned = row && row.studentId === studentId;
+      if (sql.startsWith('DELETE')) {
+        assert.match(sql, /status = 'open'/);
+        assert.match(sql, /data->>'studentId' = \$2/);
+        if (owned && row.status === 'open') {
+          flags.delete(flagId);
+          return { rows: [{ flag_id: flagId }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }
+      return owned ? { rows: [{ status: row.status }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+
+  assert.equal(await withdrawQuestionFlagRow(db, 'f_open', 'stu_b'), 'not_found');
+  assert.equal(await withdrawQuestionFlagRow(db, 'f_done', 'stu_a'), 'not_open');
+  assert.equal(await withdrawQuestionFlagRow(db, 'f_open', 'stu_a'), 'withdrawn');
+  assert.equal(await withdrawQuestionFlagRow(db, 'f_open', 'stu_a'), 'not_found');
+  assert.equal(flags.has('f_done'), true, 'resolved flags are never deleted');
+  // A successful withdrawal is a single statement (no read-then-delete race).
+  assert.equal(statements.filter((s) => s.startsWith('DELETE')).length, 4);
+});

@@ -205,6 +205,15 @@ export default function App() {
     [auth]
   );
 
+  // Lock onto a session created outside Home (repair drills from Progress or a review), then open it.
+  const handleLaunchSession = useCallback(
+    (id: string) => {
+      setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
+      navigate(`/session/${id}`);
+    },
+    [navigate]
+  );
+
   const handleActiveSessionCleared = useCallback(() => {
     setAuth((prev) => (prev && prev.activeSessionId !== null ? { ...prev, activeSessionId: null } : prev));
   }, []);
@@ -402,12 +411,13 @@ export default function App() {
         <ErrorBoundary resetKey={effectivePath} fullPage>
           <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
             <SessionPlayerView
-              key={auth.studentId}
+              key={`${auth.studentId}:${sessionMatch[1]}`}
               sessionId={decodeURIComponent(sessionMatch[1])}
               studentId={auth.studentId}
               isAdmin={auth.role === 'admin'}
               onNavigate={navigate}
               onActiveSessionCleared={handleActiveSessionCleared}
+              onLaunchSession={handleLaunchSession}
             />
           </Suspense>
         </ErrorBoundary>
@@ -455,6 +465,7 @@ export default function App() {
             <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
               <ProgressView
                 onOpenSession={(id) => navigate(`/session/${id}`)}
+                onLaunchSession={handleLaunchSession}
                 onNavigate={navigate}
               />
             </Suspense>

@@ -200,3 +200,21 @@ export async function resolveQuestionFlagRow(db: Queryable, flagId: string): Pro
     JSON.stringify(flag),
   ]);
 }
+
+/** Deletes the learner's own open flag in one statement; a follow-up read explains a miss. */
+export async function withdrawQuestionFlagRow(
+  db: Queryable,
+  flagId: string,
+  studentId: string
+): Promise<'withdrawn' | 'not_found' | 'not_open'> {
+  const deleted = await db.query(
+    `DELETE FROM question_flags WHERE flag_id = $1 AND data->>'studentId' = $2 AND status = 'open' RETURNING flag_id`,
+    [flagId, studentId]
+  );
+  if ((deleted.rowCount ?? 0) > 0) return 'withdrawn';
+  const { rows } = await db.query(
+    `SELECT status FROM question_flags WHERE flag_id = $1 AND data->>'studentId' = $2`,
+    [flagId, studentId]
+  );
+  return rows.length === 0 ? 'not_found' : 'not_open';
+}

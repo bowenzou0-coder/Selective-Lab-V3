@@ -5,6 +5,8 @@ import { api } from '../api';
 import { useCachedResource } from '../useCachedResource';
 import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { BenchmarkReportSummaryCard } from './BenchmarkReportSummaryCard';
+import { RepairDrillCard } from './repair/RepairDrillCard';
+import { EssayComparison } from './writing/EssayComparison';
 import {
   WRITING_MAX_TOTAL_MARKS,
   type SectionCode,
@@ -82,14 +84,17 @@ function legacyEstimateToBand(est: WritingEvaluationRecord['overallBandEstimate'
 
 interface ProgressViewProps {
   onOpenSession: (sessionId: string) => void;
+  /** Opens and locks onto a newly created session (repair drills). */
+  onLaunchSession?: (sessionId: string) => void;
   onNavigate?: (path: string) => void;
 }
 
-export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
+export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: ProgressViewProps) {
   const { t, sectionLabel, sectionShortLabel, skillName, familyLabel, formatDate } = useI18n();
   const { data, loading, error } = useCachedResource('progress', { fallbackError: 'Unable to load progress.' });
   const [sectionFilter, setSectionFilter] = useState<'ALL' | SectionCode>('ALL');
   const [onlyPracticed, setOnlyPracticed] = useState(false);
+  const [compareEssaysOpen, setCompareEssaysOpen] = useState(false);
 
   const filteredSkills = useMemo(() => {
     if (!data) return [];
@@ -172,6 +177,9 @@ export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
           </a>
         </div>
       </header>
+
+      {/* Practise my mistakes: one-click repair drill over needs-repair questions */}
+      {ms && <RepairDrillCard summary={ms} onLaunched={onLaunchSession ?? onOpenSession} />}
 
       {/* Bank-Wide Retained Mastery Dashboard */}
       {ms && (
@@ -485,13 +493,31 @@ export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
 
       {/* Writing Archive */}
       <section className="space-y-3">
-        <h2 className="font-sans-display font-semibold text-[19px] tracking-[-0.015em] text-[#113C36]">
-          {t('prog.writingArchiveTitle')}
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-sans-display font-semibold text-[19px] tracking-[-0.015em] text-[#113C36]">
+            {t('prog.writingArchiveTitle')}
+          </h2>
+          {data.writingSubmissions.length >= 2 && (
+            <button
+              type="button"
+              aria-pressed={compareEssaysOpen}
+              onClick={() => setCompareEssaysOpen((open) => !open)}
+              className={`px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+                compareEssaysOpen
+                  ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
+                  : 'border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36]'
+              }`}
+            >
+              {compareEssaysOpen ? t('prog.compareHide') : t('prog.compareToggle')}
+            </button>
+          )}
+        </div>
         {data.writingSubmissions.length === 0 ? (
           <p className="text-sm text-[#4A5955] p-5 rounded-[14px] border border-[#E5DFD5] bg-[#FAF8F5]">
             {t('prog.noWritingYet')}
           </p>
+        ) : compareEssaysOpen && data.writingSubmissions.length >= 2 ? (
+          <EssayComparison essays={data.writingSubmissions} onOpenSession={onOpenSession} />
         ) : (
           <div className="space-y-3">
             {data.writingSubmissions.map((sub) => {
@@ -570,10 +596,12 @@ export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
                 {data.sessions.map((s) => (
                   <tr key={s.sessionId}>
                     <td className="px-4 py-3 font-sans-display font-medium text-[#113C36]">
-                      {s.title || s.sessionId}
+                      {s.mode === 'repair_drill' && s.plannedQuestionIds?.length
+                        ? t('repair.sessionTitle', { count: s.plannedQuestionIds.length })
+                        : s.title || s.sessionId}
                     </td>
                     <td className="px-4 py-3 text-xs text-[#4A5955] capitalize">
-                      {s.mode.replace(/_/g, ' ')}
+                      {s.mode === 'repair_drill' ? t('repair.modeLabel') : s.mode.replace(/_/g, ' ')}
                     </td>
                     <td className="px-4 py-3 text-xs font-medium text-[#113C36]">
                       {s.status === 'submitted' ? `${s.correctSlots} / ${s.totalSlots}` : t('home.inProgress')}

@@ -470,7 +470,9 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
                   <SectionThumbnail kind={inferSessionThumbKind(s.title, s.mode)} />
                   <div className="min-w-0">
                     <div className="font-sans-display font-semibold text-[14px] text-[#113C36] truncate">
-                      {s.title || (s.mode === 'spaced_review' ? t('home.dailyPracticeSet') : s.mode.replace(/_/g, ' '))}
+                      {s.mode === 'repair_drill' && s.plannedQuestionIds?.length
+                        ? t('repair.sessionTitle', { count: s.plannedQuestionIds.length })
+                        : s.title || (s.mode === 'spaced_review' ? t('home.dailyPracticeSet') : s.mode.replace(/_/g, ' '))}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#78756E] tabular-nums">
                       <span>{formatDate(s.startedAt)}</span>

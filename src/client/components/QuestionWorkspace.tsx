@@ -15,6 +15,7 @@ import { FormattedText } from './FormattedText';
 import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
 import { VisualRenderer } from './VisualRenderer';
 import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
+import type { SessionClock } from '../sessionClock';
 
 export const SECTION_LABELS: Record<string, string> = {
   READ: 'Reading',
@@ -62,6 +63,10 @@ interface QuestionWorkspaceProps {
   frozen?: boolean;
   /** Admin inspector shows explanations in its own tab; set false to avoid duplicating them here. */
   showReviewBlock?: boolean;
+  /** Reading passage cohesion cue, e.g. "Passage 1, question 2 of 4". */
+  passageLabel?: string;
+  /** Exam clock, used by the Writing editor's pacing note. */
+  writingClock?: SessionClock;
 }
 
 export const QuestionWorkspace = memo(function QuestionWorkspace({
@@ -87,6 +92,8 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
   embedded = false,
   frozen = false,
   showReviewBlock = true,
+  passageLabel,
+  writingClock,
 }: QuestionWorkspaceProps) {
   const { t, sectionLabel, formatLabel, skillName } = useI18n();
   const [internalGapIdx, setInternalGapIdx] = useState(0);
@@ -404,6 +411,11 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
             <span className="px-2 py-0.5 rounded-full bg-[#F3EFE8] text-[#4A5955] font-medium">
               {formatLabel(question.formatType)}
             </span>
+            {passageLabel && (
+              <span className="px-2 py-0.5 rounded-full border border-[#C5DDD1] bg-[#E5F0EA] text-[#113C36] font-medium tabular-nums">
+                {passageLabel}
+              </span>
+            )}
           </div>
 
           {isReading && (
@@ -474,6 +486,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                 responseText={writingDraft.responseText}
                 onChangePlan={onChangeWritingPlan}
                 onChangeResponse={onChangeWritingResponse}
+                clock={writingClock}
               />
             )}
 

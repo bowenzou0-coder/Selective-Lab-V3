@@ -332,6 +332,31 @@ export function registerStudentSettingsRoutes(app: Express, ctx: AppContext): vo
     }
   });
 
+  // Withdraw one of the caller's own flags while it is still open (admins never see it again).
+  app.delete('/api/student/flags/:flagId', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      await ctx.ensureSeeded();
+      const flagId = String(req.params.flagId || '').trim();
+      if (!flagId) {
+        res.status(404).json({ error: 'Flag not found.' });
+        return;
+      }
+      const result = await repo.withdrawQuestionFlag(flagId, req.auth!.studentId);
+      if (result === 'not_found') {
+        res.status(404).json({ error: 'Flag not found.' });
+        return;
+      }
+      if (result === 'not_open') {
+        res.status(409).json({ error: 'This flag has already been reviewed and can no longer be withdrawn.' });
+        return;
+      }
+      res.json({ ok: true, flagId });
+    } catch (err) {
+      console.error('DELETE /api/student/flags/:flagId error:', err);
+      res.status(500).json({ error: 'Unable to withdraw this flag right now.' });
+    }
+  });
+
   app.delete('/api/student/account', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ctx.ensureSeeded();

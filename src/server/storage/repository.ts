@@ -135,6 +135,8 @@ export type QuestionSelectionItem = Pick<
   parts: QuestionSelectionPart[];
 };
 
+export type WithdrawQuestionFlagResult = 'withdrawn' | 'not_found' | 'not_open';
+
 export interface AdminBankStatusSummary {
   totalQuestions: number;
   byPool: Record<string, number>;
@@ -543,6 +545,11 @@ export interface AppRepository {
   saveQuestionFlag(flag: QuestionFlagRecord): Promise<void>;
   listQuestionFlags(studentId?: string): Promise<QuestionFlagRecord[]>;
   resolveQuestionFlag(flagId: string): Promise<void>;
+  /**
+   * Removes a learner's own still-open flag. `not_found` covers missing and other learners' flags;
+   * `not_open` means an admin already resolved it.
+   */
+  withdrawQuestionFlag(flagId: string, studentId: string): Promise<WithdrawQuestionFlagResult>;
 
   saveMediaAsset(asset: MediaAssetRecord): Promise<void>;
   getMediaAsset(assetId: string): Promise<MediaAssetRecord | null>;

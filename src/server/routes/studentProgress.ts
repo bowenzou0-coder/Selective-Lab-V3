@@ -189,6 +189,19 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         policyVersion: configData.config.masteryPolicy?.policyVersion,
       });
 
+      // Prompt titles let the essay comparison name what each piece answered.
+      const writingQuestionIds = Array.from(new Set(writingSubmissions.map((w) => w.questionId)));
+      const writingQuestions = writingQuestionIds.length > 0 ? await repo.listQuestionsByIds(writingQuestionIds) : [];
+      const writingStimulusIds = Array.from(
+        new Set(writingQuestions.map((q) => q.stimulusId).filter((id): id is string => Boolean(id)))
+      );
+      const writingStimuli = writingStimulusIds.length > 0 ? await repo.listStimuliByIds(writingStimulusIds) : {};
+      const promptTitleByQuestionId = new Map<string, string>();
+      for (const q of writingQuestions) {
+        const title = (q.stimulusId ? writingStimuli[q.stimulusId]?.title : undefined)?.trim();
+        if (title) promptTitleByQuestionId.set(q.questionId, title);
+      }
+
       const skills = SKILLS_TAXONOMY.map((def) => ({
         ...def,
         state: skillStates[def.skillId] || null,
@@ -198,7 +211,10 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         sectionStats: stats.sectionStats,
         skills,
         sessions: sessions.filter((s) => !s.isSandbox),
-        writingSubmissions,
+        writingSubmissions: writingSubmissions.map((w) => ({
+          ...w,
+          promptTitle: promptTitleByQuestionId.get(w.questionId),
+        })),
         totalAttempts: stats.totalAttempts,
         masterySummary: stats.masterySummary,
         benchmarkReports,

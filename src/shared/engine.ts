@@ -920,3 +920,126 @@ export function selectAdminCalibrationQuestions<T extends SelectionQuestion = Qu
   });
   return limit && limit > 0 ? filtered.slice(0, limit) : filtered;
 }
+/** Most questions a single repair drill serves; larger pools are drilled over several sittings. */
+export const REPAIR_DRILL_MAX_QUESTIONS = 20;
+
+const REPAIR_SECTION_ORDER: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
+
+/** True when a bank item can be served in a repair drill (live, practice-pool, objective). */
+export function isRepairEligible(q: Pick<SelectionQuestion, 'qcStatus' | 'poolType' | 'formatType' | 'section'>): boolean {
+  return (
+    q.qcStatus === 'active' &&
+    q.poolType !== 'benchmark_holdout' &&
+    q.formatType !== 'WRIT_TYPED_TASK' &&
+    q.section !== 'WRIT'
+  );
+}
+
+/**
+ * Builds a targeted "Practise my mistakes" drill.
+ *
+ * - With `targetQuestionIds`, only those items (or the live version of the same family) are used.
+ * - Otherwise the learner's `needs_repair` evidence decides the pool.
+ * - Archived, quarantined, draft, holdout, Writing and missing items are always skipped.
+ * - Output runs READ, MATH, THINK; Reading items that share a `stimulusId` stay together in
+ *   natural question order, and the cap never splits a passage (unless one passage alone exceeds it).
+ * - When capped, the most recently missed items win.
+ */
+export function selectRepairDrillQuestions<T extends SelectionQuestion = QuestionItem>(input: {
+  questions: T[];
+  evidenceMap?: Record<string, QuestionMasteryEvidence>;
+  targetQuestionIds?: string[];
+  sectionFilter?: SectionCode;
+  limit?: number;
+}): T[] {
+  const { questions, evidenceMap = {}, targetQuestionIds, sectionFilter } = input;
+  const limit = Math.max(1, Math.round(input.limit ?? REPAIR_DRILL_MAX_QUESTIONS));
+
+  const explicit = Array.isArray(targetQuestionIds);
+  const targetIds = new Set((targetQuestionIds ?? []).filter((id) => typeof id === 'string' && id));
+  const targetFamilies = new Set<string>();
+  if (explicit) {
+    for (const ev of Object.values(evidenceMap)) {
+      if (targetIds.has(ev.questionId)) targetFamilies.add(ev.questionFamilyId);
+    }
+  }
+
+  // One live item per family; prefer the exact requested id, then the highest version.
+  const byFamily = new Map<string, T>();
+  for (const q of questions) {
+    if (!isRepairEligible(q)) continue;
+    if (sectionFilter && q.section !== sectionFilter) continue;
+    if (explicit) {
+      if (!targetIds.has(q.questionId) && !targetFamilies.has(q.questionFamilyId)) continue;
+    } else if (findFamilyEvidence(q, evidenceMap)?.status !== 'needs_repair') {
+      continue;
+    }
+    const prev = byFamily.get(q.questionFamilyId);
+    if (
+      !prev ||
+      (targetIds.has(q.questionId) && !targetIds.has(prev.questionId)) ||
+      (targetIds.has(q.questionId) === targetIds.has(prev.questionId) && q.version > prev.version)
+    ) {
+      byFamily.set(q.questionFamilyId, q);
+    }
+  }
+
+  const missedAtMs = (q: T): number => {
+    const ev = findFamilyEvidence(q, evidenceMap);
+    const ms = ev?.lastAttemptAtIso ? Date.parse(ev.lastAttemptAtIso) : NaN;
+    return Number.isFinite(ms) ? ms : 0;
+  };
+  const naturalOrder = (a: T, b: T) => a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
+
+  // Units keep a Reading passage whole; every other item is its own unit.
+  type Unit = { section: SectionCode; items: T[]; recency: number; anchorId: string };
+  const unitsByKey = new Map<string, Unit>();
+  for (const q of byFamily.values()) {
+    const key = q.section === 'READ' && q.stimulusId ? `stim::${q.stimulusId}` : `solo::${q.questionId}`;
+    const unit = unitsByKey.get(key);
+    if (unit) {
+      unit.items.push(q);
+      unit.recency = Math.max(unit.recency, missedAtMs(q));
+    } else {
+      unitsByKey.set(key, { section: q.section, items: [q], recency: missedAtMs(q), anchorId: q.questionId });
+    }
+  }
+  const units = Array.from(unitsByKey.values());
+  for (const unit of units) {
+    unit.items.sort(naturalOrder);
+    unit.anchorId = unit.items[0].questionId;
+  }
+
+  // Choose units by recency until the cap; skip (not truncate) passages that would overflow.
+  const byRecency = [...units].sort(
+    (a, b) => b.recency - a.recency || a.anchorId.localeCompare(b.anchorId, undefined, { numeric: true })
+  );
+  const chosen: Unit[] = [];
+  let count = 0;
+  for (const unit of byRecency) {
+    if (count >= limit) break;
+    if (count + unit.items.length <= limit) {
+      chosen.push(unit);
+      count += unit.items.length;
+    } else if (count === 0) {
+      chosen.push({ ...unit, items: unit.items.slice(0, limit) });
+      count = limit;
+    }
+  }
+
+  chosen.sort(
+    (a, b) =>
+      REPAIR_SECTION_ORDER[a.section] - REPAIR_SECTION_ORDER[b.section] ||
+      a.anchorId.localeCompare(b.anchorId, undefined, { numeric: true })
+  );
+  return chosen.flatMap((u) => u.items);
+}
+
+/** Suggested time for a repair drill: 1.5x the items' target pace, at least 5 minutes, whole minutes. */
+export function repairDrillTimeLimitSec(questions: ReadonlyArray<Pick<SelectionQuestion, 'parts'>>): number {
+  const targetSec = questions.reduce(
+    (sum, q) => sum + q.parts.reduce((s, p) => s + (p.targetTimeSec && p.targetTimeSec > 0 ? p.targetTimeSec : 60), 0),
+    0
+  );
+  return Math.max(300, Math.ceil((targetSec * 1.5) / 60) * 60);
+}

@@ -11,6 +11,8 @@ import { SimulatorDialog, type SimulatorLaunchOptions } from './bank/SimulatorDi
 import { useBankQuery } from './bank/useBankQuery';
 
 interface QuestionBankStudioProps {
+  /** Question to select from a deep link or flag jump, even when it is off the current page. */
+  focusQid?: string;
   initialBatchId?: string;
   onClearInitialBatch?: () => void;
   onOpenSession: (sessionId: string) => void;
@@ -25,6 +27,7 @@ interface QuestionBankStudioProps {
 
 /** Admin Question Bank: metrics strip, filter bar, master list and tabbed inspector. */
 export function QuestionBankStudio({
+  focusQid = '',
   initialBatchId = '',
   onClearInitialBatch,
   onOpenSession,
@@ -37,7 +40,22 @@ export function QuestionBankStudio({
   studentCount = 0,
 }: QuestionBankStudioProps) {
   const { t, isZh, poolStatusLabel } = useI18n();
-  const [selectedQid, setSelectedQid] = useState<string>(() => new URLSearchParams(window.location.search).get('qid') || '');
+  const [selectedQid, setSelectedQid] = useState<string>(
+    () => focusQid || new URLSearchParams(window.location.search).get('qid') || ''
+  );
+  // A pinned question stays selected even when the list does not contain it.
+  const [pinnedQid, setPinnedQid] = useState<string>(() => focusQid || new URLSearchParams(window.location.search).get('qid') || '');
+  const pinnedQidRef = useRef(pinnedQid);
+  pinnedQidRef.current = pinnedQid;
+  const [shownFocusQid, setShownFocusQid] = useState(focusQid);
+  if (focusQid !== shownFocusQid) {
+    // A new jump (flag link, back/forward): select and pin it during render, no effect flash.
+    setShownFocusQid(focusQid);
+    if (focusQid) {
+      setSelectedQid(focusQid);
+      setPinnedQid(focusQid);
+    }
+  }
   const [checkedQids, setCheckedQids] = useState<string[]>([]);
   const [versionsForSelected, setVersionsForSelected] = useState<QuestionItem[]>([]);
   const [simOpen, setSimOpen] = useState(false);
@@ -50,6 +68,7 @@ export function QuestionBankStudio({
 
   const onLoaded = useCallback((res: PaginatedQuestionsResponse) => {
     setSelectedQid((prev) => {
+      if (prev && prev === pinnedQidRef.current) return prev;
       if (res.questions.length === 0) return '';
       return res.questions.some((q) => q.questionId === prev) ? prev : res.questions[0].questionId;
     });
@@ -62,8 +81,9 @@ export function QuestionBankStudio({
     onError,
     loadErrorMessage: isZh ? '无法加载题库。' : 'Unable to load the Question Bank.',
     onLoaded,
+    focusQid: pinnedQid,
   });
-  const { filters, updateFilter, questions, setQuestions, refresh } = bank;
+  const { filters, updateFilter, questions, setQuestions, refresh, focused, patchFocusedQuestion } = bank;
 
   // Jump from the Batches tab straight into a filtered bank view.
   useEffect(() => {
@@ -83,10 +103,18 @@ export function QuestionBankStudio({
     }
   }, [selectedQid]);
 
-  const selectedQuestion = useMemo(
-    () => questions.find((q) => q.questionId === selectedQid) || questions[0] || null,
-    [questions, selectedQid]
+  const pinnedOutsideList = Boolean(
+    pinnedQid && selectedQid === pinnedQid && !questions.some((q) => q.questionId === pinnedQid)
   );
+  const selectedQuestion = useMemo(() => {
+    const inList = questions.find((q) => q.questionId === selectedQid);
+    if (inList) return inList;
+    if (pinnedQid && selectedQid === pinnedQid) {
+      return focused?.qid === pinnedQid && focused.question ? focused.question : null;
+    }
+    return questions[0] || null;
+  }, [questions, selectedQid, pinnedQid, focused]);
+  const pinnedStatus = pinnedOutsideList ? (focused?.qid === pinnedQid ? focused.status : 'loading') : null;
 
   useEffect(() => {
     if (!selectedQuestion) {
@@ -110,7 +138,10 @@ export function QuestionBankStudio({
       active = false;
     };
   }, [selectedQuestion, filters.includeHistorical]);
-  const selectedStimulus = selectedQuestion?.stimulusId ? bank.stimuliById[selectedQuestion.stimulusId] : undefined;
+  const selectedStimulus = selectedQuestion?.stimulusId
+    ? bank.stimuliById[selectedQuestion.stimulusId] ??
+      (focused?.question?.questionId === selectedQuestion.questionId ? focused.stimulus : undefined)
+    : undefined;
 
   const afterMutation = useCallback(() => {
     refresh();
@@ -119,6 +150,7 @@ export function QuestionBankStudio({
 
   const handleSelect = useCallback((qid: string) => {
     setSelectedQid(qid);
+    setPinnedQid('');
     // On stacked (mobile) layouts the inspector sits below the list; bring it into view.
     if (!window.matchMedia('(min-width: 1024px)').matches) {
       requestAnimationFrame(() => inspectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -142,18 +174,22 @@ export function QuestionBankStudio({
   }, [questions]);
 
   const handleSetPoolStatus = async (qid: string, nextStatus: BankPoolStatus) => {
-    const current = questions.find((q) => q.questionId === qid);
+    const current =
+      questions.find((q) => q.questionId === qid) ??
+      (focused?.question?.questionId === qid ? focused.question : undefined);
     if (!current || updatingStatusQid === qid || qcStatusToPoolStatus(current.qcStatus) === nextStatus) return;
     const nextQcStatus = poolStatusToQcStatus(nextStatus);
     setUpdatingStatusQid(qid);
     // Optimistic: reflect the new status immediately, revert on failure.
     setQuestions((prev) => prev.map((q) => (q.questionId === qid ? { ...q, qcStatus: nextQcStatus } : q)));
+    patchFocusedQuestion(qid, { qcStatus: nextQcStatus });
     try {
       await api.updateQuestionStatus(qid, nextQcStatus);
       onNotice(isZh ? `已将 ${qid} 状态设为“${poolStatusLabel(nextStatus)}”。` : `Set ${qid} to ${poolStatusLabel(nextStatus)}.`);
       afterMutation();
     } catch (err) {
       setQuestions((prev) => prev.map((q) => (q.questionId === qid ? { ...q, qcStatus: current.qcStatus } : q)));
+      patchFocusedQuestion(qid, { qcStatus: current.qcStatus });
       onError(err instanceof Error ? err.message : isZh ? '无法更新题目状态。' : 'Unable to update question status.');
     } finally {
       setUpdatingStatusQid(null);
@@ -331,8 +367,22 @@ export function QuestionBankStudio({
             onSimulateSelected={() => setSimOpen(true)}
           />
         </div>
-        <div className="min-w-0 lg:col-span-7">
-          {selectedQuestion ? (
+        <div className="min-w-0 lg:col-span-7 space-y-2">
+          {pinnedStatus === 'ready' && selectedQuestion && (
+            <p className="rounded-[10px] border border-[#E5DFD5] bg-[#FAF8F5] px-3 py-2 text-xs text-[#4A5955]">
+              {t('bank.deepLinkNote')}
+            </p>
+          )}
+          {pinnedStatus === 'loading' || pinnedStatus === 'missing' ? (
+            <div
+              role={pinnedStatus === 'missing' ? 'alert' : 'status'}
+              className="rounded-[16px] border border-[#E5DFD5] bg-white py-16 px-6 text-center text-sm text-[#78756E] break-all"
+            >
+              {pinnedStatus === 'missing'
+                ? t('bank.deepLinkMissing', { id: pinnedQid })
+                : t('bank.deepLinkLoading', { id: pinnedQid })}
+            </div>
+          ) : selectedQuestion ? (
             <QuestionInspectorPane
               ref={inspectorRef}
               question={selectedQuestion}

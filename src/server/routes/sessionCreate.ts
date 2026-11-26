@@ -13,7 +13,15 @@ import {
   type SessionRecord,
   type SessionSelectionDecision,
 } from '../../shared/contracts.ts';
-import { selectBatchMockQuestions, selectBenchmarkHoldoutQuestions, selectMockTestQuestions, selectPoolMockQuestions, selectPracticeSession } from '../../shared/engine.ts';
+import {
+  repairDrillTimeLimitSec,
+  selectBatchMockQuestions,
+  selectBenchmarkHoldoutQuestions,
+  selectMockTestQuestions,
+  selectPoolMockQuestions,
+  selectPracticeSession,
+  selectRepairDrillQuestions,
+} from '../../shared/engine.ts';
 import type { AppContext } from '../context.ts';
 import {
   getOfficialTimeLimitSec,
@@ -22,6 +30,18 @@ import {
   isSessionPastGrace,
   resolveOrExpireSession,
 } from '../sessionLifecycle.ts';
+
+const MAX_REPAIR_TARGET_IDS = 200;
+
+/** Accepts an optional array of question ids; `undefined` when absent or malformed. */
+function parseRepairTargetIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = raw
+    .filter((id): id is string => typeof id === 'string')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0 && id.length <= 200);
+  return Array.from(new Set(ids)).slice(0, MAX_REPAIR_TARGET_IDS);
+}
 
 /** POST /api/student/sessions: selects questions for the requested mode and creates the session record. */
 export function registerSessionCreateRoute(app: Express, ctx: AppContext): void {
@@ -43,14 +63,22 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
         req.body?.timeMultiplier !== undefined ? Number(req.body.timeMultiplier) : 1;
       const customTimeLimitSec =
         req.body?.customTimeLimitSec !== undefined ? Number(req.body.customTimeLimitSec) : undefined;
+      const repairTargetIds = parseRepairTargetIds(req.body?.questionIds);
 
       if (mode === 'admin_calibration') {
         res.status(403).json({ error: 'Admin calibration sessions must be created via /api/admin/calibration/session.' });
         return;
       }
 
+      if (mode === 'repair_drill' && req.body?.questionIds !== undefined && repairTargetIds === undefined) {
+        res.status(400).json({ error: 'questionIds must be an array of question ids.' });
+        return;
+      }
+
       const selectionFilter =
-        mode === 'benchmark_exam'
+        mode === 'repair_drill'
+          ? { qcStatus: 'active', section: sectionFilter }
+          : mode === 'benchmark_exam'
           ? batchId
             ? { qcStatus: 'active', poolType: 'benchmark_holdout', batchId, section: sectionFilter }
             : { qcStatus: 'active', section: sectionFilter }
@@ -94,7 +122,25 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
       let effectiveMode: SessionMode = mode;
       let timeLimitSec = 1500;
 
-      if (mode === 'benchmark_exam') {
+      if (mode === 'repair_drill') {
+        // Practise my mistakes: only missed / needs-repair items, passages kept whole.
+        effectiveMode = 'repair_drill';
+        selectedMeta = selectRepairDrillQuestions({
+          questions: candidateQuestions,
+          evidenceMap,
+          targetQuestionIds: repairTargetIds,
+          sectionFilter,
+        });
+        if (selectedMeta.length === 0) {
+          res.status(400).json({
+            error: 'There are no missed questions to practise right now.',
+            code: 'repair_pool_empty',
+          });
+          return;
+        }
+        timeLimitSec = repairDrillTimeLimitSec(selectedMeta);
+        title = `Repair drill (${selectedMeta.length} Qs)`;
+      } else if (mode === 'benchmark_exam') {
         effectiveMode = 'benchmark_exam';
         // Official Benchmark Exams are strictly locked to full 4-section 1.0x NSW timing (155 min)
         selectedMeta = selectBenchmarkHoldoutQuestions({

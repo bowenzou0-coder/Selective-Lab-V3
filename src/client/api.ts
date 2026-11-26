@@ -138,6 +138,8 @@ export interface ProgressResponse {
     deterministicMetricsJson: string;
     submittedAt: string;
     evaluations: WritingEvaluationRecord[];
+    /** Title of the prompt this essay answered, when the bank still has it. */
+    promptTitle?: string;
   }[];
   totalAttempts: number;
   masterySummary: BankMasterySummary;
@@ -291,6 +293,8 @@ export interface MigrationPreflightReport {
 
 export type ApiError = Error & {
   status?: number;
+  /** Machine-readable reason some endpoints add (e.g. `repair_pool_empty`). */
+  code?: string;
   retryAfterSeconds?: number;
   activeSessionId?: string;
   currentRevision?: number;
@@ -327,6 +331,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     }
     const payload = data as {
       error?: string;
+      code?: string;
       retryAfterSeconds?: number;
       activeSessionId?: string;
       currentRevision?: number;
@@ -339,6 +344,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     };
     const err = new Error(payload?.error || `Request failed (${res.status})`) as ApiError;
     err.status = res.status;
+    if (typeof payload?.code === 'string') err.code = payload.code;
     if (typeof payload?.retryAfterSeconds === 'number') err.retryAfterSeconds = payload.retryAfterSeconds;
     if (payload?.activeSessionId) err.activeSessionId = payload.activeSessionId;
     if (typeof payload?.currentRevision === 'number') err.currentRevision = payload.currentRevision;
@@ -626,6 +632,8 @@ export const api = {
     questionCount?: number;
     timeMultiplier?: number;
     customTimeLimitSec?: number;
+    /** `repair_drill` only: limit the drill to these missed questions. */
+    questionIds?: string[];
   }) =>
     invalidating(request<{ sessionId: string; session: SessionRecord; serverNowIso?: string }>(
       '/api/student/sessions',
@@ -694,6 +702,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }), ['settings']),
+  /** Withdraws the caller's own open flag (404 missing/not theirs, 409 already reviewed). */
+  withdrawStudentFlag: (flagId: string) =>
+    invalidating(
+      request<{ ok: boolean; flagId: string }>(`/api/student/flags/${encodeURIComponent(flagId)}`, {
+        method: 'DELETE',
+      }),
+      ['settings']
+    ),
   getProgress: (options?: { force?: boolean }) => fetchCachedResource('progress', options),
   getStudentSettings: (options?: { force?: boolean }) => fetchCachedResource('settings', options),
   saveStudentDailyPlan: (payload: {

@@ -15,10 +15,13 @@ import {
   type ProgressCountsResponse,
   type RuntimeDiagnosticsResponse,
 } from '../../api';
+import { buildBankQuestionHref } from './adminDeepLink';
 import type { QuestionFlagRecord } from '../../../shared/contracts';
 import { useI18n } from '../../i18n';
 
 interface DataAndDesignPanelProps {
+  /** Opens a flagged question in the Question Bank inspector. */
+  onOpenQuestion?: (questionId: string) => void;
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
   onDataMutated?: () => void;
@@ -27,6 +30,7 @@ interface DataAndDesignPanelProps {
 }
 
 export function DataAndDesignPanel({
+  onOpenQuestion,
   onNotice,
   onError,
   onDataMutated,
@@ -385,7 +389,18 @@ export function DataAndDesignPanel({
             {openFlags.map((flag) => (
               <div key={flag.flagId} className="py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="space-y-0.5 min-w-0 flex-1">
-                  <div className="font-mono-code font-semibold text-[#113C36] break-all">{flag.questionId}</div>
+                  <a
+                    href={buildBankQuestionHref(flag.questionId)}
+                    aria-label={t('data.openInBankAria', { id: flag.questionId })}
+                    onClick={(e) => {
+                      if (!onOpenQuestion || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      onOpenQuestion(flag.questionId);
+                    }}
+                    className="font-mono-code font-semibold text-[#113C36] break-all underline decoration-[#CFC6B9] underline-offset-2 hover:decoration-[#113C36] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#113C36] rounded-[2px]"
+                  >
+                    {flag.questionId}
+                  </a>
                   <div className="text-[#4A5955] break-words">
                     {flag.reason}
                     {flag.notes ? ` — ${flag.notes}` : ''}

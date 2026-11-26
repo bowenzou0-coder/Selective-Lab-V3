@@ -38,6 +38,7 @@ import {
   queryQuestionFlags,
   resetStudentProgressRows,
   resolveQuestionFlagRow,
+  withdrawQuestionFlagRow,
   upsertLearnerPreferencesRow,
   upsertUserRow,
 } from './postgresAccountQueries.ts';
@@ -84,6 +85,7 @@ import {
   type SyncHydratePayload,
   type TodayAttemptCounts,
   type WritingSubmissionRecord,
+  type WithdrawQuestionFlagResult,
 } from './repository.ts';
 import { selectLatestByFamily } from './repositoryUtils.ts';
 
@@ -1703,6 +1705,11 @@ export class PostgresRepository implements AppRepository {
   async listQuestionFlags(studentId?: string): Promise<QuestionFlagRecord[]> {
     await this.ensureSchema();
     return queryQuestionFlags(this.pool, studentId);
+  }
+
+  async withdrawQuestionFlag(flagId: string, studentId: string): Promise<WithdrawQuestionFlagResult> {
+    await this.ensureSchema();
+    return withdrawQuestionFlagRow(this.pool, flagId, studentId);
   }
 
   async resolveQuestionFlag(flagId: string): Promise<void> {

@@ -17,6 +17,7 @@ import {
   api,
   peekCachedResource,
   type AccountDeleteResponse,
+  type ApiError,
   type LearnerDailySettingsView,
   type StudentSettingsResponse,
 } from '../api';
@@ -112,6 +113,10 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
   const [resetOpen, setResetOpen] = useState(false);
   const [resetInput, setResetInput] = useState('');
   const [resetting, setResetting] = useState(false);
+
+  // Flag withdrawal confirmation
+  const [withdrawTarget, setWithdrawTarget] = useState<QuestionFlagRecord | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   // Account deletion confirmation
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -250,6 +255,34 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
       setError(err instanceof Error ? err.message : 'Unable to recalibrate today’s mix.');
     } finally {
       setRecalibrating(false);
+    }
+  };
+
+  const handleConfirmWithdrawFlag = async () => {
+    const target = withdrawTarget;
+    if (!target || withdrawing) return;
+    setWithdrawing(true);
+    setError('');
+    setNotice('');
+    try {
+      await api.withdrawStudentFlag(target.flagId);
+      setFlags((prev) => prev.filter((f) => f.flagId !== target.flagId));
+      setNotice(t('settings.flagWithdrawn'));
+    } catch (err) {
+      const status = (err as ApiError)?.status;
+      if (status === 409) {
+        // An admin got there first: show it as reviewed rather than leaving a stale Withdraw button.
+        setFlags((prev) => prev.map((f) => (f.flagId === target.flagId ? { ...f, status: 'resolved' } : f)));
+        setError(t('settings.flagAlreadyReviewed'));
+      } else if (status === 404) {
+        setFlags((prev) => prev.filter((f) => f.flagId !== target.flagId));
+        setError(t('settings.flagWithdrawError'));
+      } else {
+        setError(t('settings.flagWithdrawError'));
+      }
+    } finally {
+      setWithdrawing(false);
+      setWithdrawTarget(null);
     }
   };
 
@@ -750,15 +783,27 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                     {formatDate(flag.createdAt, true)}
                   </div>
                 </div>
-                <span
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-sans-display font-semibold shrink-0 ${
-                    flag.status === 'resolved'
-                      ? 'bg-[#E5F0EA] text-[#1D6346]'
-                      : 'bg-[#FDF0E2] text-[#A35116]'
-                  }`}
-                >
-                  {flag.status === 'resolved' ? t('settings.flagResolved') : t('settings.flagOpen')}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-sans-display font-semibold ${
+                      flag.status === 'resolved'
+                        ? 'bg-[#E5F0EA] text-[#1D6346]'
+                        : 'bg-[#FDF0E2] text-[#A35116]'
+                    }`}
+                  >
+                    {flag.status === 'resolved' ? t('settings.flagResolved') : t('settings.flagOpen')}
+                  </span>
+                  {flag.status === 'open' && (
+                    <button
+                      type="button"
+                      onClick={() => setWithdrawTarget(flag)}
+                      aria-label={t('settings.flagWithdrawAria', { id: flag.questionId })}
+                      className="px-2.5 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-[11px] font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.97]"
+                    >
+                      {t('settings.flagWithdraw')}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -832,6 +877,24 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
           </button>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={withdrawTarget !== null}
+        title={t('settings.flagWithdrawTitle')}
+        description={t('settings.flagWithdrawBody')}
+        busy={withdrawing}
+        confirmLabel={withdrawing ? t('settings.flagWithdrawing') : t('settings.flagWithdrawConfirm')}
+        cancelLabel={t('home.modalCancel')}
+        onConfirm={() => void handleConfirmWithdrawFlag()}
+        onClose={() => setWithdrawTarget(null)}
+      >
+        {withdrawTarget && (
+          <div className="rounded-[12px] border border-[#E5DFD5] bg-[#FAF8F5] p-3 text-xs space-y-0.5">
+            <div className="font-mono-code font-semibold text-[#113C36] break-all">{withdrawTarget.questionId}</div>
+            <div className="text-[#4A5955] break-words">{withdrawTarget.reason}</div>
+          </div>
+        )}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={resetOpen}

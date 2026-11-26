@@ -19,6 +19,8 @@ import { clearLocalDraft, getDraftStorageKey, readLocalDraft, writeLocalDraft, t
 import { SessionHeaderBar, type SaveStatus } from './session/SessionHeaderBar';
 import { SessionNavigatorDrawer } from './session/SessionNavigatorDrawer';
 import { SubmitConfirmDialog } from './session/SubmitConfirmDialog';
+import { hasOpenModal, isTypingTarget, resolveExamShortcut, singleChoiceOptionKeysFor } from './session/examShortcuts';
+import { buildPassageCues } from './session/passageCohesion';
 
 // The review screen only renders after submission, so it ships as its own chunk
 // (warmed while the exam is idle) instead of weighing down the exam player.
@@ -33,6 +35,8 @@ interface SessionPlayerViewProps {
   isAdmin: boolean;
   onNavigate: (path: string) => void;
   onActiveSessionCleared?: () => void;
+  /** Opens (and locks onto) a newly created session, e.g. a repair drill launched from review. */
+  onLaunchSession?: (sessionId: string) => void;
 }
 
 export function SessionPlayerView({
@@ -41,6 +45,7 @@ export function SessionPlayerView({
   isAdmin,
   onNavigate,
   onActiveSessionCleared,
+  onLaunchSession,
 }: SessionPlayerViewProps) {
   const { t, sectionLabel } = useI18n();
 
@@ -90,6 +95,7 @@ export function SessionPlayerView({
   // UI toggles
   const [timerHidden, setTimerHidden] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [activeGapIndex, setActiveGapIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [startingNextSection, setStartingNextSection] = useState(false);
@@ -500,64 +506,55 @@ export function SessionPlayerView({
   const isTimeUp = isLockedStudentSession && !isOnSectionBreak && clockSaysTimeUp;
   const isAdminRun = Boolean(session && session.mode === 'admin_calibration' && isAdmin);
 
-  // Keyboard shortcuts (1-8 / A-H, N / P, F) — blocked once time is up, on break, submitting, or confirm dialog open
+  // Exam Room keyboard shortcuts (A–E / 1–5, ←/→, F, N, ?). Rules live in examShortcuts.ts.
+  const singleChoiceOptionKeys = useMemo(
+    () => (currentQuestion ? singleChoiceOptionKeysFor(currentQuestion) : null),
+    [currentQuestion]
+  );
   useEffect(() => {
-    if (
-      !session ||
-      session.status !== 'in_progress' ||
-      isOnSectionBreak ||
-      !currentQuestion ||
-      isTimeUp ||
-      submitting ||
-      submitConfirmOpen
-    ) {
-      return;
-    }
+    if (!session || session.status !== 'in_progress' || !currentQuestion) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      const k = e.key.toUpperCase();
-      if (k === 'N') {
+      if (e.defaultPrevented || isTypingTarget(e.target)) return;
+      const action = resolveExamShortcut(e, {
+        blocked:
+          isOnSectionBreak || isTimeUp || submitting || submitConfirmOpen || hasOpenModal(document),
+        isWritingQuestion: currentQuestion.formatType === 'WRIT_TYPED_TASK',
+        singleChoiceOptionKeys,
+        canToggleInspector: isAdminRun,
+        inspectorOpen: isAdminRun && inspectorOpen,
+      });
+      if (!action) return;
+      // Holding a key may repeat navigation, never toggles or answers.
+      if (e.repeat && action.type !== 'prev' && action.type !== 'next') {
         e.preventDefault();
-        handleGoIndex(currentIndex + 1);
         return;
       }
-      if (k === 'P') {
-        e.preventDefault();
-        handleGoIndex(currentIndex - 1);
-        return;
-      }
-      if (k === 'F') {
-        e.preventDefault();
-        handleToggleFlag(currentQuestion.questionId);
-        return;
-      }
-      if (k === 'I' && isAdminRun) {
-        e.preventDefault();
-        setInspectorOpen((open) => !open);
-        return;
-      }
-
-      if (currentQuestion.parts.length === 1 && currentQuestion.formatType !== 'WRIT_TYPED_TASK') {
-        const part = currentQuestion.parts[0];
-        const numMap: Record<string, string> = {
-          '1': 'A',
-          '2': 'B',
-          '3': 'C',
-          '4': 'D',
-          '5': 'E',
-          '6': 'F',
-          '7': 'G',
-          '8': 'H',
-        };
-        const letter = numMap[k] || (['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].includes(k) ? k : '');
-        if (letter && part.options.some((o) => o.key === letter)) {
-          e.preventDefault();
+      e.preventDefault();
+      switch (action.type) {
+        case 'select': {
+          const part = currentQuestion.parts[0];
           const currentPick = answersByPartId[part.partId];
-          handleSelectAnswer(part.partId, currentPick === letter ? null : letter);
+          handleSelectAnswer(part.partId, currentPick === action.optionKey ? null : action.optionKey);
+          break;
         }
+        case 'prev':
+          handleGoIndex(currentIndex - 1);
+          break;
+        case 'next':
+          handleGoIndex(currentIndex + 1);
+          break;
+        case 'flag':
+          handleToggleFlag(currentQuestion.questionId);
+          break;
+        case 'toggleNav':
+          setNavOpen((open) => !open);
+          break;
+        case 'toggleHelp':
+          setShortcutsOpen((open) => !open);
+          break;
+        case 'toggleInspector':
+          setInspectorOpen((open) => !open);
+          break;
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -567,6 +564,7 @@ export function SessionPlayerView({
     currentQuestion,
     currentIndex,
     answersByPartId,
+    singleChoiceOptionKeys,
     isTimeUp,
     submitting,
     submitConfirmOpen,
@@ -574,8 +572,11 @@ export function SessionPlayerView({
     handleToggleFlag,
     handleSelectAnswer,
     isAdminRun,
+    inspectorOpen,
     isOnSectionBreak,
   ]);
+
+  const passageCues = useMemo(() => buildPassageCues(questions), [questions]);
 
   // Re-sync clock anchor and check remote submit/expiry/section-transition after tab wake / OS sleep
   useEffect(() => {
@@ -904,6 +905,7 @@ export function SessionPlayerView({
           sessionId={session.sessionId}
           sessionTitle={session.title}
           sessionMode={session.mode}
+          onStartRepairDrill={onLaunchSession}
           correctSlots={session.correctSlots}
           totalSlots={session.totalSlots}
           elapsedSec={session.checkpoint?.elapsedSec ?? clock.getElapsedSec()}
@@ -918,10 +920,15 @@ export function SessionPlayerView({
     );
   }
 
+  const displayTitle =
+    session.mode === 'repair_drill'
+      ? t('repair.sessionTitle', { count: session.plannedQuestionIds.length })
+      : session.title || session.mode.replace(/_/g, ' ');
+
   if (isOnSectionBreak && sectionState) {
     return (
       <SectionBreakView
-        sessionTitle={session.title || session.mode.replace(/_/g, ' ')}
+        sessionTitle={displayTitle}
         sectionState={sectionState}
         questions={questions}
         answersByPartId={answersByPartId}
@@ -938,6 +945,14 @@ export function SessionPlayerView({
   const currentStimId = currentQuestion.stimulus?.stimulusId || currentQuestion.questionId;
   const activeInspectorQ = inspectorMap[currentQuestion.questionId];
   const localIndex = Math.max(0, currentIndex - sectionStart);
+  const passageCue = passageCues.get(currentQuestion.questionId);
+  const passageLabel = passageCue
+    ? t('session.passageCue', {
+        passage: passageCue.passageNumber,
+        position: passageCue.position,
+        total: passageCue.total,
+      })
+    : undefined;
   const finishBtnLabel = submitting
     ? t('session.submitting')
     : sectionState && activeSection && !isLastSection
@@ -947,7 +962,7 @@ export function SessionPlayerView({
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-[#FAF8F5] text-[#113C36]">
       <SessionHeaderBar
-        title={session.title || session.mode.replace(/_/g, ' ')}
+        title={displayTitle}
         isLockedStudentSession={isLockedStudentSession}
         isAdminRun={isAdminRun}
         isSandbox={session.isSandbox}
@@ -980,6 +995,8 @@ export function SessionPlayerView({
         onToggleNav={() => setNavOpen((v) => !v)}
         onToggleInspector={() => setInspectorOpen((v) => !v)}
         onFinish={() => setSubmitConfirmOpen(true)}
+        shortcutsOpen={shortcutsOpen}
+        onShortcutsOpenChange={setShortcutsOpen}
         navigator={
           <SessionNavigatorDrawer
             open={navOpen}
@@ -1071,6 +1088,8 @@ export function SessionPlayerView({
         mode="exam"
         frozen={isTimeUp || submitting}
         question={currentQuestion}
+        passageLabel={passageLabel}
+        writingClock={clock}
         answersByPartId={answersByPartId}
         eliminatedByPartId={eliminatedByPartId}
         highlights={highlightsByStimulusId[currentStimId] || []}

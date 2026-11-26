@@ -24,6 +24,7 @@ import {
   filterAndSortLearners,
   getLearnerDisplayName,
 } from './admin/learnerScopeUtils';
+import { buildBankQuestionHref, readAdminDeepLink, type StudioTab } from './admin/adminDeepLink';
 import { QuestionBankStudio } from './admin/QuestionBankStudio';
 import { StatusBanner } from './ui/StatusBanner';
 import { Toast } from './ui/Toast';
@@ -56,16 +57,8 @@ interface AdminViewProps {
   currentUserId?: string | null;
 }
 
-type StudioTab = 'bank' | 'learners' | 'adaptive' | 'batches' | 'data';
-
 function parseInitialTab(): StudioTab {
-  const raw = new URLSearchParams(window.location.search).get('tab');
-  if (raw === 'bank' || raw === 'browser' || raw === 'calibration') return 'bank';
-  if (raw === 'learners' || raw === 'students') return 'learners';
-  if (raw === 'adaptive' || raw === 'config') return 'adaptive';
-  if (raw === 'batches' || raw === 'importer') return 'batches';
-  if (raw === 'data' || raw === 'backup') return 'data';
-  return 'bank';
+  return readAdminDeepLink(window.location.search).tab;
 }
 
 const STUDIO_TABS: {
@@ -400,6 +393,8 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [jumpBatchId, setJumpBatchId] = useState('');
+  // Question to open in the bank inspector (deep link or a 1-click jump from a flag).
+  const [focusQid, setFocusQid] = useState(() => readAdminDeepLink(window.location.search).qid);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -493,6 +488,7 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
     qs.set('tab', tab);
     if (tab !== 'bank') {
       qs.delete('qid');
+      setFocusQid('');
     }
     const nextSearch = `?${qs.toString()}`;
     if (window.location.search !== nextSearch) {
@@ -508,6 +504,28 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
   const handleError = useCallback((msg: string) => {
     setNotice('');
     setError(msg);
+  }, []);
+
+  // Back/forward between deep links re-reads the tab and question from the URL.
+  useEffect(() => {
+    const onPopState = () => {
+      if (!window.location.pathname.startsWith('/admin')) return;
+      const link = readAdminDeepLink(window.location.search);
+      setTab(link.tab);
+      setFocusQid(link.qid);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const handleOpenQuestionInBank = useCallback((questionId: string) => {
+    const href = buildBankQuestionHref(questionId);
+    if (`${window.location.pathname}${window.location.search}` !== href) {
+      window.history.pushState({}, '', href);
+    }
+    setFocusQid(questionId);
+    setTab('bank');
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }, []);
 
   const handleOpenBatchInBank = useCallback((batchId: string) => {
@@ -616,6 +634,7 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
       {/* Active Tab Panel */}
       {tab === 'bank' && (
         <QuestionBankStudio
+          focusQid={focusQid}
           initialBatchId={jumpBatchId}
           onClearInitialBatch={() => setJumpBatchId('')}
           onOpenSession={onOpenSession}
@@ -664,6 +683,7 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
 
       {tab === 'data' && (
         <DataAndDesignPanel
+          onOpenQuestion={handleOpenQuestionInBank}
           onNotice={handleNotice}
           onError={handleError}
           onDataMutated={() => void loadStatus()}

@@ -59,6 +59,7 @@ import {
   type SyncHydratePayload,
   type TodayAttemptCounts,
   type WritingSubmissionRecord,
+  type WithdrawQuestionFlagResult,
 } from './repository.ts';
 import {
   emptyRestoreReport,
@@ -1352,6 +1353,14 @@ export class MemoryRepository implements AppRepository {
   async resolveQuestionFlag(flagId: string): Promise<void> {
     const flag = this.flags.get(flagId);
     if (flag) flag.status = 'resolved';
+  }
+
+  async withdrawQuestionFlag(flagId: string, studentId: string): Promise<WithdrawQuestionFlagResult> {
+    const flag = this.flags.get(flagId);
+    if (!flag || flag.studentId !== studentId) return 'not_found';
+    if (flag.status !== 'open') return 'not_open';
+    this.flags.delete(flagId);
+    return 'withdrawn';
   }
 
   async saveMediaAsset(asset: MediaAssetRecord): Promise<void> {

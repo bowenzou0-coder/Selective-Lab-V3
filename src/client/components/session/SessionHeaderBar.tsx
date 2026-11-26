@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, ChevronDown, CloudCheck, CloudOff, Flag, Grid
 import { LanguageToggle, useI18n } from '../../i18n';
 import type { SessionClock } from '../../sessionClock';
 import { ExamTimer } from './ExamTimer';
+import { ShortcutHelpPopover } from './ShortcutHelpPopover';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
 
@@ -25,6 +26,9 @@ interface SessionHeaderBarProps {
   finishBtnLabel: string;
   /** Question navigator panel rendered under the rail when open. */
   navigator?: ReactNode;
+  /** Keyboard shortcut legend (`?`); omitted when shortcuts do not apply. */
+  shortcutsOpen?: boolean;
+  onShortcutsOpenChange?: (open: boolean) => void;
   onExit: () => void;
   onSaveNow: () => void;
   onToggleTimerHidden: () => void;
@@ -52,6 +56,8 @@ export function SessionHeaderBar({
   submitting,
   finishBtnLabel,
   navigator,
+  shortcutsOpen = false,
+  onShortcutsOpenChange,
   onExit,
   onSaveNow,
   onToggleTimerHidden,
@@ -164,6 +170,7 @@ export function SessionHeaderBar({
             type="button"
             onClick={onToggleFlag}
             aria-pressed={isFlagged}
+            aria-keyshortcuts="F"
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
               isFlagged
                 ? 'border-[#A35116]/50 bg-[#FDF0E2] text-[#A35116]'
@@ -178,6 +185,7 @@ export function SessionHeaderBar({
             type="button"
             onClick={onToggleNav}
             aria-expanded={navOpen}
+            aria-keyshortcuts="N"
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
               navOpen
                 ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
@@ -210,6 +218,10 @@ export function SessionHeaderBar({
               <span>{t('session.inspector')}</span>
               <kbd className="hidden sm:inline rounded border border-current/30 px-1 font-mono-code text-[10px] leading-4 opacity-70">I</kbd>
             </button>
+          )}
+
+          {onShortcutsOpenChange && (
+            <ShortcutHelpPopover open={shortcutsOpen} onOpenChange={onShortcutsOpenChange} />
           )}
 
           <LanguageToggle compact />

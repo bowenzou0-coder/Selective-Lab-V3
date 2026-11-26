@@ -20,6 +20,7 @@ export type SessionMode =
   | 'spaced_review'
   | 'benchmark_exam'
   | 'writing_sprint'
+  | 'repair_drill'
   | 'admin_calibration';
 export type MockTestBatch = 'PT1' | 'PT2' | 'PT3';
 

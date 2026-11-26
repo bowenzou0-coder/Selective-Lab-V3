@@ -76,6 +76,18 @@ interface UseBankQueryOptions {
   onError: (message: string) => void;
   loadErrorMessage: string;
   onLoaded?: (res: PaginatedQuestionsResponse) => void;
+  /**
+   * Deep-linked question (`?qid=`). Loaded on its own so the inspector can show it even when it is
+   * outside the current page or filters.
+   */
+  focusQid?: string;
+}
+
+export interface FocusedBankQuestion {
+  qid: string;
+  status: 'loading' | 'ready' | 'missing';
+  question?: QuestionItem;
+  stimulus?: StimulusGroup;
 }
 
 /**
@@ -89,6 +101,7 @@ export function useBankQuery({
   onError,
   loadErrorMessage,
   onLoaded,
+  focusQid = '',
 }: UseBankQueryOptions) {
   const [filters, setFilters] = useState<BankFilters>(() => ({ ...DEFAULT_BANK_FILTERS, batchId: initialBatchId }));
   const [page, setPage] = useState(1);
@@ -186,6 +199,40 @@ export function useBankQuery({
     summaryKey,
   ]);
 
+  // The deep-linked question, fetched independently of filters and paging (refreshed after mutations).
+  const [focused, setFocused] = useState<FocusedBankQuestion | null>(null);
+  useEffect(() => {
+    if (!enabled || !focusQid) {
+      setFocused(null);
+      return;
+    }
+    let active = true;
+    setFocused((prev) => (prev?.qid === focusQid ? prev : { qid: focusQid, status: 'loading' }));
+    api
+      .getQuestionVersions(focusQid)
+      .then((res) => {
+        if (!active) return;
+        const match = res.versions.find((v) => v.question.questionId === focusQid) ?? res.versions[0];
+        setFocused(
+          match
+            ? { qid: focusQid, status: 'ready', question: match.question, stimulus: match.stimulus }
+            : { qid: focusQid, status: 'missing' }
+        );
+      })
+      .catch(() => {
+        if (active) setFocused({ qid: focusQid, status: 'missing' });
+      });
+    return () => {
+      active = false;
+    };
+  }, [focusQid, enabled, refreshToken]);
+
+  const patchFocusedQuestion = useCallback((qid: string, patch: Partial<QuestionItem>) => {
+    setFocused((prev) =>
+      prev?.question && prev.question.questionId === qid ? { ...prev, question: { ...prev.question, ...patch } } : prev
+    );
+  }, []);
+
   const updateFilter = useCallback(<K extends keyof BankFilters>(key: K, value: BankFilters[K]) => {
     setFilters((prev) => {
       const next = { ...prev, [key]: value };
@@ -228,6 +275,8 @@ export function useBankQuery({
     poolHealth,
     masteredLiveIds,
     batchSummaries,
+    focused,
+    patchFocusedQuestion,
   };
 }
 

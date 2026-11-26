@@ -21,6 +21,7 @@ import {
 } from './review/ObjectiveReviewList';
 import { FlagQuestionButton, FlagQuestionModal, useQuestionFlagging } from './review/FlagQuestionModal';
 import { useWritingEvaluation } from './review/useWritingEvaluation';
+import { ReviewRepairButton } from './repair/ReviewRepairButton';
 import type { AnnotationFilter, WritingViewMode } from './review/reviewUtils';
 
 interface PostSubmissionReviewProps {
@@ -36,6 +37,8 @@ interface PostSubmissionReviewProps {
   onDoneHome: () => void;
   onViewProgress: () => void;
   onViewBenchmarks?: () => void;
+  /** Opens a newly created repair drill; the repair button is hidden without it. */
+  onStartRepairDrill?: (sessionId: string) => void;
 }
 
 export function PostSubmissionReview({
@@ -51,6 +54,7 @@ export function PostSubmissionReview({
   onDoneHome,
   onViewProgress,
   onViewBenchmarks,
+  onStartRepairDrill,
 }: PostSubmissionReviewProps) {
   const { t, sectionShortLabel } = useI18n();
   const [writingReview, setWritingReview] = useState(initialWritingReview || []);
@@ -242,7 +246,15 @@ export function PostSubmissionReview({
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-start gap-2">
+            {onStartRepairDrill && (
+              <ReviewRepairButton
+                sessionMode={sessionMode}
+                questions={questions}
+                reviewResults={reviewResults}
+                onLaunched={onStartRepairDrill}
+              />
+            )}
             <LanguageToggle compact />
             {sessionMode === 'benchmark_exam' && onViewBenchmarks && (
               <button
