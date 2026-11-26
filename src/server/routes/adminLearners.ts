@@ -177,15 +177,7 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         res.status(400).json({ error: 'Type DELETE to confirm deleting this account.' });
         return;
       }
-      const result = await repo.deleteUserAccount(targetId);
-      const configData = await repo.getActiveConfig();
-      if (configData.config.primaryMonitoredStudentId === targetId) {
-        const nextConfig: LearningConfig = {
-          ...configData.config,
-          primaryMonitoredStudentId: undefined,
-        };
-        await repo.saveConfigVersion(nextConfig, `Cleared deleted primary learner: ${targetId}`);
-      }
+      const result = await ctx.deleteLearnerAccountAndCleanup(targetId);
       res.json({ ...result, studentId: targetId });
     } catch (err) {
       console.error('DELETE /api/admin/learners/:studentId error:', err);

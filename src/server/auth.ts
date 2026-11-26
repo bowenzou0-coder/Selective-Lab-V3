@@ -11,6 +11,7 @@ export interface UserIdentity {
   authMethod: 'google' | 'local_pin' | 'local_admin';
   googleSub?: string;
   hostedDomain?: string;
+  iat?: number;
   exp: number;
 }
 
@@ -75,13 +76,21 @@ function sessionSignature(encoded: string, secret: string): string {
 }
 
 export function signSessionToken(
-  payload: Omit<UserIdentity, 'exp'>,
+  payload: Omit<UserIdentity, 'exp' | 'iat'> & { iat?: number },
   ttlMs = SESSION_TTL_MS,
   secret = getSessionSecret()
 ): string {
-  const identity = { ...payload, exp: Date.now() + ttlMs };
+  const issuedAt = typeof payload.iat === 'number' && Number.isFinite(payload.iat) ? payload.iat : Date.now();
+  const identity: UserIdentity = { ...payload, iat: issuedAt, exp: issuedAt + ttlMs };
   const encoded = Buffer.from(JSON.stringify(identity)).toString('base64url');
   return `${encoded}.${sessionSignature(encoded, secret)}`;
+}
+
+export function getTokenIssuedAtMs(identity: Pick<UserIdentity, 'iat' | 'exp'>): number {
+  if (typeof identity.iat === 'number' && Number.isFinite(identity.iat)) {
+    return identity.iat;
+  }
+  return identity.exp - SESSION_TTL_MS;
 }
 
 function signatureMatches(supplied: string, expected: string): boolean {

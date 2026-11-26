@@ -15,6 +15,7 @@ import {
   type SectionCode,
 } from '../../shared/contracts.ts';
 import { generateDailyFocusPlanStateless, getOrCreateDailyFocusPlan } from '../geminiPlanner.ts';
+import { enforceAiRateLimit } from '../rateLimit.ts';
 import type { AppContext } from '../context.ts';
 
 function clampInt(raw: unknown, min: number, max: number, fallback: number): number {
@@ -138,6 +139,8 @@ export function registerStudentSettingsRoutes(app: Express, ctx: AppContext): vo
         studentId,
         role: req.auth!.role,
         email: req.auth!.email,
+        authMethod: req.auth!.authMethod,
+        isLocalPinAccount: req.auth!.authMethod !== 'google',
         effectiveConfig: extractLearnerDailyView(effectiveConfig),
         globalDefaults: extractLearnerDailyView(configData.config),
         preferences: prefs,
@@ -213,6 +216,9 @@ export function registerStudentSettingsRoutes(app: Express, ctx: AppContext): vo
     try {
       await ctx.ensureSeeded();
       const studentId = req.auth!.studentId;
+      if (!enforceAiRateLimit(ctx.aiRateLimiter, 'recalibrate', studentId, res, 'daily plan recalibration')) {
+        return;
+      }
       const [configData, existing, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
         repo.getActiveConfig(),
         repo.getLearnerPreferences(studentId),
@@ -335,10 +341,16 @@ export function registerStudentSettingsRoutes(app: Express, ctx: AppContext): vo
         return;
       }
       const studentId = req.auth!.studentId;
-      const result = await repo.deleteUserAccount(studentId);
+      const authMethod = req.auth!.authMethod;
+      const result = await ctx.deleteLearnerAccountAndCleanup(studentId);
       clearAuthCookie(res, req);
       clearGoogleNonce(res, req);
-      res.json({ ...result, studentId });
+      res.json({
+        ...result,
+        studentId,
+        authMethod,
+        isLocalPinAccount: authMethod !== 'google',
+      });
     } catch (err) {
       console.error('DELETE /api/student/account error:', err);
       res.status(500).json({ error: 'Unable to delete account right now.' });

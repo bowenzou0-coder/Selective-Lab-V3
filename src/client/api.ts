@@ -209,6 +209,8 @@ export interface AccountDeleteResponse extends ProgressResetResponse {
   deletedUser: boolean;
   clearedFlags: number;
   studentId?: string;
+  authMethod?: 'google' | 'local_pin' | 'local_admin';
+  isLocalPinAccount?: boolean;
 }
 
 export interface LearnerDailySettingsView {
@@ -223,6 +225,8 @@ export interface StudentSettingsResponse {
   studentId: string;
   role: 'student' | 'admin';
   email?: string;
+  authMethod?: 'google' | 'local_pin' | 'local_admin';
+  isLocalPinAccount?: boolean;
   effectiveConfig: LearnerDailySettingsView;
   globalDefaults: LearnerDailySettingsView;
   preferences: LearnerPreferences | null;
@@ -287,6 +291,7 @@ export interface MigrationPreflightReport {
 
 export type ApiError = Error & {
   status?: number;
+  retryAfterSeconds?: number;
   activeSessionId?: string;
   currentRevision?: number;
   serverCheckpoint?: SessionRecord['checkpoint'];
@@ -322,6 +327,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     }
     const payload = data as {
       error?: string;
+      retryAfterSeconds?: number;
       activeSessionId?: string;
       currentRevision?: number;
       serverCheckpoint?: SessionRecord['checkpoint'];
@@ -333,6 +339,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     };
     const err = new Error(payload?.error || `Request failed (${res.status})`) as ApiError;
     err.status = res.status;
+    if (typeof payload?.retryAfterSeconds === 'number') err.retryAfterSeconds = payload.retryAfterSeconds;
     if (payload?.activeSessionId) err.activeSessionId = payload.activeSessionId;
     if (typeof payload?.currentRevision === 'number') err.currentRevision = payload.currentRevision;
     if (payload?.serverCheckpoint) err.serverCheckpoint = payload.serverCheckpoint;
@@ -763,10 +770,13 @@ export const api = {
   getOwnFlags: () =>
     request<{ flags: QuestionFlagRecord[] }>('/api/student/flags'),
   deleteOwnAccount: (confirmation = 'DELETE') =>
-    invalidating(request<AccountDeleteResponse>('/api/student/account', {
+    request<AccountDeleteResponse>('/api/student/account', {
       method: 'DELETE',
       body: JSON.stringify({ confirmation }),
-    })),
+    }).then((res) => {
+      setApiCacheScope(null);
+      return res;
+    }),
 
   // Admin APIs
   getAdminStatus: () =>

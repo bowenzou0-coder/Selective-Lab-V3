@@ -8,6 +8,8 @@ import { SKILLS_TAXONOMY } from '../../shared/skills.ts';
 import { buildBenchmarkReportRecord } from '../../shared/nswBenchmark.ts';
 import { gradeSubmission } from '../../shared/engine.ts';
 import { ensureBenchmarkReportForSession, resolveSessionQuestionPairs } from '../sessionLifecycle.ts';
+import { enforceAiRateLimit } from '../rateLimit.ts';
+import { NotFoundError } from '../storage/repository.ts';
 import type { AppContext } from '../context.ts';
 
 
@@ -48,6 +50,9 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         }
         let evalPromise = ctx.inFlightWritingEvaluations.get(sub.submissionId);
         if (!evalPromise) {
+          if (!enforceAiRateLimit(ctx.aiRateLimiter, 'writing_evaluate', studentId, res, 'writing evaluation')) {
+            return;
+          }
           const metrics = JSON.parse(sub.deterministicMetricsJson) as WritingDeterministicMetrics;
           evalPromise = (async () => {
             const evaluation = await evaluateWritingWithGemini({
@@ -62,8 +67,10 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
             return evaluation;
           })().finally(() => {
             ctx.inFlightWritingEvaluations.delete(sub.submissionId);
+            ctx.inFlightWritingOwners.delete(sub.submissionId);
           });
           ctx.inFlightWritingEvaluations.set(sub.submissionId, evalPromise);
+          ctx.inFlightWritingOwners.set(sub.submissionId, studentId);
         }
         const evaluation = await evalPromise;
         const updated = await repo.getWritingSubmission(sub.submissionId, studentId);
@@ -108,6 +115,10 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         res.json({ evaluation, evaluations: updated?.evaluations || [evaluation] });
       } catch (err) {
         console.error('POST /api/student/writing/:submissionId/evaluate error:', err);
+        if (err instanceof NotFoundError) {
+          res.status(404).json({ error: err.message });
+          return;
+        }
         if (err instanceof GeminiServiceError) {
           res.status(err.statusCode).json({ error: err.message });
           return;

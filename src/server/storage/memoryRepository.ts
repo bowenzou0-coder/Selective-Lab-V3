@@ -191,6 +191,11 @@ export class MemoryRepository implements AppRepository {
         clearedSessions++;
       }
     }
+    for (const [sessionId, report] of this.benchmarkReportsBySession) {
+      if ((report.studentId || DEFAULT_STUDENT_ID) === studentId) {
+        this.benchmarkReportsBySession.delete(sessionId);
+      }
+    }
     this.activeLocksByStudent.delete(studentId);
 
     const attemptsBefore = this.attempts.length;
@@ -214,8 +219,9 @@ export class MemoryRepository implements AppRepository {
     this.questionEvidenceByStudent.delete(studentId);
 
     let clearedDailyPlans = 0;
+    const planPrefix = `${studentId}::`;
     for (const [key, plan] of this.dailyPlansByStudent) {
-      if (key === `${studentId}::${plan.planDate}`) {
+      if (key.startsWith(planPrefix) || (plan.studentId || DEFAULT_STUDENT_ID) === studentId) {
         this.dailyPlansByStudent.delete(key);
         clearedDailyPlans++;
       }
@@ -1295,7 +1301,11 @@ export class MemoryRepository implements AppRepository {
       }));
   }
 
-  async saveWritingEvaluation(ev: WritingEvaluationRecord): Promise<void> {
+  async saveWritingEvaluation(ev: WritingEvaluationRecord, studentId?: string): Promise<void> {
+    const sub = this.writingSubmissions.get(ev.submissionId);
+    if (!sub || (studentId && (sub.studentId || DEFAULT_STUDENT_ID) !== studentId)) {
+      throw new NotFoundError('Writing submission not found.');
+    }
     this.writingEvaluations.push(structuredClone(ev));
   }
 

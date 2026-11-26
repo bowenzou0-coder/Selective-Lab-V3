@@ -5,7 +5,7 @@ Vite + React 19 client, Express API (one Vercel function), Neon Postgres. Find t
 | Area | Path | Notes |
 | --- | --- | --- |
 | Entrypoint | `server.ts` → `src/server/app.ts` | `createApp()` wires middleware, static files, routes. `api/index.ts` is the Vercel handler. |
-| Shared route state | `src/server/context.ts` | `ensureSeeded` (memory demo only), monitored-learner resolution. |
+| Shared route state | `src/server/context.ts`, `src/server/rateLimit.ts` | `ensureSeeded` (memory demo only), monitored-learner resolution, auth revocation & account-delete cleanup, per-user AI sliding-window rate limiter (`SlidingWindowRateLimiter`). |
 | Routes | `src/server/routes/*.ts` | `auth` (health, media, sign-in), `student` (dashboard), `sessions` (create/get/checkpoint/submit), `studentProgress` (writing eval, flags, progress, export), `studentSettings` (`/api/student/settings*` daily-plan prefs, recalibrate, onboarding flag; study-progress reset; own flags; account delete), `benchmarks` (`/api/student/benchmarks[/:sessionId[/analyze]]` saved reports + AI coaching), `adminLearners` (incl. learner delete), `adminBank` (status, questions, bulk-status, batches, calibration, import), `adminSystem` (config, flags, backup, migrate). |
 | Session grading/expiry | `src/server/sessionLifecycle.ts` | Snapshots, finalize, deadline auto-submit. |
 | Repository contract | `src/server/storage/repository.ts` | `AppRepository`, `QuestionMeta`, `QuestionSelectionItem`, query params. |
@@ -18,7 +18,7 @@ Vite + React 19 client, Express API (one Vercel function), Neon Postgres. Find t
 | NSW benchmark engine | `src/shared/nswBenchmark.ts` | Scaled /120 score, percentile/rank estimate, section weightings, difficulty calibration, school cutoffs. |
 | Domain logic | `src/shared/engine.ts`, `mastery.ts`, `bankStatus.ts`, `contracts.ts`, `skills.ts` | Selection, grading, mastery, pool health, types, skill taxonomy. |
 | Manifest validation | `src/server/manifestValidator.ts` | Server import checks (mirror of the skill's `validate_manifest.mjs`). |
-| App shell / routing | `src/App.tsx` | Lazy routes; `src/main.tsx` preloads zh when saved. |
+| App shell / routing | `src/App.tsx`, `src/client/components/ErrorBoundary.tsx`, `src/client/chunkError.ts` | Lazy routes wrapped in `ErrorBoundary` with stale-chunk deployment recovery; `src/main.tsx` preloads zh when saved. |
 | API client | `src/client/api.ts` | Every endpoint + response types. In-memory SWR cache for the four student tabs (`dashboard`/`benchmarks`/`progress`/`settings`): account-scoped (`setApiCacheScope`), in-flight dedupe, `peekCachedResource`, `invalidateApiCache`/`patchCachedResource` on mutations, `clearApiCache` for tests (`src/client/apiCache.test.ts`). Views read it via `src/client/useCachedResource.ts`; `App.tsx` prefetches on nav hover/focus. |
 | i18n | `src/client/i18n/{index.tsx,en.ts,zh.ts,messages.ts}` | Add keys to both `en.ts` and `zh.ts` (parity test). zh loads lazily. |
 | Student views | `src/client/components/{HomeView,ProgressView,SessionPlayerView,PostSubmissionReview}.tsx` | |

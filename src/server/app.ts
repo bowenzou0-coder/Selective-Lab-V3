@@ -1,7 +1,13 @@
 import path from 'node:path';
 import compression from 'compression';
 import express, { type Express } from 'express';
-import { assertAuthRuntimeConfig, attachAuth, requireSameOriginMutation } from './auth.ts';
+import {
+  assertAuthRuntimeConfig,
+  attachAuth,
+  clearAuthCookie,
+  requireSameOriginMutation,
+  type AuthenticatedRequest,
+} from './auth.ts';
 import { createAppContext } from './context.ts';
 import { ROOT_DIR } from './paths.ts';
 import { registerAdminBankRoutes } from './routes/adminBank.ts';
@@ -32,6 +38,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+  });
   // Admin bank pages are ~200 KB of JSON; gzip/brotli them (no-op if a proxy already compressed).
   app.use(compression({ threshold: 1024 }));
   app.use('/api', requireSameOriginMutation);
@@ -41,6 +54,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   });
   app.use(express.json({ limit: '15mb' }));
   app.use(attachAuth);
+  app.use((req: AuthenticatedRequest, res, next) => {
+    if (req.auth && ctx.isAuthRevoked(req.auth)) {
+      req.auth = undefined;
+      clearAuthCookie(res, req);
+    }
+    next();
+  });
 
   // Local/`npm start` static serving; on Vercel these paths are served by the CDN (see vercel.json).
   const publicDir = path.join(ROOT_DIR, 'public');

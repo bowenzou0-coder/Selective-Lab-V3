@@ -5,10 +5,12 @@ import {
   getApiCacheScope,
   prefetchCachedResource,
   setApiCacheScope,
+  type AccountDeleteResponse,
   type AuthState,
   type CachedResourceKey,
 } from './client/api';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
+import { ErrorBoundary } from './client/components/ErrorBoundary';
 import { HomeView } from './client/components/HomeView';
 import { StudioShell } from './client/components/TopNav';
 import { useI18n } from './client/i18n';
@@ -35,6 +37,22 @@ const PREFETCH_ROUTES: Record<string, { data?: CachedResourceKey; chunk?: () => 
 };
 
 const ONBOARDING_STORAGE_PREFIX = 'selective_lab_onboarding_done:';
+const DRAFT_STORAGE_PREFIX = 'selective_lab_draft:';
+
+function clearLocalStudentDrafts(studentId?: string | null): void {
+  if (!studentId) return;
+  try {
+    const prefix = `${DRAFT_STORAGE_PREFIX}${studentId}:`;
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(prefix)) keysToRemove.push(k);
+    }
+    for (const k of keysToRemove) window.localStorage.removeItem(k);
+  } catch {
+    // ignore storage access errors
+  }
+}
 
 function hasLocalOnboardingDone(studentId?: string | null): boolean {
   if (!studentId) return false;
@@ -87,6 +105,7 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
   const [logoutError, setLogoutError] = useState('');
   const [tourOpen, setTourOpen] = useState(false);
   const autoPromptedTourRef = useRef<string | null>(null);
@@ -123,6 +142,7 @@ export default function App() {
         activeSessionId: null,
       }));
       setAuthError(t('app.sessionExpired'));
+      setAuthNotice('');
     };
     window.addEventListener('nsw-auth-expired', onExpired);
     return () => {
@@ -133,6 +153,7 @@ export default function App() {
 
   const onAuthenticated = useCallback((identity: AuthState) => {
     setAuthError('');
+    setAuthNotice('');
     setLogoutError('');
     setAuth(identity);
   }, []);
@@ -229,22 +250,33 @@ export default function App() {
     navigate(`/session/${res.sessionId}`);
   }, [auth, navigate]);
 
-  const handleAccountDeleted = useCallback(() => {
-    setApiCacheScope(null);
-    if (auth?.authenticated && auth.studentId) {
-      setLocalOnboardingDone(auth.studentId, false);
-    }
-    setTourOpen(false);
-    autoPromptedTourRef.current = null;
-    setAuth((previous) => ({
-      ...previous,
-      ...signedOut,
-      email: undefined,
-      activeSessionId: null,
-    }));
-    window.history.replaceState({}, '', '/');
-    setPath('/');
-  }, [auth]);
+  const handleAccountDeleted = useCallback(
+    (result?: AccountDeleteResponse) => {
+      const deletedStudentId = result?.studentId || (auth?.authenticated ? auth.studentId : null);
+      setApiCacheScope(null);
+      if (deletedStudentId) {
+        setLocalOnboardingDone(deletedStudentId, false);
+        clearLocalStudentDrafts(deletedStudentId);
+      }
+      setTourOpen(false);
+      autoPromptedTourRef.current = null;
+      setAuthError('');
+      setAuthNotice(
+        result?.isLocalPinAccount
+          ? t('settings.localAccountClearedNotice', { studentId: deletedStudentId || 'default-student' })
+          : t('settings.accountDeletedNotice')
+      );
+      setAuth((previous) => ({
+        ...previous,
+        ...signedOut,
+        email: undefined,
+        activeSessionId: null,
+      }));
+      window.history.replaceState({}, '', '/');
+      setPath('/');
+    },
+    [auth, t]
+  );
 
   // Lock all routes into an active non-sandbox test until submitted
   useEffect(() => {
@@ -269,6 +301,7 @@ export default function App() {
 
   const handleLogout = async () => {
     setLogoutError('');
+    setAuthNotice('');
     try {
       await api.logout();
       setAuth((previous) => ({
@@ -341,6 +374,7 @@ export default function App() {
           <AdminPasswordGate
             localDevPinEnabled={localDevPinEnabled}
             initialError={authError}
+            initialNotice={authNotice}
             onAuthenticated={onAuthenticated}
             onBackHome={() => navigate('/')}
           />
@@ -353,6 +387,7 @@ export default function App() {
           <StudentPinGate
             localDevPinEnabled={localDevPinEnabled}
             initialError={authError}
+            initialNotice={authNotice}
             onAuthenticated={onAuthenticated}
             onGoAdmin={() => navigate('/admin')}
           />
@@ -364,16 +399,18 @@ export default function App() {
     content = (
       <>
         {demoBanner}
-        <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-          <SessionPlayerView
-            key={auth.studentId}
-            sessionId={decodeURIComponent(sessionMatch[1])}
-            studentId={auth.studentId}
-            isAdmin={auth.role === 'admin'}
-            onNavigate={navigate}
-            onActiveSessionCleared={handleActiveSessionCleared}
-          />
-        </Suspense>
+        <ErrorBoundary resetKey={effectivePath} fullPage>
+          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+            <SessionPlayerView
+              key={auth.studentId}
+              sessionId={decodeURIComponent(sessionMatch[1])}
+              studentId={auth.studentId}
+              isAdmin={auth.role === 'admin'}
+              onNavigate={navigate}
+              onActiveSessionCleared={handleActiveSessionCleared}
+            />
+          </Suspense>
+        </ErrorBoundary>
       </>
     );
   } else {
@@ -388,70 +425,74 @@ export default function App() {
         onSignOut={handleLogout}
         banner={banner}
       >
-        {isAdminRoute && auth.role === 'admin' ? (
-          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-            <AdminView
-              currentUserId={auth.studentId}
-              onOpenSession={(id) => navigate(`/session/${id}`)}
-            />
-          </Suspense>
-        ) : effectivePath.startsWith('/settings') ? (
-          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-            <SettingsView
-              onAccountDeleted={handleAccountDeleted}
-              onReplayTour={handleReplayTour}
-            />
-          </Suspense>
-        ) : effectivePath.startsWith('/benchmarks') ? (
-          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-            <BenchmarksView
+        <ErrorBoundary resetKey={effectivePath}>
+          {isAdminRoute && auth.role === 'admin' ? (
+            <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+              <AdminView
+                currentUserId={auth.studentId}
+                onOpenSession={(id) => navigate(`/session/${id}`)}
+              />
+            </Suspense>
+          ) : effectivePath.startsWith('/settings') ? (
+            <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+              <SettingsView
+                onAccountDeleted={handleAccountDeleted}
+                onReplayTour={handleReplayTour}
+              />
+            </Suspense>
+          ) : effectivePath.startsWith('/benchmarks') ? (
+            <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+              <BenchmarksView
+                onOpenSession={(id, isLocked = true) => {
+                  if (isLocked) {
+                    setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
+                  }
+                  navigate(`/session/${id}`);
+                }}
+              />
+            </Suspense>
+          ) : effectivePath.startsWith('/progress') ? (
+            <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
+              <ProgressView
+                onOpenSession={(id) => navigate(`/session/${id}`)}
+                onNavigate={navigate}
+              />
+            </Suspense>
+          ) : (
+            <HomeView
+              key={auth.studentId}
               onOpenSession={(id, isLocked = true) => {
                 if (isLocked) {
                   setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
                 }
                 navigate(`/session/${id}`);
               }}
-            />
-          </Suspense>
-        ) : effectivePath.startsWith('/progress') ? (
-          <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
-            <ProgressView
-              onOpenSession={(id) => navigate(`/session/${id}`)}
               onNavigate={navigate}
+              onOnboardingEligible={handleOnboardingEligible}
             />
-          </Suspense>
-        ) : (
-          <HomeView
-            key={auth.studentId}
-            onOpenSession={(id, isLocked = true) => {
-              if (isLocked) {
-                setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));
-              }
-              navigate(`/session/${id}`);
-            }}
-            onNavigate={navigate}
-            onOnboardingEligible={handleOnboardingEligible}
-          />
-        )}
+          )}
+        </ErrorBoundary>
         {tourOpen && !auth.activeSessionId && (
-          <Suspense fallback={null}>
-            <OnboardingTour
-              open={tourOpen}
-              currentPath={effectivePath}
-              onNavigate={navigate}
-              onDismiss={handleDismissTour}
-              onStartCalibration={handleStartCalibration}
-            />
-          </Suspense>
+          <ErrorBoundary resetKey={`${effectivePath}:tour`}>
+            <Suspense fallback={null}>
+              <OnboardingTour
+                open={tourOpen}
+                currentPath={effectivePath}
+                onNavigate={navigate}
+                onDismiss={handleDismissTour}
+                onStartCalibration={handleStartCalibration}
+              />
+            </Suspense>
+          </ErrorBoundary>
         )}
       </StudioShell>
     );
   }
 
   return (
-    <>
+    <ErrorBoundary resetKey={effectivePath} fullPage>
       {content}
       <SpeedInsights route={speedInsightsRoute} />
-    </>
+    </ErrorBoundary>
   );
 }

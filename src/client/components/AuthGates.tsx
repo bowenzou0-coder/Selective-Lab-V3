@@ -9,11 +9,13 @@ export function StudentPinGate({
   onGoAdmin,
   localDevPinEnabled = false,
   initialError = '',
+  initialNotice = '',
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onGoAdmin: () => void;
   localDevPinEnabled?: boolean;
   initialError?: string;
+  initialNotice?: string;
 }) {
   const { t } = useI18n();
   const [pin, setPin] = useState('');
@@ -61,6 +63,15 @@ export function StudentPinGate({
         <p className="text-sm text-[#4A5955] leading-relaxed mb-6">
           {t('auth.studentIntro')}
         </p>
+
+        {initialNotice && !displayError && (
+          <p
+            role="status"
+            className="mb-4 text-xs font-medium text-[#113C36] bg-[#E5F0EA] border border-[#C5DDD1] px-3.5 py-2.5 rounded-[10px] leading-relaxed"
+          >
+            {initialNotice}
+          </p>
+        )}
 
         <GoogleSignInButton
           admin={false}
@@ -149,12 +160,14 @@ export function AdminPasswordGate({
   onBackHome,
   localDevPinEnabled = false,
   initialError = '',
+  initialNotice = '',
   embedded = false,
 }: {
   onAuthenticated: (auth: AuthState) => void;
   onBackHome: () => void;
   localDevPinEnabled?: boolean;
   initialError?: string;
+  initialNotice?: string;
   embedded?: boolean;
 }) {
   const { t } = useI18n();
@@ -201,6 +214,15 @@ export function AdminPasswordGate({
         <p className="text-sm text-[#4A5955] leading-relaxed mb-6">
           {t('auth.adminIntro')}
         </p>
+
+        {initialNotice && !displayError && (
+          <p
+            role="status"
+            className="mb-4 text-xs font-medium text-[#113C36] bg-[#E5F0EA] border border-[#C5DDD1] px-3.5 py-2.5 rounded-[10px] leading-relaxed"
+          >
+            {initialNotice}
+          </p>
+        )}
 
         <GoogleSignInButton
           admin={true}

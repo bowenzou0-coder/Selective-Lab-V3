@@ -17,6 +17,7 @@ import {
 import {
   api,
   peekCachedResource,
+  type AccountDeleteResponse,
   type LearnerDailySettingsView,
   type StudentSettingsResponse,
 } from '../api';
@@ -31,7 +32,7 @@ import {
 } from '../../shared/contracts';
 
 export interface SettingsViewProps {
-  onAccountDeleted: () => void;
+  onAccountDeleted: (result?: AccountDeleteResponse) => void;
   onReplayTour: () => void;
 }
 
@@ -345,8 +346,8 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
     setDeleting(true);
     setError('');
     try {
-      await api.deleteOwnAccount('DELETE');
-      onAccountDeleted();
+      const result = await api.deleteOwnAccount('DELETE');
+      onAccountDeleted(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to delete account.');
       setDeleting(false);
@@ -931,6 +932,12 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
               {t('settings.deleteAccountSub')}
             </p>
           </div>
+
+          {data?.isLocalPinAccount && (
+            <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 text-xs text-[#4A5955] leading-relaxed">
+              {t('settings.localPinDeleteNote', { studentId: data.studentId })}
+            </div>
+          )}
 
           {!deleteOpen ? (
             <button

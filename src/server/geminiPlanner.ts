@@ -749,6 +749,18 @@ type DailyFocusPlanInput = {
 type DailyFocusPlanResult = { plan: DailyFocusPlan; error?: string };
 const dailyFocusInFlight = new WeakMap<AppRepository, Map<string, Promise<DailyFocusPlanResult>>>();
 
+/** Drop any in-flight daily plan generation promises for a deleted or reset learner. */
+export function clearDailyFocusInFlight(repo: AppRepository, studentId: string): void {
+  const requests = dailyFocusInFlight.get(repo);
+  if (!requests) return;
+  const prefix = `${studentId}:`;
+  for (const key of requests.keys()) {
+    if (key.startsWith(prefix)) {
+      requests.delete(key);
+    }
+  }
+}
+
 export async function getOrCreateDailyFocusPlan(input: DailyFocusPlanInput): Promise<DailyFocusPlanResult> {
   if (input.forceRefresh) {
     return loadOrCreateDailyFocusPlan(input);

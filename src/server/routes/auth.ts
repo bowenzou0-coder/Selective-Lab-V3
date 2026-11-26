@@ -58,11 +58,11 @@ export function registerAuthRoutes(app: Express, ctx: AppContext): void {
   });
 
   async function completeLogin(
-    req: express.Request, res: express.Response, identity: Omit<UserIdentity, 'exp'>
+    req: express.Request, res: express.Response, identity: Omit<UserIdentity, 'exp' | 'iat'>
   ) {
     await ctx.ensureSeeded();
     const state = await getAuthState(identity);
-    setAuthCookie(res, signSessionToken(identity), req);
+    setAuthCookie(res, signSessionToken({ ...identity, iat: ctx.getFreshTokenIat(identity.studentId) }), req);
     clearGoogleNonce(res, req);
     res.json(state);
   }

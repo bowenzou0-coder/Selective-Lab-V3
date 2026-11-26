@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import type { AppContext } from '../context.ts';
 import { generateBenchmarkAiCoaching } from '../geminiBenchmarkCoach.ts';
+import { enforceAiRateLimit } from '../rateLimit.ts';
 import { ensureBenchmarkReportForSession } from '../sessionLifecycle.ts';
 
 /** Dedicated NSW Benchmark Exams & Saved Reports API (/api/student/benchmarks/*). */
@@ -68,6 +69,9 @@ export function registerBenchmarkRoutes(app: Express, ctx: AppContext): void {
       const force = Boolean(req.body?.force);
       if (report.aiCoaching && !force) {
         res.json({ report });
+        return;
+      }
+      if (!enforceAiRateLimit(ctx.aiRateLimiter, 'benchmark_analyze', studentId, res, 'benchmark coaching analysis')) {
         return;
       }
       const coaching = await generateBenchmarkAiCoaching(report);

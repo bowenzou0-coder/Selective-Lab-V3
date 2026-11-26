@@ -454,8 +454,17 @@ export class PostgresRepository implements AppRepository {
     await this.ensureSchema();
     return this.transaction(async (client) => {
       await this.lockStudentProgress(client, studentId);
+      await client.query(
+        `DELETE FROM session_snapshots
+         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
+        [studentId]
+      );
+      await client.query(
+        `DELETE FROM benchmark_reports
+         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
+        [studentId]
+      );
       const sessions = await client.query('DELETE FROM sessions WHERE student_id = $1', [studentId]);
-      await client.query('DELETE FROM session_snapshots WHERE student_id = $1', [studentId]);
       const attempts = await client.query('DELETE FROM part_attempts WHERE student_id = $1', [studentId]);
       const skills = await client.query('DELETE FROM skill_states WHERE student_id = $1', [studentId]);
       const memory = await client.query('DELETE FROM question_memory WHERE student_id = $1', [studentId]);
@@ -465,7 +474,6 @@ export class PostgresRepository implements AppRepository {
         WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [studentId]);
       const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [studentId]);
       const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [studentId]);
-      await client.query('DELETE FROM benchmark_reports WHERE student_id = $1', [studentId]);
       const bank = await client.query<{ count: number }>('SELECT count(DISTINCT question_family_id)::int AS count FROM questions');
       return {
         ok: true,
@@ -518,8 +526,17 @@ export class PostgresRepository implements AppRepository {
     const sid = studentId || DEFAULT_STUDENT_ID;
     return this.transaction(async (client) => {
       await this.lockStudentProgress(client, sid);
+      await client.query(
+        `DELETE FROM session_snapshots
+         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
+        [sid]
+      );
+      await client.query(
+        `DELETE FROM benchmark_reports
+         WHERE student_id = $1 OR session_id IN (SELECT session_id FROM sessions WHERE student_id = $1)`,
+        [sid]
+      );
       const sessions = await client.query('DELETE FROM sessions WHERE student_id = $1', [sid]);
-      await client.query('DELETE FROM session_snapshots WHERE student_id = $1', [sid]);
       const attempts = await client.query('DELETE FROM part_attempts WHERE student_id = $1', [sid]);
       const skills = await client.query('DELETE FROM skill_states WHERE student_id = $1', [sid]);
       const memory = await client.query('DELETE FROM question_memory WHERE student_id = $1', [sid]);
@@ -529,7 +546,6 @@ export class PostgresRepository implements AppRepository {
         WHERE e.submission_id = s.submission_id AND s.student_id = $1`, [sid]);
       const writing = await client.query('DELETE FROM writing_submissions WHERE student_id = $1', [sid]);
       const plans = await client.query('DELETE FROM daily_focus_plans WHERE student_id = $1', [sid]);
-      await client.query('DELETE FROM benchmark_reports WHERE student_id = $1', [sid]);
       await client.query('DELETE FROM learner_preferences WHERE student_id = $1', [sid]);
       const flags = await client.query(`DELETE FROM question_flags WHERE data->>'studentId' = $1`, [sid]);
       const userDel = await client.query('DELETE FROM users WHERE uid = $1', [sid]);

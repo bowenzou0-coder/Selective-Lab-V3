@@ -923,6 +923,18 @@ export const MESSAGES_ZH: Record<MessageKey, string> = {
   'settings.deletePlaceholder': '输入 DELETE',
   'settings.deletingAccount': '正在删除账号…',
   'settings.confirmDeleteBtn': '确认永久删除账号',
+  'settings.localPinDeleteNote': '当前正通过本地预览 PIN（{studentId}）登录。在下方确认后，将清空所有练习场次、作答记录、掌握进度、每日计划与反馈并退出登录；之后可随时使用本地 PIN 重新登录并从零开始。',
+  'settings.localAccountClearedNotice': '已清空 {studentId} 的全部本地预览数据并退出登录。随时可使用本地 PIN 重新登录并从零开始。',
+  'settings.accountDeletedNotice': '你的账号及所有学习数据已永久删除，并已退出登录。',
+
+  // 错误边界与版本更新恢复
+  'errorBoundary.updateTitle': '发现新版本',
+  'errorBoundary.updateBody': '此页面打开期间 Selective Lab 已发布更新。重新加载即可获取最新版本，已保存的学习进度不会丢失。',
+  'errorBoundary.updateReloadBtn': '重新加载',
+  'errorBoundary.genericTitle': '页面加载出现异常',
+  'errorBoundary.genericBody': '当前页面遇到意外错误。你可以重试渲染，或刷新整个页面。',
+  'errorBoundary.retryBtn': '重试',
+  'errorBoundary.reloadBtn': '刷新页面',
 
   // Admin Learner Override Controls
   'admin.overrideTitle': '覆盖 {name} 的每日计划',

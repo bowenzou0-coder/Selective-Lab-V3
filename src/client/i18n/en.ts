@@ -919,6 +919,18 @@ export const MESSAGES_EN = {
   'settings.deletePlaceholder': 'Type DELETE',
   'settings.deletingAccount': 'Deleting account...',
   'settings.confirmDeleteBtn': 'Permanently delete account',
+  'settings.localPinDeleteNote': 'You are signed in with the local preview PIN ({studentId}). Confirming below clears all saved sessions, attempts, mastery records, plans, and flags and signs you out. You can sign in again with the local PIN anytime to start fresh.',
+  'settings.localAccountClearedNotice': 'Cleared all local preview data for {studentId} and signed you out. Sign in with the local PIN anytime to start fresh.',
+  'settings.accountDeletedNotice': 'Your account and all study data have been permanently deleted. You have been signed out.',
+
+  // Error Boundary & Stale Chunk Recovery
+  'errorBoundary.updateTitle': 'New version available',
+  'errorBoundary.updateBody': 'Selective Lab was updated while this tab was open. Reload to load the latest version; your saved progress stays intact.',
+  'errorBoundary.updateReloadBtn': 'Reload',
+  'errorBoundary.genericTitle': 'Something went wrong',
+  'errorBoundary.genericBody': 'This view ran into an unexpected error. Try rendering it again or reload the page.',
+  'errorBoundary.retryBtn': 'Try again',
+  'errorBoundary.reloadBtn': 'Reload page',
 
   // Admin Learner Override Controls
   'admin.overrideTitle': 'Override for {name}',

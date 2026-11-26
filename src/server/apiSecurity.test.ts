@@ -2043,3 +2043,358 @@ test('Public settings, per-learner daily plan isolation, admin override lock, ow
     await srv.close();
   }
 });
+
+test('Security headers are set on Express responses and configured in vercel.json', async () => {
+  const srv = await startTestServer();
+  try {
+    const healthRes = await fetch(`${srv.baseUrl}/api/health`);
+    assert.equal(healthRes.status, 200);
+    assert.equal(healthRes.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(healthRes.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.equal(healthRes.headers.get('x-frame-options'), 'DENY');
+    assert.equal(healthRes.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=()');
+
+    const notFoundRes = await fetch(`${srv.baseUrl}/api/non-existent-endpoint`);
+    assert.equal(notFoundRes.status, 404);
+    assert.equal(notFoundRes.headers.get('x-frame-options'), 'DENY');
+    assert.equal(notFoundRes.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.equal(notFoundRes.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=()');
+
+    const vercelConfig = JSON.parse(await readFile('vercel.json', 'utf8')) as {
+      headers: { source: string; headers: { key: string; value: string }[] }[];
+    };
+    const rootRule = vercelConfig.headers.find((h) => h.source === '/(.*)');
+    assert.ok(rootRule);
+    const headerMap = Object.fromEntries(rootRule.headers.map((h) => [h.key, h.value]));
+    assert.equal(headerMap['X-Content-Type-Options'], 'nosniff');
+    assert.equal(headerMap['Cross-Origin-Opener-Policy'], 'same-origin-allow-popups');
+    assert.equal(headerMap['Referrer-Policy'], 'strict-origin-when-cross-origin');
+    assert.equal(headerMap['X-Frame-Options'], 'DENY');
+    assert.equal(headerMap['Permissions-Policy'], 'camera=(), microphone=(), geolocation=()');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('AI endpoints enforce per-user 5-per-10-min sliding-window rate limits with 429 and Retry-After', async () => {
+  const prevGeminiKey = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  const srv = await startTestServer();
+  try {
+    const userACookie = signedCookie('rate_limit_a', 'student');
+    const userBCookie = signedCookie('rate_limit_b', 'student');
+    const userAId = 'google_rate_limit_a';
+
+    // 1. Recalibrate: 5 allowed, 6th returns 429 + Retry-After, User B still allowed
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${srv.baseUrl}/api/student/settings/recalibrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+        body: JSON.stringify({}),
+      });
+      assert.equal(res.status, 200, `Expected recalibrate #${i + 1} to succeed`);
+    }
+    const sixthRecal = await fetch(`${srv.baseUrl}/api/student/settings/recalibrate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(sixthRecal.status, 429);
+    const retryAfterRecal = Number(sixthRecal.headers.get('retry-after'));
+    assert.ok(retryAfterRecal > 0 && retryAfterRecal <= 600);
+    const sixthRecalBody = (await sixthRecal.json()) as { error: string; retryAfterSeconds: number };
+    assert.equal(sixthRecalBody.retryAfterSeconds, retryAfterRecal);
+
+    const userBRecal = await fetch(`${srv.baseUrl}/api/student/settings/recalibrate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userBCookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(userBRecal.status, 200);
+
+    // 2. Benchmark AI coaching refresh: cached read (force=false) skips limit, 5 forced refreshes allowed, 6th -> 429
+    const benchSection = (section: SectionCode) => ({
+      section,
+      correct: 20,
+      total: 30,
+      unanswered: 0,
+      accuracyPct: 67,
+      band: 'next_25' as const,
+      estimatedPercentile: 70,
+    });
+    await srv.repo.saveBenchmarkReport({
+      reportId: 'bench_rl_1',
+      sessionId: 'sess_bench_rl_1',
+      studentId: userAId,
+      batchLabel: '2026-11-26_b01',
+      title: 'Rate Limit Benchmark',
+      completedAtIso: new Date().toISOString(),
+      elapsedSec: 7200,
+      timeLimitSec: 9300,
+      difficulty: 'selective_lab_timed',
+      scaledScore120: 95,
+      uncertaintyHalfWidth120: 6,
+      estimatedPercentile: 82,
+      estimatedStateRank: 2700,
+      estimatedApplicantPool: 15000,
+      writingStatus: 'missing',
+      sections: {
+        READ: benchSection('READ'),
+        MATH: benchSection('MATH'),
+        THINK: benchSection('THINK'),
+        WRIT: benchSection('WRIT'),
+      },
+      weakSkillStats: [],
+    });
+
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${srv.baseUrl}/api/student/benchmarks/sess_bench_rl_1/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+        body: JSON.stringify({ force: true }),
+      });
+      assert.equal(res.status, 200, `Expected benchmark analyze #${i + 1} to succeed`);
+    }
+    // Cached read (force=false) still succeeds even after refresh quota is full
+    const cachedBench = await fetch(`${srv.baseUrl}/api/student/benchmarks/sess_bench_rl_1/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+      body: JSON.stringify({ force: false }),
+    });
+    assert.equal(cachedBench.status, 200);
+
+    const sixthBench = await fetch(`${srv.baseUrl}/api/student/benchmarks/sess_bench_rl_1/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+      body: JSON.stringify({ force: true }),
+    });
+    assert.equal(sixthBench.status, 429);
+    assert.ok(Number(sixthBench.headers.get('retry-after')) > 0);
+    const sixthBenchBody = (await sixthBench.json()) as { retryAfterSeconds: number };
+    assert.ok(sixthBenchBody.retryAfterSeconds > 0);
+
+    // 3. Writing evaluation: 5 attempts consume bucket (even when Gemini key is absent -> 503), 6th -> 429
+    const writQ = (await srv.repo.listQuestions({ section: 'WRIT', qcStatus: 'active' }))[0];
+    assert.ok(writQ);
+    await srv.repo.saveWritingSubmission({
+      submissionId: 'wsub_rl_1',
+      studentId: userAId,
+      sessionId: 'sess_writ_rl_1',
+      questionId: writQ.questionId,
+      planNotes: 'Plan',
+      responseText: 'Sample essay response for rate-limit testing.',
+      wordCount: 7,
+      timeSpentSec: 60,
+      deterministicMetricsJson: JSON.stringify({
+        wordCount: 7,
+        sentenceCount: 1,
+        paragraphCount: 1,
+        avgWordsPerSentence: 7,
+      }),
+      submittedAt: new Date().toISOString(),
+    });
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${srv.baseUrl}/api/student/writing/wsub_rl_1/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+      });
+      assert.equal(res.status, 503, `Expected writing evaluate #${i + 1} to reach Gemini check`);
+    }
+    const sixthWrit = await fetch(`${srv.baseUrl}/api/student/writing/wsub_rl_1/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: userACookie },
+    });
+    assert.equal(sixthWrit.status, 429);
+    assert.ok(Number(sixthWrit.headers.get('retry-after')) > 0);
+    const sixthWritBody = (await sixthWrit.json()) as { retryAfterSeconds: number };
+    assert.ok(sixthWritBody.retryAfterSeconds > 0);
+  } finally {
+    if (prevGeminiKey !== undefined) {
+      process.env.GEMINI_API_KEY = prevGeminiKey;
+    } else {
+      delete process.env.GEMINI_API_KEY;
+    }
+    await srv.close();
+  }
+});
+
+test('deleteUserAccount revokes active in-progress sessions/tokens immediately and handles local-PIN default-student cleanly', async () => {
+  const prevPinEnv = process.env.ALLOW_LOCAL_DEV_PIN;
+  process.env.ALLOW_LOCAL_DEV_PIN = 'true';
+  const srv = await startTestServer();
+  try {
+    // Part A: Admin deletes a Google learner who currently has an active in-progress session + primary pin
+    const victimId = 'google_mid_exam_victim';
+    const victimCookie = signedCookie('mid_exam_victim', 'student');
+    const adminCookie = signedCookie('cleanup_admin', 'admin');
+
+    await srv.repo.upsertUserFromAuth({
+      uid: victimId,
+      email: 'victim@example.com',
+      displayName: 'Mid Exam Student',
+      isBootstrappedAdmin: false,
+    });
+    await fetch(`${srv.baseUrl}/api/admin/learners/primary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ studentId: victimId }),
+    });
+
+    const victimSessRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: victimCookie },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
+    });
+    assert.equal(victimSessRes.status, 201);
+    const { sessionId: victimSessionId } = (await victimSessRes.json()) as { sessionId: string };
+
+    // Confirm victim currently has an active lock
+    const meBefore = (await (await fetch(`${srv.baseUrl}/api/auth/me`, { headers: { Cookie: victimCookie } })).json()) as {
+      authenticated: boolean;
+      activeSessionId: string | null;
+    };
+    assert.equal(meBefore.authenticated, true);
+    assert.equal(meBefore.activeSessionId, victimSessionId);
+
+    // Admin deletes the learner mid-exam
+    const adminDel = await fetch(`${srv.baseUrl}/api/admin/learners/${encodeURIComponent(victimId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+    assert.equal(adminDel.status, 200);
+    const adminDelBody = (await adminDel.json()) as { clearedSessions: number; deletedUser: boolean };
+    assert.equal(adminDelBody.clearedSessions, 1);
+    assert.equal(adminDelBody.deletedUser, true);
+
+    // Verify zero orphaned sessions, snapshots, or active locks remain
+    assert.equal(await srv.repo.getSession(victimSessionId), null);
+    assert.deepEqual(await srv.repo.getSessionSnapshots(victimId, victimSessionId), []);
+    assert.deepEqual(await srv.repo.listActiveSessions(victimId), []);
+    assert.equal((await srv.repo.getActiveConfig()).config.primaryMonitoredStudentId, undefined);
+
+    // Victim's previously issued cookie is immediately revoked (no silent resurrection!)
+    const meAfter = await fetch(`${srv.baseUrl}/api/auth/me`, { headers: { Cookie: victimCookie } });
+    assert.equal(meAfter.status, 200);
+    const meAfterBody = (await meAfter.json()) as { authenticated: boolean; activeSessionId: string | null };
+    assert.equal(meAfterBody.authenticated, false);
+    assert.equal(meAfterBody.activeSessionId, null);
+
+    const staleDash = await fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: victimCookie } });
+    assert.equal(staleDash.status, 401);
+    const staleCheckpoint = await fetch(`${srv.baseUrl}/api/student/sessions/${victimSessionId}/checkpoint`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: victimCookie },
+      body: JSON.stringify({
+        expectedRevision: 1,
+        checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
+      }),
+    });
+    assert.equal(staleCheckpoint.status, 401);
+
+    // Orphaning guard: writing evaluation cannot be saved for a deleted submission
+    await assert.rejects(
+      srv.repo.saveWritingEvaluation(
+        {
+          evaluationId: 'weval_orphan',
+          submissionId: 'wsub_deleted',
+          evaluatorType: 'ai',
+          topicAdherencePass: true,
+          overallBandEstimate: 'solid',
+          criteriaScores: [],
+          topStrengths: [],
+          priorityFixes: [],
+          createdAt: new Date().toISOString(),
+        },
+        victimId
+      ),
+      /Writing submission not found/
+    );
+
+    // Part B: Local-PIN user deleting `default-student` while having an in-progress session
+    const pinLogin = await fetch(`${srv.baseUrl}/api/auth/student-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '1234' }),
+    });
+    assert.equal(pinLogin.status, 200);
+    const pinCookie = pinLogin.headers.getSetCookie()[0].split(';')[0];
+
+    const pinSettings = (await (
+      await fetch(`${srv.baseUrl}/api/student/settings`, { headers: { Cookie: pinCookie } })
+    ).json()) as { studentId: string; authMethod: string; isLocalPinAccount: boolean };
+    assert.equal(pinSettings.studentId, 'default-student');
+    assert.equal(pinSettings.authMethod, 'local_pin');
+    assert.equal(pinSettings.isLocalPinAccount, true);
+
+    const pinSess = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: pinCookie },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'READ' }),
+    });
+    assert.equal(pinSess.status, 201);
+    const { sessionId: pinSessionId } = (await pinSess.json()) as { sessionId: string };
+
+    // Also pin default-student as primary monitored student to confirm self-delete clears it too
+    await fetch(`${srv.baseUrl}/api/admin/learners/primary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ studentId: 'default-student' }),
+    });
+
+    const delPinRes = await fetch(`${srv.baseUrl}/api/student/account`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: pinCookie },
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+    assert.equal(delPinRes.status, 200);
+    const delPinBody = (await delPinRes.json()) as {
+      ok: boolean;
+      studentId: string;
+      authMethod: string;
+      isLocalPinAccount: boolean;
+      clearedSessions: number;
+      preservedQuestionsCount: number;
+    };
+    assert.equal(delPinBody.ok, true);
+    assert.equal(delPinBody.studentId, 'default-student');
+    assert.equal(delPinBody.authMethod, 'local_pin');
+    assert.equal(delPinBody.isLocalPinAccount, true);
+    assert.equal(delPinBody.clearedSessions, 1);
+    assert.ok(delPinBody.preservedQuestionsCount > 0);
+    assert.match(delPinRes.headers.get('set-cookie') || '', /Max-Age=0|Expires=Thu, 01 Jan 1970/);
+    assert.equal(await srv.repo.getSession(pinSessionId), null);
+    assert.deepEqual(await srv.repo.listActiveSessions('default-student'), []);
+    assert.equal((await srv.repo.getActiveConfig()).config.primaryMonitoredStudentId, undefined);
+
+    // Old local-PIN cookie is revoked immediately
+    const oldPinDash = await fetch(`${srv.baseUrl}/api/student/dashboard`, { headers: { Cookie: pinCookie } });
+    assert.equal(oldPinDash.status, 401);
+
+    // Re-signing in with PIN 1234 works cleanly with zero stale lock and can immediately start a new session
+    const relogin = await fetch(`${srv.baseUrl}/api/auth/student-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '1234' }),
+    });
+    assert.equal(relogin.status, 200);
+    const reloginBody = (await relogin.json()) as { authenticated: boolean; activeSessionId: string | null };
+    assert.equal(reloginBody.authenticated, true);
+    assert.equal(reloginBody.activeSessionId, null);
+    const freshPinCookie = relogin.headers.getSetCookie()[0].split(';')[0];
+
+    const freshSess = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: freshPinCookie },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
+    });
+    assert.equal(freshSess.status, 201);
+  } finally {
+    if (prevPinEnv !== undefined) {
+      process.env.ALLOW_LOCAL_DEV_PIN = prevPinEnv;
+    } else {
+      delete process.env.ALLOW_LOCAL_DEV_PIN;
+    }
+    await srv.close();
+  }
+});
