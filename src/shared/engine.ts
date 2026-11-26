@@ -1,4 +1,4 @@
-import { findEvidenceByFamily } from './bankStatus';
+import { findEvidenceByFamily } from './bankStatus.ts';
 import type {
   AlgorithmAdjustments,
   DifficultyPreset,
@@ -17,7 +17,7 @@ import type {
   StudentQuestionView,
   WritingDeterministicMetrics,
   WritingTaskSpec,
-} from './contracts';
+} from './contracts.ts';
 
 /** Benchmark-isolated pools (never mixed into everyday practice, daily plans, or fresh-pool mocks). */
 export function isBenchmarkPoolType(poolType: PoolType): boolean {

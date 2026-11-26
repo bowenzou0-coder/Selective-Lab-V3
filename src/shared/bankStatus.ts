@@ -4,7 +4,7 @@ import type {
   QuestionMemoryState,
   QcStatus,
   SectionCode,
-} from './contracts';
+} from './contracts.ts';
 
 /**
  * Simplified 3-state operational pool status for the unified Question Bank.

@@ -1,4 +1,4 @@
-import type { SectionCode } from './contracts';
+import type { SectionCode } from './contracts.ts';
 
 export interface SkillDefinition {
   skillId: string;
