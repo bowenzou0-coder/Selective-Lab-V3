@@ -87,7 +87,7 @@ export function AutoCalibrateConfigPanel({
   };
 
   if (loading) {
-    return <div className="p-10 text-center text-sm text-[#78756E]">{t('cfg.loading')}</div>;
+    return <div className="p-10 text-center text-sm text-[#615E57]">{t('cfg.loading')}</div>;
   }
 
   return (

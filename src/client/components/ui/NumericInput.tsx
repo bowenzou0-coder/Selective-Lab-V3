@@ -23,7 +23,7 @@ export interface NumericInputProps {
 }
 
 const BARE_INPUT_CLASS =
-  'w-full px-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] tabular-nums disabled:bg-[#F3EFE8] disabled:text-[#78756E] disabled:cursor-not-allowed focus:outline-none focus:border-[#113C36]';
+  'w-full px-3 py-2 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] tabular-nums disabled:bg-[#F3EFE8] disabled:text-[#615E57] disabled:cursor-not-allowed focus:outline-none focus:border-[#113C36]';
 
 function stepDecimals(step: number): number {
   const text = String(step);
@@ -114,6 +114,7 @@ export function NumericInput({
         setFocused(false);
         commitClamped(draft);
       }}
+      data-focus-ring={showRange || stepper ? 'parent' : undefined}
       className={
         showRange || stepper
           ? 'min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-[#113C36] tabular-nums focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
@@ -130,8 +131,8 @@ export function NumericInput({
 
   return (
     <div
-      className={`flex w-full items-stretch overflow-hidden rounded-[10px] border border-[#CFC6B9] focus-within:border-[#113C36] ${
-        disabled ? 'bg-[#F3EFE8] text-[#78756E]' : 'bg-white'
+      className={`flex w-full items-stretch overflow-hidden rounded-[10px] border border-[#CFC6B9] focus-within:border-[#113C36] has-[input:focus-visible]:[outline:3px_solid_rgba(17,60,54,0.2)] ${
+        disabled ? 'bg-[#F3EFE8] text-[#615E57]' : 'bg-white'
       } ${className}`}
     >
       {stepper && (
@@ -141,6 +142,7 @@ export function NumericInput({
           disabled={disabled || value <= min}
           aria-label={t('common.decreaseValue', { label: fieldName })}
           onClick={() => nudge(-1)}
+          data-focus-ring="inset"
           className={`${stepButtonClass} border-r border-[#E5DFD5]`}
         >
           <Minus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -150,7 +152,7 @@ export function NumericInput({
       {showRange && (
         <span
           id={rangeId}
-          className="self-center whitespace-nowrap pr-2.5 text-[11px] text-[#78756E] tabular-nums select-none"
+          className="self-center whitespace-nowrap pr-2.5 text-[11px] text-[#615E57] tabular-nums select-none"
         >
           <span aria-hidden="true">
             {min}–{max}
@@ -165,6 +167,7 @@ export function NumericInput({
           disabled={disabled || value >= max}
           aria-label={t('common.increaseValue', { label: fieldName })}
           onClick={() => nudge(1)}
+          data-focus-ring="inset"
           className={`${stepButtonClass} border-l border-[#E5DFD5]`}
         >
           <Plus className="h-3.5 w-3.5" aria-hidden="true" />

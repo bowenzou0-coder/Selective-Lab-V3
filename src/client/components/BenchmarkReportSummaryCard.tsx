@@ -8,6 +8,7 @@ import {
   type NswPerformanceBand,
 } from '../../shared/nswBenchmark';
 import { useI18n } from '../i18n';
+import { SegmentedControl } from './ui/SegmentedControl';
 
 interface BenchmarkReportSummaryCardProps {
   reports: BenchmarkReportRecord[];
@@ -98,7 +99,7 @@ export function BenchmarkReportSummaryCard({
     return (
       <section
         aria-label={t('bm.progressReportTitle')}
-        className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-6 sm:p-7 space-y-5 text-[#113C36]"
+        className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-5 sm:p-7 space-y-5 text-[#113C36]"
       >
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div className="space-y-1.5">
@@ -107,7 +108,7 @@ export function BenchmarkReportSummaryCard({
                 <Award className="w-4 h-4 shrink-0" />
                 <span>{t('bm.progressReportBadge')}</span>
               </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-[11px] font-medium text-[#78756E]">
+              <span className="px-2.5 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-[11px] font-medium text-[#615E57]">
                 {t('bm.progressEmptyBadge')}
               </span>
             </div>
@@ -122,7 +123,7 @@ export function BenchmarkReportSummaryCard({
           <button
             type="button"
             onClick={onOpenBenchmarks}
-            className="px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer whitespace-nowrap shrink-0"
+            className="px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer whitespace-nowrap shrink-0"
           >
             {t('bm.progressEmptyCta')}
           </button>
@@ -137,10 +138,10 @@ export function BenchmarkReportSummaryCard({
               <div className="text-xs font-sans-display font-semibold text-[#113C36]">
                 {sectionLabel(code)}
               </div>
-              <div className="text-[11px] text-[#78756E] tabular-nums">
+              <div className="text-[11px] text-[#615E57] tabular-nums">
                 {t('bm.sectionMinutesOnly', { min: minutes })}
               </div>
-              <div className="pt-1 font-serif-display font-bold text-lg text-[#78756E]">
+              <div className="pt-1 font-serif-display font-bold text-lg text-[#615E57]">
                 {t('bm.notSatYet')}
               </div>
             </div>
@@ -163,7 +164,7 @@ export function BenchmarkReportSummaryCard({
   return (
     <section
       aria-label={t('bm.progressReportTitle')}
-      className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-6 sm:p-7 space-y-6 text-[#113C36]"
+      className="rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] p-5 sm:p-7 space-y-6 text-[#113C36]"
     >
       <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
         <div className="space-y-1.5 max-w-2xl">
@@ -175,7 +176,7 @@ export function BenchmarkReportSummaryCard({
             <span className="px-2.5 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-[11px] font-medium text-[#113C36]">
               {activeReport.batchLabel}
             </span>
-            <span className="text-xs text-[#78756E] tabular-nums">
+            <span className="text-xs text-[#615E57] tabular-nums">
               {formatDate(activeReport.completedAtIso, true)}
             </span>
             {activeReport.writingStatus === 'pending' && (
@@ -193,33 +194,18 @@ export function BenchmarkReportSummaryCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <div
-            className="inline-flex items-center p-1 rounded-[10px] bg-white border border-[#E5DFD5]"
-            role="group"
-            aria-label={t('bench.genderFilterLabel')}
-          >
-            {(
-              [
-                ['all', t('bench.genderAll')],
-                ['girls', t('bench.genderGirls')],
-                ['boys', t('bench.genderBoys')],
-              ] as [ApplicantGenderFilter, string][]
-            ).map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                aria-pressed={genderFilter === val}
-                onClick={() => setGenderFilter(val)}
-                className={`px-2.5 py-1 rounded-[7px] text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
-                  genderFilter === val
-                    ? 'bg-[#113C36] text-white'
-                    : 'text-[#4A5955] hover:text-[#113C36]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl<ApplicantGenderFilter>
+            ariaLabel={t('bench.genderFilterLabel')}
+            className="bg-white border-[#E5DFD5]"
+            segmentClassName="px-2.5 py-1"
+            value={genderFilter}
+            onChange={setGenderFilter}
+            options={[
+              { value: 'all', label: t('bench.genderAll') },
+              { value: 'girls', label: t('bench.genderGirls') },
+              { value: 'boys', label: t('bench.genderBoys') },
+            ]}
+          />
         </div>
       </div>
 
@@ -233,7 +219,7 @@ export function BenchmarkReportSummaryCard({
                 key={rep.sessionId}
                 type="button"
                 onClick={() => setSelectedSessionId(rep.sessionId)}
-                className={`px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold tabular-nums cursor-pointer transition-colors ${
+                className={`px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold tabular-nums cursor-pointer transition-tactile ${
                   selected
                     ? 'bg-[#113C36] border-[#113C36] text-white'
                     : 'bg-white border-[#E5DFD5] text-[#113C36] hover:border-[#CFC6B9]'
@@ -247,8 +233,8 @@ export function BenchmarkReportSummaryCard({
       )}
 
       {/* Headline Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-        <div className="p-4 rounded-[14px] border border-[#D4E4DC] bg-[#E5F0EA] space-y-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div className="min-w-0 sm:col-span-2 lg:col-span-1 p-4 rounded-[14px] border border-[#D4E4DC] bg-[#E5F0EA] space-y-1">
           <div className="text-xs font-sans-display font-semibold text-[#1D6346]">
             {t('bench.scaledScoreLabel')}
           </div>
@@ -273,15 +259,15 @@ export function BenchmarkReportSummaryCard({
           <div className="text-[11px] text-[#4A5955]">{t('bench.singleScaleHint')}</div>
         </div>
 
-        <div className="p-4 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1">
+        <div className="min-w-0 p-4 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1">
           <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
             {t('bench.stateRankLabel')}
           </div>
-          <div className="flex items-baseline gap-2">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="font-serif-display font-extrabold text-[32px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
               #{evaluated.estimatedStateRank.toLocaleString()}
             </span>
-            <span className="text-xs text-[#78756E] tabular-nums">
+            <span className="text-xs text-[#615E57] tabular-nums">
               / {evaluated.estimatedApplicantPool.toLocaleString()}
             </span>
           </div>
@@ -290,15 +276,15 @@ export function BenchmarkReportSummaryCard({
           </div>
         </div>
 
-        <div className="p-4 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1">
+        <div className="min-w-0 p-4 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1">
           <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
             {t('bench.schoolsInRangeLabel')}
           </div>
-          <div className="flex items-baseline gap-2">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="font-serif-display font-extrabold text-[32px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
               {aboveCutoffSchools.length + reserveOrBorderline.length}
             </span>
-            <span className="text-xs text-[#78756E] tabular-nums">
+            <span className="text-xs text-[#615E57] tabular-nums">
               / {evaluated.schools.length}
             </span>
           </div>
@@ -312,7 +298,7 @@ export function BenchmarkReportSummaryCard({
       </div>
 
       {/* 4-Section Official Report Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
         {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => {
           const snap = activeReport.sections[sec];
           const activeBandIdx = bandIndex(snap.band);
@@ -322,7 +308,7 @@ export function BenchmarkReportSummaryCard({
               className="p-4 rounded-[14px] bg-white border border-[#E5DFD5] space-y-3 tabular-nums"
             >
               <div className="flex items-start justify-between gap-2">
-                <div>
+                <div className="min-w-0">
                   <div className="font-sans-display font-semibold text-sm text-[#113C36]">
                     {sectionLabel(sec)}
                   </div>
@@ -365,7 +351,7 @@ export function BenchmarkReportSummaryCard({
                     />
                   ))}
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 text-[10px] text-[#78756E] text-center">
+                <div className="grid grid-cols-4 gap-1.5 text-[10px] text-[#615E57] text-center">
                   <span>{t('bench.bandLowest50')}</span>
                   <span>{t('bench.bandNext25')}</span>
                   <span>{t('bench.bandNext15')}</span>
@@ -425,7 +411,7 @@ export function BenchmarkReportSummaryCard({
 
       {/* Actions & Read-Only Footnote */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#E5DFD5]">
-        <div className="flex items-start gap-2 text-[11px] text-[#78756E] max-w-xl leading-relaxed">
+        <div className="flex items-start gap-2 text-[11px] text-[#615E57] max-w-xl leading-relaxed">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <span>
             {t('bm.readOnlyFootnote')} {t('bench.disclaimer')}

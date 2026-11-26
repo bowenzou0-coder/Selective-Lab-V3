@@ -175,7 +175,7 @@ export function SectionBreakView({
                             ? 'bg-[#1D6346] text-white'
                             : isNext
                               ? 'bg-[#113C36] text-white'
-                              : 'bg-[#F3EFE8] text-[#78756E]'
+                              : 'bg-[#F3EFE8] text-[#615E57]'
                         }`}
                       >
                         {isDone ? '✓' : idx + 1}
@@ -196,7 +196,7 @@ export function SectionBreakView({
                     <div className="flex items-center gap-2 text-xs shrink-0">
                       {isDone ? (
                         <>
-                          <span className="text-[#78756E]">
+                          <span className="text-[#615E57]">
                             {t('session.breakTimelineElapsed', {
                               minutes: usedMin,
                               seconds: usedSec,
@@ -211,7 +211,7 @@ export function SectionBreakView({
                           {t('session.breakTimelineUpNext')}
                         </span>
                       ) : (
-                        <span className="text-[#78756E] text-[11px] font-medium">
+                        <span className="text-[#615E57] text-[11px] font-medium">
                           {t('session.breakTimelinePending')}
                         </span>
                       )}
@@ -228,7 +228,7 @@ export function SectionBreakView({
             )}
 
             <div className="pt-2 flex flex-wrap items-center justify-between gap-4 border-t border-[#E5DFD5]">
-              <div className="text-xs text-[#78756E] tabular-nums">
+              <div className="text-xs text-[#615E57] tabular-nums">
                 {t('session.breakElapsedLabel')}:{' '}
                 <span className="font-semibold text-[#113C36]">
                   {formatBreakDuration(breakElapsedSec)}
@@ -238,7 +238,7 @@ export function SectionBreakView({
                 type="button"
                 disabled={starting}
                 onClick={onStartNext}
-                className="w-full sm:w-auto px-6 py-3 rounded-[12px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center justify-center gap-2 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+                className="w-full sm:w-auto px-6 py-3 rounded-[12px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center justify-center gap-2 transition-[background-color,transform,translate,scale] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
               >
                 <Play className="w-4 h-4 fill-current" />
                 <span>

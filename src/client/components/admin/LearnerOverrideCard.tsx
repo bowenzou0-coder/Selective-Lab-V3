@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Lock, RefreshCw, RotateCcw, Save, UserCog } from 'lucide-react';
 import { api, type AdminLearnerSummary, type LearnerDailySettingsView } from '../../api';
 import { useI18n } from '../../i18n';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_LEARNING_CONFIG,
@@ -218,40 +219,20 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
           <p className="text-xs text-[#4A5955]">{t('admin.overrideSub')}</p>
         </div>
 
-        <div
-          role="group"
-          aria-label={t('cfg.title')}
-          className="inline-flex items-center p-1 rounded-[12px] bg-white border border-[#CFC6B9] gap-1"
-        >
-          <button
-            type="button"
-            aria-pressed={learnerForm.autoCalibrate.enabled}
-            onClick={() => updateLearnerAuto({ enabled: true })}
-            className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
-              learnerForm.autoCalibrate.enabled
-                ? 'bg-[#113C36] text-white'
-                : 'text-[#4A5955] hover:text-[#113C36]'
-            }`}
-          >
-            {t('cfg.modeAuto')}
-          </button>
-          <button
-            type="button"
-            aria-pressed={!learnerForm.autoCalibrate.enabled}
-            onClick={() => updateLearnerAuto({ enabled: false })}
-            className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
-              !learnerForm.autoCalibrate.enabled
-                ? 'bg-[#113C36] text-white'
-                : 'text-[#4A5955] hover:text-[#113C36]'
-            }`}
-          >
-            {t('cfg.modeManual')}
-          </button>
-        </div>
+        <SegmentedControl
+          ariaLabel={t('cfg.title')}
+          segmentClassName="px-3 py-1.5"
+          value={learnerForm.autoCalibrate.enabled ? 'auto' : 'manual'}
+          onChange={(mode) => updateLearnerAuto({ enabled: mode === 'auto' })}
+          options={[
+            { value: 'auto', label: t('cfg.modeAuto') },
+            { value: 'manual', label: t('cfg.modeManual') },
+          ]}
+        />
       </div>
 
       {loadingLearner ? (
-        <div className="py-6 text-xs text-[#78756E]">{t('cfg.loading')}</div>
+        <div className="py-6 text-xs text-[#615E57]">{t('cfg.loading')}</div>
       ) : (
         <>
           {learnerForm.autoCalibrate.enabled ? (
@@ -314,13 +295,13 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
                         minutes: todayPlan?.dailyGoalMinutes ?? learnerForm.dailyGoalMinutes,
                       })}
                     </div>
-                    <p className="text-[11px] text-[#78756E]">{t('cfg.personalPlanHint')}</p>
+                    <p className="text-[11px] text-[#615E57]">{t('cfg.personalPlanHint')}</p>
                   </div>
                   <button
                     type="button"
                     disabled={recalibrating}
                     onClick={handleRecalibrateLearner}
-                    className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${recalibrating ? 'animate-spin' : ''}`} />
                     <span>{recalibrating ? t('cfg.recalibratingBtn') : t('cfg.recalibrateBtn')}</span>
@@ -330,7 +311,7 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => (
                     <div key={sec} className="rounded-[10px] bg-[#FAF8F5] border border-[#E5DFD5] px-3 py-2">
-                      <div className="text-[11px] text-[#78756E]">{sectionShortLabel(sec)}</div>
+                      <div className="text-[11px] text-[#615E57]">{sectionShortLabel(sec)}</div>
                       <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
                         {decidedLimits[sec] ?? 0}
                       </div>
@@ -475,7 +456,7 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
                       setLearnerForm(savedLearnerForm);
                       setLearnerLocked(savedLearnerLocked);
                     }}
-                    className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+                    className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
                   >
                     {t('settings.discardChanges')}
                   </button>
@@ -483,7 +464,7 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
                     type="button"
                     disabled={savingLearner}
                     onClick={handleSaveLearnerOverride}
-                    className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+                    className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
                   >
                     <Save className="w-3.5 h-3.5" />
                     <span>{savingLearner ? t('cfg.saving') : t('admin.overrideSaveBtn')}</span>

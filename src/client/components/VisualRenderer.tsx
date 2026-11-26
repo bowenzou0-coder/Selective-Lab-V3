@@ -1,9 +1,10 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useId, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { createPortal } from 'react-dom';
 import { ImageOff, Maximize2, X } from 'lucide-react';
 import type { VisualSpec } from '../../shared/contracts';
 import { normalizeSvgFonts } from '../../shared/svgFonts';
+import { useFocusTrap } from './ui/focusTrap';
 
 // Admin-authored SVG only; strip anything executable and normalize diagram fonts to Anthropic faces.
 function sanitizeSvg(markup: string): string {
@@ -29,6 +30,9 @@ export const VisualRenderer = memo(function VisualRenderer({
 }: VisualRendererProps) {
   const { t } = useI18n();
   const [zoomOpen, setZoomOpen] = useState(false);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const zoomTitleId = `visual-zoom-${useId().replace(/:/g, '')}`;
+  useFocusTrap(zoomRef, zoomOpen, { onEscape: () => setZoomOpen(false) });
   const [imgError, setImgError] = useState(false);
   const [errorForUrl, setErrorForUrl] = useState(visual?.imageUrl);
   if (errorForUrl !== visual?.imageUrl) {
@@ -136,7 +140,7 @@ export const VisualRenderer = memo(function VisualRenderer({
       )}
 
       {visual.visualType === 'structured_table' && visual.tableData && (
-        <div className="overflow-x-auto">
+        <div className="scroll-x">
           {visual.tableData.caption && (
             <div className="text-xs font-semibold text-[var(--text-secondary)] mb-2">
               {visual.tableData.caption}
@@ -191,18 +195,21 @@ export const VisualRenderer = memo(function VisualRenderer({
         typeof document !== 'undefined' &&
         createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={visual.altText}
-            className="fixed inset-0 z-50 m-0 bg-black/60 flex items-center justify-center p-6"
+            role="presentation"
+            className="fixed inset-0 z-50 m-0 bg-[#113C36]/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-6 transition-opacity duration-150 starting:opacity-0"
             onClick={() => setZoomOpen(false)}
           >
             <div
-              className="max-w-4xl w-full bg-[var(--bg-elevated)] rounded-[var(--radius-lg)] border border-[var(--border-hairline)] p-6 shadow-xl"
+              ref={zoomRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={zoomTitleId}
+              tabIndex={-1}
+              className="max-w-4xl w-full max-h-[calc(100dvh-1.5rem)] overflow-auto bg-[var(--bg-elevated)] rounded-[var(--radius-lg)] border border-[var(--border-hairline)] p-4 sm:p-6 shadow-xl outline-none transition-[opacity,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] starting:opacity-0 starting:scale-[0.97]"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h3 id={zoomTitleId} className="min-w-0 text-sm font-semibold text-[var(--text-primary)]">
                   {visual.caption || visual.altText}
                 </h3>
                 <button

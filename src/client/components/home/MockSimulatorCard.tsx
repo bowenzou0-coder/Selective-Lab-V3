@@ -224,7 +224,7 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
             <button
               type="button"
               onClick={() => setMockMode('pool')}
-              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
                 mockMode === 'pool'
                   ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                   : 'text-[#4A5955] hover:text-[#113C36]'
@@ -235,7 +235,7 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
             <button
               type="button"
               onClick={() => setMockMode('batch')}
-              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
                 mockMode === 'batch'
                   ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                   : 'text-[#4A5955] hover:text-[#113C36]'
@@ -248,7 +248,7 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
             <button
               type="button"
               onClick={() => onNavigate('/benchmarks')}
-              className="px-3.5 py-2 rounded-[10px] border border-[#C5DDD1] bg-[#E5F0EA]/65 hover:bg-[#E5F0EA] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap text-[#1D6346] inline-flex items-center gap-1.5"
+              className="px-3.5 py-2 rounded-[10px] border border-[#C5DDD1] bg-[#E5F0EA]/65 hover:bg-[#E5F0EA] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,border-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] whitespace-nowrap text-[#1D6346] inline-flex items-center gap-1.5"
             >
               <Award className="w-3.5 h-3.5 shrink-0" />
               <span>{t('home.goBenchmarks')}</span>
@@ -392,7 +392,7 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
 
       <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
         <div className="flex items-center gap-2 text-xs text-[#4A5955] min-w-0 flex-1">
-          <Clock className="w-3.5 h-3.5 text-[#78756E] shrink-0" />
+          <Clock className="w-3.5 h-3.5 text-[#615E57] shrink-0" />
           <span>
             {mockMode === 'pool'
               ? t('home.poolHint', { unseen: poolUnseenForScope, live: poolLiveForScope })
@@ -405,7 +405,7 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
           type="button"
           disabled={launching !== null || mockQuestionCount === 0}
           onClick={handleLaunchMock}
-          className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+          className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-tactile disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
         >
           {launching === 'mock'
             ? t('home.startingMock')

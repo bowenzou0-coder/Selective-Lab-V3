@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { AlertTriangle, ArrowLeft, ChevronDown, CloudCheck, CloudOff, Flag, Grid, RefreshCw, ShieldAlert } from 'lucide-react';
 import { LanguageToggle, useI18n } from '../../i18n';
+import { SESSION_NAVIGATOR_ID } from './SessionNavigatorDrawer';
 import type { SessionClock } from '../../sessionClock';
 import { ExamTimer } from './ExamTimer';
 import { ShortcutHelpPopover } from './ShortcutHelpPopover';
@@ -67,8 +68,25 @@ export function SessionHeaderBar({
   onFinish,
 }: SessionHeaderBarProps) {
   const { t } = useI18n();
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Publish the rail's live height so the stacked (< lg) pane switcher can stick right below it.
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header || typeof ResizeObserver === 'undefined') return;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty('--exam-rail-h', `${header.offsetHeight}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty('--exam-rail-h');
+    };
+  }, []);
+
   return (
-    <header className="sticky top-0 z-30 border-b border-[#E5DFD5] bg-[#F3EFE8]">
+    <header ref={headerRef} className="sticky top-0 z-30 border-b border-[#E5DFD5] bg-[#F3EFE8]">
       <div className="max-w-[1440px] mx-auto px-4 sm:px-6 min-h-[48px] py-1.5 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-2.5">
         {/* Left: Plain title + soft emerald Saved pill */}
         <div className="flex items-center gap-2.5 min-w-0">
@@ -77,7 +95,7 @@ export function SessionHeaderBar({
               type="button"
               onClick={onExit}
               aria-label={isAdminRun ? t('session.backToBank') : t('session.exitAria')}
-              className="inline-flex items-center gap-1.5 p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-colors"
+              className="inline-flex items-center gap-1.5 p-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#4A5955] hover:text-[#113C36] cursor-pointer shrink-0 transition-tactile"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               {isAdminRun && <span className="hidden sm:inline pr-1 text-xs font-sans-display font-semibold">{t('session.backToBank')}</span>}
@@ -171,7 +189,7 @@ export function SessionHeaderBar({
             onClick={onToggleFlag}
             aria-pressed={isFlagged}
             aria-keyshortcuts="F"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-tactile ${
               isFlagged
                 ? 'border-[#A35116]/50 bg-[#FDF0E2] text-[#A35116]'
                 : 'border-[#E5DFD5] bg-white text-[#4A5955] hover:text-[#113C36] hover:border-[#CFC6B9]'
@@ -185,8 +203,9 @@ export function SessionHeaderBar({
             type="button"
             onClick={onToggleNav}
             aria-expanded={navOpen}
+            aria-controls={SESSION_NAVIGATOR_ID}
             aria-keyshortcuts="N"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-tactile ${
               navOpen
                 ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
                 : 'border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36]'
@@ -208,7 +227,7 @@ export function SessionHeaderBar({
               aria-pressed={inspectorOpen}
               aria-keyshortcuts="I"
               title={t('session.inspectorToggleAria')}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-xs font-sans-display font-medium cursor-pointer whitespace-nowrap transition-tactile ${
                 inspectorOpen
                   ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
                   : 'border-[#CFC6B9] bg-white text-[#113C36]'
@@ -230,7 +249,7 @@ export function SessionHeaderBar({
             type="button"
             disabled={submitting}
             onClick={onFinish}
-            className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-colors"
+            className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-tactile"
           >
             {finishBtnLabel}
           </button>

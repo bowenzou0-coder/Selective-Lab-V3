@@ -24,7 +24,7 @@ export function ShortcutHelpPopover({ open, onOpenChange }: ShortcutHelpPopoverP
           aria-label={t('shortcuts.buttonAria')}
           aria-keyshortcuts="Shift+/"
           title={t('shortcuts.title')}
-          className={`inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer transition-colors ${
+          className={`inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer transition-tactile ${
             isOpen
               ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
               : 'border-[#E5DFD5] bg-white text-[#4A5955] hover:text-[#113C36] hover:border-[#CFC6B9]'
@@ -53,7 +53,7 @@ export function ShortcutHelpPopover({ open, onOpenChange }: ShortcutHelpPopoverP
             </div>
           ))}
         </dl>
-        <p className="border-t border-[#E5DFD5] pt-2.5 text-[11px] leading-relaxed text-[#78756E]">{t('shortcuts.note')}</p>
+        <p className="border-t border-[#E5DFD5] pt-2.5 text-[11px] leading-relaxed text-[#615E57]">{t('shortcuts.note')}</p>
       </div>
     </Popover>
   );

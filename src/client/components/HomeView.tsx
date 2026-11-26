@@ -163,7 +163,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
   const streakDays = data?.streakDays ?? 0;
 
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-10 space-y-12 max-w-[1160px] mx-auto">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-10 space-y-12 max-w-[1160px] mx-auto">
       {error && <StatusBanner size="md">{error}</StatusBanner>}
 
       {/* Ready Confirmation Modal before starting a timed session */}
@@ -184,13 +184,13 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
           <>
             <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
               <div>
-                <dt className="text-[#78756E]">{t('home.modalQuestions')}</dt>
+                <dt className="text-[#615E57]">{t('home.modalQuestions')}</dt>
                 <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
                   {pendingLaunch.questionCountLabel}
                 </dd>
               </div>
               <div>
-                <dt className="text-[#78756E]">{t('home.modalTimeAllowed')}</dt>
+                <dt className="text-[#615E57]">{t('home.modalTimeAllowed')}</dt>
                 <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
                   {pendingLaunch.durationLabel}
                 </dd>
@@ -283,7 +283,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
                 type="button"
                 disabled={launching !== null}
                 onClick={requestDailyLaunch}
-                className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-2 transition-colors disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-2 transition-tactile disabled:opacity-60 cursor-pointer whitespace-nowrap"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span>{launching === 'daily' ? t('home.preparing') : t('home.startTodaysPractice')}</span>
@@ -323,7 +323,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
               type="button"
               disabled={launching !== null}
               onClick={() => requestDrillLaunch(writingDrill)}
-              className="w-full sm:w-auto px-5 py-2.5 rounded-[10px] bg-[#F29A63] hover:bg-[#E6874C] text-[#113C36] text-sm font-sans-display font-semibold transition-colors disabled:opacity-60 cursor-pointer whitespace-nowrap"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-[10px] bg-[#F29A63] hover:bg-[#E6874C] text-[#113C36] text-sm font-sans-display font-semibold transition-tactile disabled:opacity-60 cursor-pointer whitespace-nowrap"
             >
               {t('home.startWritingSprint')}
             </button>
@@ -347,7 +347,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
             onClick={() => {
               document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }}
-            className="w-full sm:w-auto px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-colors cursor-pointer whitespace-nowrap"
+            className="w-full sm:w-auto px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold transition-tactile cursor-pointer whitespace-nowrap"
           >
             {t('home.configureMock')}
           </button>
@@ -386,7 +386,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
           onClick={() =>
             document.getElementById('practice-drills')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
-          className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+          className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
         >
           {t('home.jumpDrills')}
         </button>
@@ -395,7 +395,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
           onClick={() =>
             document.getElementById('mock-simulator')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
-          className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+          className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
         >
           {t('home.jumpMocks')}
         </button>
@@ -405,7 +405,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
             onClick={() =>
               document.getElementById('recent-sessions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
             }
-            className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+            className="px-3.5 py-1.5 rounded-full border border-[#E5DFD5] bg-[#FAF8F5] hover:bg-[#F3EFE8] hover:border-[#CFC6B9] text-[13px] font-sans-display font-semibold text-[#113C36] transition-[background-color,border-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
           >
             {t('home.jumpRecent')}
           </button>
@@ -474,7 +474,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
                         ? t('repair.sessionTitle', { count: s.plannedQuestionIds.length })
                         : s.title || (s.mode === 'spaced_review' ? t('home.dailyPracticeSet') : s.mode.replace(/_/g, ' '))}
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#78756E] tabular-nums">
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#615E57] tabular-nums">
                       <span>{formatDate(s.startedAt)}</span>
                       <span className="px-2 py-0.5 rounded-full bg-[#F3EFE8] text-[#4A5955] font-medium">
                         {s.status === 'submitted'
@@ -496,7 +496,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
                 <button
                   type="button"
                   onClick={() => onOpenSession(s.sessionId, s.status === 'in_progress')}
-                  className="px-3.5 py-1.5 text-xs font-sans-display font-semibold rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+                  className="px-3.5 py-1.5 text-xs font-sans-display font-semibold rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] cursor-pointer whitespace-nowrap shrink-0 transition-tactile"
                 >
                   {s.status === 'submitted' ? t('home.review') : t('home.resume')}
                 </button>

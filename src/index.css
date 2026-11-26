@@ -19,6 +19,13 @@
   }
 }
 
+/* Colour transitions plus the press `scale` (see tokens.css), for pressable controls. */
+@utility transition-tactile {
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, box-shadow, scale;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+
 /* Indeterminate bar for lazily loaded routes (see RouteFallback in App.tsx). */
 @keyframes route-progress {
   from {

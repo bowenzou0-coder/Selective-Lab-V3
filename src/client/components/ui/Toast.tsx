@@ -66,7 +66,7 @@ export function Toast({ message, onDismiss, tone = 'success', durationMs = 5000,
           onMouseLeave={() => setPaused(false)}
           onFocus={() => setPaused(true)}
           onBlur={() => setPaused(false)}
-          className={`pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-[14px] border border-[#C5DDD1] bg-[#E5F0EA] py-3 pr-3 pl-4 text-xs font-medium text-[#113C36] shadow-[0_12px_32px_-12px_rgba(17,60,54,0.35)] transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${
+          className={`pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-[14px] border border-[#C5DDD1] bg-[#E5F0EA] py-3 pr-3 pl-4 text-xs font-medium text-[#113C36] shadow-[0_12px_32px_-12px_rgba(17,60,54,0.35)] transition-[opacity,transform,translate,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${
             closing ? 'translate-y-1 opacity-0' : 'translate-y-0 opacity-100 starting:translate-y-2 starting:opacity-0'
           }`}
         >
@@ -76,7 +76,7 @@ export function Toast({ message, onDismiss, tone = 'success', durationMs = 5000,
             type="button"
             aria-label={dismissLabel || t('common.dismiss')}
             onClick={() => onDismissRef.current()}
-            className="-m-1 shrink-0 cursor-pointer rounded-[8px] p-1 text-[#4A5955] transition-colors hover:bg-white/70 hover:text-[#113C36]"
+            className="-m-1 shrink-0 cursor-pointer rounded-[8px] p-1 text-[#4A5955] transition-tactile hover:bg-white/70 hover:text-[#113C36]"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
           </button>

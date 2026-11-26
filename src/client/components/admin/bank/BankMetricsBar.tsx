@@ -26,7 +26,7 @@ function Metric({ label, value, sub, tone = 'text-[#113C36]' }: { label: string;
         <span className={`font-serif-display text-[20px] font-bold leading-none tabular-nums ${tone}`}>{value}</span>
         <span className="truncate text-xs text-[#4A5955]">{label}</span>
       </div>
-      {sub && <div className="mt-0.5 truncate text-[11px] tabular-nums text-[#78756E]">{sub}</div>}
+      {sub && <div className="mt-0.5 truncate text-[11px] tabular-nums text-[#615E57]">{sub}</div>}
     </div>
   );
 }
@@ -79,7 +79,7 @@ export const BankMetricsBar = memo(function BankMetricsBar({
         </>
       )}
       <Metric label={t('bank.cardPaused')} value={poolHealth.pausedCount} tone="text-[#A35116]" />
-      <Metric label={t('bank.cardArchived')} value={poolHealth.archivedCount} tone="text-[#78756E]" />
+      <Metric label={t('bank.cardArchived')} value={poolHealth.archivedCount} tone="text-[#615E57]" />
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
         <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium tabular-nums ${urgency}`}>
@@ -95,7 +95,7 @@ export const BankMetricsBar = memo(function BankMetricsBar({
             type="button"
             disabled={archiving}
             onClick={onArchiveMastered}
-            className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[#CFC6B9] bg-white px-3 py-1.5 font-sans-display text-xs font-semibold text-[#113C36] transition-[background-color,color,transform] duration-150 hover:bg-[#113C36] hover:text-white active:scale-[0.97] disabled:opacity-50"
+            className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[#CFC6B9] bg-white px-3 py-1.5 font-sans-display text-xs font-semibold text-[#113C36] transition-[background-color,color,transform,translate,scale] duration-150 hover:bg-[#113C36] hover:text-white active:scale-[0.97] disabled:opacity-50"
           >
             <Archive className="h-3.5 w-3.5 shrink-0" />
             <span>{t('bank.archiveMasteredBtn', { count: masteredCount })}</span>

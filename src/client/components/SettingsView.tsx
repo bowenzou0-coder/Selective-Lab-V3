@@ -27,6 +27,7 @@ import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { StatusBanner } from './ui/StatusBanner';
 import { Toast } from './ui/Toast';
 import { useI18n } from '../i18n';
+import { SegmentedControl } from './ui/SegmentedControl';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_LEARNING_CONFIG,
@@ -51,7 +52,7 @@ const FALLBACK_DAILY: LearnerDailySettingsView = {
 /** Mirrors the daily-plan card and the stacked settings sections below it. */
 function SettingsSkeleton({ title, subtitle, label }: { title: string; subtitle: string; label: string }) {
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-10 space-y-8 max-w-[980px] mx-auto text-[#113C36]">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-10 space-y-8 max-w-[980px] mx-auto text-[#113C36]">
       <header className="space-y-1">
         <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
           {title}
@@ -335,7 +336,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
   const counts = data?.progressCounts;
 
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-10 space-y-8 max-w-[980px] mx-auto text-[#113C36]">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-10 space-y-8 max-w-[980px] mx-auto text-[#113C36]">
       <header className="space-y-1">
         <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
           {t('settings.title')}
@@ -387,38 +388,16 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
             <p className="text-[13px] text-[#4A5955]">{t('settings.dailySubtitle')}</p>
           </div>
 
-          <div
-            role="group"
-            aria-label={t('settings.dailyTitle')}
-            className="inline-flex items-center p-1 rounded-[12px] bg-white border border-[#CFC6B9] gap-1"
-          >
-            <button
-              type="button"
-              disabled={isLocked}
-              aria-pressed={form.autoCalibrate.enabled}
-              onClick={() => updateAuto({ enabled: true })}
-              className={`px-3.5 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed whitespace-nowrap ${
-                form.autoCalibrate.enabled
-                  ? 'bg-[#113C36] text-white'
-                  : 'text-[#4A5955] hover:text-[#113C36]'
-              }`}
-            >
-              {t('cfg.modeAuto')}
-            </button>
-            <button
-              type="button"
-              disabled={isLocked}
-              aria-pressed={!form.autoCalibrate.enabled}
-              onClick={() => updateAuto({ enabled: false })}
-              className={`px-3.5 py-1.5 rounded-[9px] text-xs font-sans-display font-semibold transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed whitespace-nowrap ${
-                !form.autoCalibrate.enabled
-                  ? 'bg-[#113C36] text-white'
-                  : 'text-[#4A5955] hover:text-[#113C36]'
-              }`}
-            >
-              {t('cfg.modeManual')}
-            </button>
-          </div>
+          <SegmentedControl
+            ariaLabel={t('settings.dailyTitle')}
+            disabled={isLocked}
+            value={form.autoCalibrate.enabled ? 'auto' : 'manual'}
+            onChange={(mode) => updateAuto({ enabled: mode === 'auto' })}
+            options={[
+              { value: 'auto', label: t('cfg.modeAuto') },
+              { value: 'manual', label: t('cfg.modeManual') },
+            ]}
+          />
         </div>
 
         {isLocked && (
@@ -499,7 +478,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                   type="button"
                   disabled={recalibrating}
                   onClick={handleRecalibrate}
-                  className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${recalibrating ? 'animate-spin' : ''}`} />
                   <span>{recalibrating ? t('cfg.recalibratingBtn') : t('cfg.recalibrateBtn')}</span>
@@ -509,7 +488,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => (
                   <div key={sec} className="rounded-[10px] bg-[#FAF8F5] border border-[#E5DFD5] px-3 py-2">
-                    <div className="text-[11px] text-[#78756E]">{sectionShortLabel(sec)}</div>
+                    <div className="text-[11px] text-[#615E57]">{sectionShortLabel(sec)}</div>
                     <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
                       {decidedLimits[sec] ?? 0}
                     </div>
@@ -645,7 +624,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                     type="button"
                     disabled={saving}
                     onClick={() => setForm(savedForm)}
-                    className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+                    className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
                   >
                     {t('settings.discardChanges')}
                   </button>
@@ -653,7 +632,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                     type="button"
                     disabled={saving}
                     onClick={handleSavePlan}
-                    className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+                    className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
                   >
                     <Save className="w-3.5 h-3.5" />
                     <span>{saving ? t('settings.savingPlan') : t('settings.savePlan')}</span>
@@ -661,7 +640,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                 </div>
               </div>
             ) : hasPersonalPrefs ? (
-              <div className="flex items-center justify-between gap-3 text-xs text-[#78756E]">
+              <div className="flex items-center justify-between gap-3 text-xs text-[#615E57]">
                 <span>{t('settings.allSaved')}</span>
                 <button
                   type="button"
@@ -697,25 +676,25 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3">
-            <div className="text-xs text-[#78756E]">{t('data.testSessions')}</div>
+            <div className="text-xs text-[#615E57]">{t('data.testSessions')}</div>
             <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
               {counts?.sessionsCount ?? 0}
             </div>
           </div>
           <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3">
-            <div className="text-xs text-[#78756E]">{t('data.questionAttempts')}</div>
+            <div className="text-xs text-[#615E57]">{t('data.questionAttempts')}</div>
             <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
               {counts?.attemptsCount ?? 0}
             </div>
           </div>
           <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3">
-            <div className="text-xs text-[#78756E]">{t('data.masteryRecords')}</div>
+            <div className="text-xs text-[#615E57]">{t('data.masteryRecords')}</div>
             <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
               {counts?.evidenceCount ?? 0}
             </div>
           </div>
           <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3">
-            <div className="text-xs text-[#78756E]">{t('data.writingSubmissions')}</div>
+            <div className="text-xs text-[#615E57]">{t('data.writingSubmissions')}</div>
             <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
               {counts?.writingCount ?? 0}
             </div>
@@ -727,7 +706,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
             <button
               type="button"
               onClick={() => api.downloadFile('/api/student/export?format=json', 'selective-lab-progress.json')}
-              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
             >
               <Download className="w-3.5 h-3.5" />
               <span>{t('settings.exportJson')}</span>
@@ -735,7 +714,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
             <button
               type="button"
               onClick={() => api.downloadFile('/api/student/export?format=csv', 'selective-lab-progress.csv')}
-              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
             >
               <Download className="w-3.5 h-3.5" />
               <span>{t('settings.exportCsv')}</span>
@@ -745,7 +724,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
           <button
             type="button"
             onClick={() => setResetOpen(true)}
-            className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+            className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>{t('data.resetProgressBtn')}</span>
@@ -766,7 +745,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
         </div>
 
         {flags.length === 0 ? (
-          <p className="text-xs text-[#78756E]">{t('settings.flagsEmpty')}</p>
+          <p className="text-xs text-[#615E57]">{t('settings.flagsEmpty')}</p>
         ) : (
           <div className="divide-y divide-[#E5DFD5] border-t border-b border-[#E5DFD5]">
             {flags.map((flag) => (
@@ -779,7 +758,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                     {flag.reason}
                     {flag.notes ? ` — ${flag.notes}` : ''}
                   </div>
-                  <div className="text-[11px] text-[#78756E] tabular-nums">
+                  <div className="text-[11px] text-[#615E57] tabular-nums">
                     {formatDate(flag.createdAt, true)}
                   </div>
                 </div>
@@ -798,7 +777,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
                       type="button"
                       onClick={() => setWithdrawTarget(flag)}
                       aria-label={t('settings.flagWithdrawAria', { id: flag.questionId })}
-                      className="px-2.5 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-[11px] font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.97]"
+                      className="px-2.5 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-[11px] font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97]"
                     >
                       {t('settings.flagWithdraw')}
                     </button>
@@ -826,7 +805,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
         <button
           type="button"
           onClick={onReplayTour}
-          className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap"
+          className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] whitespace-nowrap"
         >
           {t('settings.replayTour')}
         </button>
@@ -840,7 +819,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
               <UserRound className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <div className="text-xs text-[#78756E]">{t('settings.accountSignedInAs')}</div>
+              <div className="text-xs text-[#615E57]">{t('settings.accountSignedInAs')}</div>
               <div className="font-sans-display font-semibold text-sm text-[#113C36] truncate">
                 {data?.email || data?.studentId}
               </div>
@@ -870,7 +849,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
           <button
             type="button"
             onClick={() => setDeleteOpen(true)}
-            className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+            className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>{t('settings.deleteAccountBtn')}</span>

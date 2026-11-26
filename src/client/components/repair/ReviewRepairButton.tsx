@@ -45,12 +45,12 @@ export function ReviewRepairButton({ sessionMode, questions, reviewResults, onLa
         aria-describedby={noteId}
         title={note}
         onClick={() => void launch(repairDrillPayload(plan))}
-        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] border border-[#A35116]/30 bg-[#FDF0E2] hover:bg-[#FBE5CF] text-xs font-sans-display font-semibold text-[#7A3D10] cursor-pointer whitespace-nowrap transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-60 disabled:cursor-default"
+        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] border border-[#A35116]/30 bg-[#FDF0E2] hover:bg-[#FBE5CF] text-xs font-sans-display font-semibold text-[#7A3D10] cursor-pointer whitespace-nowrap transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-60 disabled:cursor-default"
       >
         <RotateCcw className="w-3.5 h-3.5 shrink-0" aria-hidden />
         <span>{label}</span>
       </button>
-      <span id={noteId} className={plan.kind === 'pool' ? 'text-[11px] text-[#78756E]' : 'sr-only'}>
+      <span id={noteId} className={plan.kind === 'pool' ? 'text-[11px] text-[#615E57]' : 'sr-only'}>
         {note}
       </span>
       {error && (

@@ -35,7 +35,7 @@ const RANGE_FILL: Record<WordRangeState, string> = {
 };
 
 const RANGE_TEXT: Record<WordRangeState, string> = {
-  empty: 'text-[#78756E]',
+  empty: 'text-[#615E57]',
   building: 'text-[#4A5955]',
   in_target: 'text-[#1D6346]',
   over: 'text-[#A35116]',
@@ -78,7 +78,7 @@ function WordRangeMeter({ wordCount, range }: { wordCount: number; range: WordRa
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs tabular-nums">
         <span className="text-[#4A5955]">
           <strong className="font-semibold text-[#113C36]">{wordCount}</strong> {t('writ.words')}{' '}
-          <span className="text-[#78756E]">{t('writ.targetRange', { min: range.min, max: range.max })}</span>
+          <span className="text-[#615E57]">{t('writ.targetRange', { min: range.min, max: range.max })}</span>
         </span>
         <span className={RANGE_TEXT[p.state]}>{label}</span>
       </div>

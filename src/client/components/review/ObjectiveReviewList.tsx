@@ -44,7 +44,7 @@ export const ReviewItemPills = memo(function ReviewItemPills({
             aria-label={`Review item ${globalNum}${
               st?.hasUnanswered ? ' Unanswered' : st?.hasIncorrect ? ' Incorrect' : ' Correct'
             }`}
-            className={`w-9 h-9 inline-flex items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums cursor-pointer transition-colors ${
+            className={`w-9 h-9 inline-flex items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums cursor-pointer transition-tactile ${
               isSelected
                 ? 'border-[#113C36] bg-[#113C36] text-white'
                 : st?.hasUnanswered
@@ -86,7 +86,7 @@ export function ReviewFilterTabs({
           key={id}
           type="button"
           onClick={() => onChange(id)}
-          className={`px-3 py-1 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+          className={`px-3 py-1 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-tactile ${
             filter === id ? 'bg-[#113C36] text-white' : 'text-[#4A5955] hover:text-[#113C36]'
           }`}
         >

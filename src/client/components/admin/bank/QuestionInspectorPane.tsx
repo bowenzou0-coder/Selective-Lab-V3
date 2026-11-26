@@ -30,8 +30,8 @@ interface QuestionInspectorPaneProps {
 
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[8.5rem_1fr] gap-3 py-1.5">
-      <dt className="text-[#78756E]">{label}</dt>
+    <div className="grid grid-cols-[minmax(0,6.5rem)_1fr] gap-3 py-1.5 sm:grid-cols-[8.5rem_1fr]">
+      <dt className="text-[#615E57]">{label}</dt>
       <dd className="min-w-0 break-words text-[#113C36]">{children}</dd>
     </div>
   );
@@ -59,7 +59,7 @@ function AnswerKeyTab({
                 {part.correctAnswerKey || t('bank.writingRubricBadge')}
               </span>
               <span className="text-[#4A5955]">{skillName(part.skillId)}</span>
-              <span className="ml-auto flex gap-2 tabular-nums text-[#78756E]">
+              <span className="ml-auto flex gap-2 tabular-nums text-[#615E57]">
                 <span>{t('bank.partDifficulty', { value: part.difficultyCalibrated ?? part.difficultyInitial })}</span>
                 <span>{t('bank.partTargetTime', { sec: part.targetTimeSec })}</span>
               </span>
@@ -175,7 +175,7 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
     <section
       ref={ref}
       aria-label={question.questionId}
-      className="min-w-0 scroll-mt-4 space-y-4 rounded-[16px] border border-[#E5DFD5] bg-white p-4 sm:p-5 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto"
+      className="min-w-0 scroll-mt-4 space-y-4 rounded-[16px] border border-[#E5DFD5] bg-white p-4 sm:p-5 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-2rem)] xl:overflow-y-auto xl:overscroll-contain"
     >
       <header className="space-y-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -187,7 +187,7 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
             {completionStatusLabel(completion)}
           </span>
         </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#78756E]">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#615E57]">
           <span>
             {t('bank.attemptsMeta')} <span className="tabular-nums text-[#113C36]">{progress?.attemptsCount ?? 0}</span>
           </span>
@@ -252,7 +252,7 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
                   aria-pressed={active}
                   disabled={statusBusy}
                   onClick={() => onSetPoolStatus(st)}
-                  className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[9px] px-2.5 py-1.5 font-sans-display font-semibold transition-colors disabled:opacity-60 ${
+                  className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[9px] px-2.5 py-1.5 font-sans-display font-semibold transition-tactile disabled:opacity-60 ${
                     active ? 'bg-[#113C36] text-white' : 'text-[#4A5955] hover:bg-white hover:text-[#113C36]'
                   }`}
                 >
@@ -264,12 +264,12 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
               );
             })}
           </div>
-          {statusBusy && <p className="text-[#78756E]">{t('bank.savingPoolStatus')}</p>}
+          {statusBusy && <p className="text-[#615E57]">{t('bank.savingPoolStatus')}</p>}
         </section>
 
         <section className="space-y-2">
           <h4 className="font-sans-display font-semibold text-[#113C36]">{t('bank.diagramTitle')}</h4>
-          <label className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[#CFC6B9] bg-white px-3 py-1.5 font-sans-display font-semibold text-[#113C36] transition-colors hover:bg-[#FAF8F5]">
+          <label className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-[#CFC6B9] bg-white px-3 py-1.5 font-sans-display font-semibold text-[#113C36] transition-tactile hover:bg-[#FAF8F5]">
             <Upload className="h-3.5 w-3.5 shrink-0" />
             <span>{uploading ? t('bank.uploading') : t('bank.attachDiagram')}</span>
             <input type="file" accept="image/*" className="sr-only" disabled={uploading} onChange={onUploadVisual} />
@@ -279,7 +279,7 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
         <section className="space-y-2">
           <h4 className="font-sans-display font-semibold text-[#113C36]">{t('bank.versionHistoryTitle')}</h4>
           {versions.length <= 1 ? (
-            <p className="text-[#78756E]">{t('bank.singleVersion')}</p>
+            <p className="text-[#615E57]">{t('bank.singleVersion')}</p>
           ) : (
             <ol className="divide-y divide-[#F2EDE4] rounded-[12px] border border-[#E5DFD5]">
               {versions.map((v) => (
@@ -287,7 +287,7 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
                   <span className="font-mono-code text-[#113C36]">
                     v{v.version} · {v.questionId}
                   </span>
-                  <span className="flex items-center gap-2 text-[#78756E]">
+                  <span className="flex items-center gap-2 text-[#615E57]">
                     <span>{formatDate(v.updatedAtIso || v.createdAtIso)}</span>
                     {v.questionId === question.questionId && (
                       <span className="rounded-full bg-[#E5F0EA] px-2 py-0.5 text-[11px] font-medium text-[#113C36]">
@@ -328,7 +328,7 @@ export const QuestionInspectorPane = memo(function QuestionInspectorPane({
               type="button"
               disabled={deleting || statusBusy}
               onClick={() => setConfirmDelete(true)}
-              className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#B83A28]/25 bg-white px-2.5 py-1.5 font-sans-display font-semibold text-[#B83A28] transition-colors hover:bg-[#FDECEB] disabled:opacity-50"
+              className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[#B83A28]/25 bg-white px-2.5 py-1.5 font-sans-display font-semibold text-[#B83A28] transition-tactile hover:bg-[#FDECEB] disabled:opacity-50"
             >
               <Trash2 className="h-3.5 w-3.5 shrink-0" />
               <span>{t('bank.deletePermanently')}</span>

@@ -228,6 +228,7 @@ export const MESSAGES_EN = {
   // Question Workspace, Reading, Writing, Visuals
   'ws.passageAndVisual': 'Passage and visual',
   'ws.questionAndAnswer': 'Question and answer',
+  'ws.paneSwitcherAria': 'Show passage or question',
   'ws.workedExplanation': 'Worked Explanation',
   'ws.partOfTotal': ' (Part {current} of {total})',
   'ws.correctWithKey': 'Correct ({key})',
@@ -450,6 +451,7 @@ export const MESSAGES_EN = {
   'admin.tabBatches': 'Import & Batches',
   'admin.tabData': 'Data & Design',
   'admin.dismissNotice': 'Dismiss notice',
+  'admin.sectionsAria': 'Admin studio sections',
   'admin.dismissError': 'Dismiss error',
 
   // Bank Pool Status & Completion Status

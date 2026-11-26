@@ -107,7 +107,7 @@ class ErrorBoundaryInner extends Component<ErrorBoundaryInnerProps, ErrorBoundar
             <button
               type="button"
               onClick={this.handleReload}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-xs transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-xs transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
               <span>{staleChunk ? strings.updateReloadBtn : strings.reloadBtn}</span>
@@ -116,7 +116,7 @@ class ErrorBoundaryInner extends Component<ErrorBoundaryInnerProps, ErrorBoundar
               <button
                 type="button"
                 onClick={this.handleReset}
-                className="px-4 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] font-sans-display font-semibold text-xs transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer"
+                className="px-4 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36] font-sans-display font-semibold text-xs transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer"
               >
                 {strings.retryBtn}
               </button>

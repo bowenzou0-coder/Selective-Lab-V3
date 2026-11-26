@@ -103,7 +103,7 @@ export function StudioShell({
           <button
             type="button"
             onClick={onSignOut}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-tactile cursor-pointer whitespace-nowrap"
           >
             <LogOut className="w-3.5 h-3.5 shrink-0" />
             <span>{t('nav.signOut')}</span>
@@ -141,7 +141,7 @@ export function StudioShell({
                       handleNav(item.key);
                     }}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-[background-color,color,border-color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[14px] transition-[background-color,color,border-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
                       isActive
                         ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5] shadow-[0_1px_2px_rgba(17,60,54,0.05)]'
                         : 'text-[#4A5955] font-sans-text font-medium hover:text-[#113C36] hover:bg-white/55 border border-transparent'
@@ -169,7 +169,7 @@ export function StudioShell({
             <button
               type="button"
               onClick={onSignOut}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-[10px] text-[13px] font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-colors cursor-pointer whitespace-nowrap"
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-[10px] text-[13px] font-sans-display font-medium text-[#4A5955] hover:text-[#113C36] hover:bg-white/70 transition-tactile cursor-pointer whitespace-nowrap"
             >
               <LogOut className="w-3.5 h-3.5 shrink-0" />
               <span>{t('nav.signOut')}</span>
@@ -204,7 +204,7 @@ export function StudioShell({
                 handleNav(item.key);
               }}
               aria-current={isActive ? 'page' : undefined}
-              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] ${
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-[10px] text-[11px] transition-[background-color,color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] ${
                 isActive
                   ? 'bg-white text-[#113C36] font-sans-display font-semibold border border-[#E5DFD5]'
                   : 'text-[#4A5955] font-medium'

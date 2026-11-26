@@ -42,19 +42,19 @@ export function SubmitConfirmDialog({
     >
       <dl className="grid grid-cols-3 gap-2.5 rounded-[12px] border border-[#E5DFD5] bg-[#FAF8F5] p-3.5 text-center text-xs tabular-nums">
         <div>
-          <dt className="text-[#78756E]">{t('session.answered')}</dt>
+          <dt className="text-[#615E57]">{t('session.answered')}</dt>
           <dd className="mt-1 font-serif-display text-xl font-extrabold text-[#1D6346]">
             {answeredSlots}/{totalSlots}
           </dd>
         </div>
         <div>
-          <dt className="text-[#78756E]">{t('session.unanswered')}</dt>
+          <dt className="text-[#615E57]">{t('session.unanswered')}</dt>
           <dd className="mt-1 font-serif-display text-xl font-extrabold text-[#113C36]">
             {Math.max(0, totalSlots - answeredSlots)}
           </dd>
         </div>
         <div>
-          <dt className="text-[#78756E]">{t('session.flagged')}</dt>
+          <dt className="text-[#615E57]">{t('session.flagged')}</dt>
           <dd className="mt-1 font-serif-display text-xl font-extrabold text-[#A35116]">{flaggedCount}</dd>
         </div>
       </dl>

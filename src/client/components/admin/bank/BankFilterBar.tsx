@@ -27,7 +27,7 @@ interface BankFilterBarProps {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex min-w-0 flex-col gap-1">
-      <span className="truncate text-[11px] font-medium text-[#78756E]">{label}</span>
+      <span className="truncate text-[11px] font-medium text-[#615E57]">{label}</span>
       {children}
     </label>
   );
@@ -40,11 +40,11 @@ function Select({ value, onChange, children, ariaLabel }: { value: string; onCha
         value={value}
         aria-label={ariaLabel}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full cursor-pointer appearance-none truncate rounded-[10px] border border-[#E5DFD5] bg-white py-1.5 pl-3 pr-8 text-[12px] font-medium text-[#113C36] transition-colors hover:border-[#CBC2B3] focus:border-[#113C36] focus:outline-none"
+        className="w-full cursor-pointer appearance-none truncate rounded-[10px] border border-[#E5DFD5] bg-white py-1.5 pl-3 pr-8 text-[12px] font-medium text-[#113C36] transition-tactile hover:border-[#CBC2B3] focus:border-[#113C36] focus:outline-none"
       >
         {children}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#78756E]" />
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#615E57]" />
     </div>
   );
 }
@@ -106,14 +106,14 @@ export const BankFilterBar = memo(function BankFilterBar({
     <section className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[200px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#78756E]" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#615E57]" />
           <input
             type="search"
             aria-label={t('bank.searchPlaceholder')}
             value={filters.search}
             onChange={(e) => onChange('search', e.target.value)}
             placeholder={t('bank.searchPlaceholder')}
-            className="w-full rounded-[10px] border border-[#E5DFD5] bg-white py-2 pl-9 pr-3 text-sm text-[#113C36] transition-colors placeholder:text-[#78756E] focus:border-[#113C36] focus:outline-none"
+            className="w-full rounded-[10px] border border-[#E5DFD5] bg-white py-2 pl-9 pr-3 text-sm text-[#113C36] transition-colors placeholder:text-[#615E57] focus:border-[#113C36] focus:outline-none"
           />
         </div>
 
@@ -130,7 +130,7 @@ export const BankFilterBar = memo(function BankFilterBar({
                 type="button"
                 aria-pressed={active}
                 onClick={() => onChange('section', sec)}
-                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-[9px] px-3 py-1 text-[12px] font-medium transition-colors ${
+                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-[9px] px-3 py-1 text-[12px] font-medium transition-tactile ${
                   active ? 'bg-[#113C36] text-white' : 'text-[#4A5955] hover:bg-white/80 hover:text-[#113C36]'
                 }`}
               >
@@ -148,7 +148,7 @@ export const BankFilterBar = memo(function BankFilterBar({
             <button
               type="button"
               {...props}
-              className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] border px-3 py-2 font-sans-display text-xs font-semibold transition-colors ${
+              className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] border px-3 py-2 font-sans-display text-xs font-semibold transition-tactile ${
                 open || popoverCount > 0
                   ? 'border-[#C5DDD1] bg-[#E5F0EA] text-[#113C36]'
                   : 'border-[#E5DFD5] bg-white text-[#4A5955] hover:bg-[#FAF8F5]'
@@ -185,7 +185,7 @@ export const BankFilterBar = memo(function BankFilterBar({
               </Select>
             </Field>
             <div className="space-y-1 sm:col-span-2">
-              <span className="block truncate text-[11px] font-medium text-[#78756E]">
+              <span className="block truncate text-[11px] font-medium text-[#615E57]">
                 {t('bank.batchLabel', { count: batchSummaries.length })}
               </span>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -244,7 +244,7 @@ export const BankFilterBar = memo(function BankFilterBar({
               </Select>
             </Field>
             <fieldset className="sm:col-span-2">
-              <legend className="mb-1.5 text-[11px] font-medium text-[#78756E]">{t('bank.flagsFilterGroup')}</legend>
+              <legend className="mb-1.5 text-[11px] font-medium text-[#615E57]">{t('bank.flagsFilterGroup')}</legend>
               <div className="grid grid-cols-1 gap-1.5 text-xs text-[#4A5955] sm:grid-cols-2">
                 {BOOLEAN_FILTERS.map((key) => (
                   <label key={key} className="inline-flex cursor-pointer items-center gap-2">
@@ -267,7 +267,7 @@ export const BankFilterBar = memo(function BankFilterBar({
           onClick={onRefresh}
           aria-label={t('bank.refresh')}
           title={t('bank.refresh')}
-          className="inline-flex cursor-pointer items-center rounded-[10px] border border-[#E5DFD5] bg-white p-2 text-[#4A5955] transition-colors hover:bg-[#FAF8F5] hover:text-[#113C36]"
+          className="inline-flex cursor-pointer items-center rounded-[10px] border border-[#E5DFD5] bg-white p-2 text-[#4A5955] transition-tactile hover:bg-[#FAF8F5] hover:text-[#113C36]"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
@@ -275,7 +275,7 @@ export const BankFilterBar = memo(function BankFilterBar({
         <button
           type="button"
           onClick={onOpenSimulator}
-          className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-[#113C36] px-3.5 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform] duration-150 hover:bg-[#0B2B26] active:scale-[0.97]"
+          className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-[#113C36] px-3.5 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform,translate,scale] duration-150 hover:bg-[#0B2B26] active:scale-[0.97]"
         >
           <Play className="h-3 w-3 shrink-0 fill-current" />
           <span>{t('bank.simulate')}</span>
@@ -290,7 +290,7 @@ export const BankFilterBar = memo(function BankFilterBar({
               type="button"
               onClick={() => clearChip(chip.key)}
               aria-label={t('bank.removeFilterAria', { label: chip.label })}
-              className="inline-flex max-w-[16rem] cursor-pointer items-center gap-1 rounded-full border border-[#C5DDD1] bg-[#F4FAF7] py-0.5 pl-2.5 pr-1.5 text-[11px] font-medium text-[#113C36] transition-colors hover:bg-[#E5F0EA]"
+              className="inline-flex max-w-[16rem] cursor-pointer items-center gap-1 rounded-full border border-[#C5DDD1] bg-[#F4FAF7] py-0.5 pl-2.5 pr-1.5 text-[11px] font-medium text-[#113C36] transition-tactile hover:bg-[#E5F0EA]"
             >
               <span className="truncate">{chip.label}</span>
               <X className="h-3 w-3 shrink-0" />

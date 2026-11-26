@@ -31,7 +31,7 @@ export function RepairDrillCard({ summary, onLaunched }: RepairDrillCardProps) {
       <div
         aria-hidden
         className={`shrink-0 w-[68px] h-[68px] rounded-[14px] flex items-center justify-center font-serif-display font-extrabold text-[34px] leading-none tabular-nums ${
-          hasRepairs ? 'bg-[#FDF0E2] text-[#A35116]' : 'bg-[#F3EFE8] text-[#78756E]'
+          hasRepairs ? 'bg-[#FDF0E2] text-[#A35116]' : 'bg-[#F3EFE8] text-[#615E57]'
         }`}
       >
         {count}
@@ -50,7 +50,7 @@ export function RepairDrillCard({ summary, onLaunched }: RepairDrillCardProps) {
               </span>
             ))}
             {count > REPAIR_DRILL_CAP && (
-              <span className="text-[#78756E]">{t('repair.capNote', { cap: REPAIR_DRILL_CAP })}</span>
+              <span className="text-[#615E57]">{t('repair.capNote', { cap: REPAIR_DRILL_CAP })}</span>
             )}
           </div>
         )}
@@ -65,10 +65,10 @@ export function RepairDrillCard({ summary, onLaunched }: RepairDrillCardProps) {
         type="button"
         disabled={!hasRepairs || launching}
         onClick={() => void launch({ mode: 'repair_drill' })}
-        className={`shrink-0 self-start md:self-center inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] text-sm font-sans-display font-semibold whitespace-nowrap transition-[background-color,transform] duration-150 ease-out ${
+        className={`shrink-0 w-full sm:w-auto justify-center sm:self-start md:self-center inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] text-sm font-sans-display font-semibold whitespace-nowrap transition-[background-color,transform,translate,scale] duration-150 ease-out ${
           hasRepairs
             ? 'bg-[#113C36] hover:bg-[#0B2B26] text-white cursor-pointer active:scale-[0.98] disabled:opacity-70 disabled:cursor-default'
-            : 'bg-[#F3EFE8] text-[#78756E] cursor-default'
+            : 'bg-[#F3EFE8] text-[#615E57] cursor-default'
         }`}
       >
         <RotateCcw className="w-4 h-4 shrink-0" aria-hidden />

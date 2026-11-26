@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
+import { SegmentedControl } from './ui/SegmentedControl';
 import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
 import { api } from '../api';
 import { useCachedResource } from '../useCachedResource';
@@ -17,7 +18,7 @@ import {
 /** Mirrors the Progress header and retained-mastery panel so nothing shifts when data lands. */
 function ProgressSkeleton({ title, label }: { title: string; label: string }) {
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
       <SkeletonRegion label={label} className="space-y-10">
         <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div className="space-y-2">
@@ -121,7 +122,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
 
   if (!data) {
     return (
-      <main className="px-6 sm:px-9 py-12 max-w-[1160px] mx-auto">
+      <main className="px-4 sm:px-7 lg:px-9 py-12 max-w-[1160px] mx-auto">
         <p role="alert" className="p-4 rounded-[12px] bg-[#FDECEB] text-[#B42318] text-sm">
           {error || t('prog.noData')}
         </p>
@@ -132,7 +133,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
   const ms = data.masterySummary;
 
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div className="space-y-2">
           <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
@@ -202,7 +203,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                 {t('prog.eligibleBankPrefix')} <strong className="text-[#113C36]">{ms.eligibleCount}</strong>{' '}
                 {t('prog.eligibleBankSuffix')}
               </div>
-              <div className="text-[11px] text-[#78756E]">
+              <div className="text-[11px] text-[#615E57]">
                 {ms.excludedHoldoutCount > 0
                   ? t('prog.separateMeta', {
                       holdout: ms.excludedHoldoutCount,
@@ -218,12 +219,12 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
           </div>
 
           {/* Headline Mastery Percentages */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-5 rounded-[14px] border border-[#D4E4DC] bg-[#E5F0EA] space-y-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-4">
+            <div className="min-w-0 p-5 rounded-[14px] border border-[#D4E4DC] bg-[#E5F0EA] space-y-1.5">
               <div className="text-xs font-sans-display font-semibold text-[#1D6346]">
                 {t('prog.retainedMastery')}
               </div>
-              <div className="font-serif-display font-extrabold text-[38px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
+              <div className="font-serif-display font-extrabold text-[32px] lg:text-[38px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
                 {ms.retainedPercentDisplay}
               </div>
               <div className="text-xs text-[#4A5955] tabular-nums pt-0.5">
@@ -231,26 +232,26 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
               </div>
             </div>
 
-            <div className="p-5 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1.5">
+            <div className="min-w-0 p-5 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1.5">
               <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
                 {t('prog.cleanOnce')}
               </div>
-              <div className="font-serif-display font-extrabold text-[38px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
+              <div className="font-serif-display font-extrabold text-[32px] lg:text-[38px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
                 {ms.correctOncePercentDisplay}
               </div>
-              <div className="text-xs text-[#78756E] tabular-nums pt-0.5">
+              <div className="text-xs text-[#615E57] tabular-nums pt-0.5">
                 {t('prog.cleanOnceSub', { count: ms.correctOnceOrMoreCount, eligible: ms.eligibleCount })}
               </div>
             </div>
 
-            <div className="p-5 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1.5">
+            <div className="min-w-0 p-5 rounded-[14px] border border-[#E5DFD5] bg-white space-y-1.5">
               <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
                 {t('prog.firstPassAcc')}
               </div>
-              <div className="font-serif-display font-extrabold text-[38px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
+              <div className="font-serif-display font-extrabold text-[32px] lg:text-[38px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
                 {ms.firstPassPercentDisplay}
               </div>
-              <div className="text-xs text-[#78756E] tabular-nums pt-0.5">
+              <div className="text-xs text-[#615E57] tabular-nums pt-0.5">
                 {t('prog.firstPassSub', { count: ms.firstPassCleanCount, eligible: ms.eligibleCount })}
               </div>
             </div>
@@ -278,8 +279,8 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
           </div>
 
           {/* Per-Section Breakdown Table */}
-          <div className="overflow-x-auto border border-[#E5DFD5] rounded-[12px] bg-white">
-            <table className="w-full text-xs text-left tabular-nums">
+          <div className="scroll-x border border-[#E5DFD5] rounded-[12px] bg-white">
+            <table className="w-full text-xs text-left tabular-nums whitespace-nowrap">
               <thead className="bg-[#F3EFE8]/70 border-b border-[#E5DFD5] text-[#4A5955]">
                 <tr>
                   <th className="px-4 py-3 font-sans-display font-semibold">{t('prog.colSection')}</th>
@@ -320,8 +321,8 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
           <div
             className={`grid grid-cols-1 ${
               ms.excludedHoldoutCount > 0 || ms.holdoutSummary.attemptedQuestions > 0
-                ? 'md:grid-cols-3'
-                : 'md:grid-cols-2'
+                ? 'sm:grid-cols-2 lg:grid-cols-3'
+                : 'sm:grid-cols-2'
             } gap-4 pt-1`}
           >
             {(ms.excludedHoldoutCount > 0 || ms.holdoutSummary.attemptedQuestions > 0) && (
@@ -333,7 +334,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                 <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
                   {ms.holdoutSummary.accuracyDisplay}
                 </div>
-                <div className="text-xs text-[#78756E] tabular-nums">
+                <div className="text-xs text-[#615E57] tabular-nums">
                   {t('prog.pt3BenchmarkSub', {
                     attempted: ms.holdoutSummary.attemptedQuestions,
                     total: ms.holdoutSummary.totalQuestions,
@@ -350,7 +351,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
               <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
                 {t('prog.writingSubmittedCount', { count: ms.writingSummary.submissionsCount })}
               </div>
-              <div className="text-xs text-[#78756E] tabular-nums">
+              <div className="text-xs text-[#615E57] tabular-nums">
                 {t('prog.writingMarkedSub', {
                   evaluated: ms.writingSummary.evaluatedCount,
                   prompts: ms.writingSummary.totalPrompts,
@@ -366,7 +367,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
               <div className="font-serif-display font-extrabold text-[22px] text-[#113C36] tabular-nums">
                 {t('prog.archivedAttemptsCount', { count: ms.legacyAttemptsCount })}
               </div>
-              <div className="text-xs text-[#78756E]">
+              <div className="text-xs text-[#615E57]">
                 {t('prog.archiveSub')}
               </div>
             </div>
@@ -397,7 +398,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
               <div className="font-serif-display font-extrabold text-[30px] leading-none text-[#113C36] tabular-nums">
                 {acc !== null ? `${acc}%` : '—'}
               </div>
-              <div className="text-xs text-[#78756E] tabular-nums pt-0.5">
+              <div className="text-xs text-[#615E57] tabular-nums pt-0.5">
                 {t('prog.sectionAttemptsSub', {
                   attempts: st.attempts,
                   avg: st.avgTimeSec,
@@ -421,22 +422,18 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F3EFE8] rounded-[10px]">
-              {(['ALL', 'READ', 'MATH', 'THINK', 'WRIT'] as const).map((sec) => (
-                <button
-                  key={sec}
-                  type="button"
-                  onClick={() => setSectionFilter(sec)}
-                  className={`px-3 py-1 text-xs font-sans-display font-semibold rounded-[8px] cursor-pointer transition-colors whitespace-nowrap ${
-                    sectionFilter === sec
-                      ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.06)]'
-                      : 'text-[#4A5955] hover:text-[#113C36]'
-                  }`}
-                >
-                  {sec === 'ALL' ? t('prog.allFilter') : sectionShortLabel(sec)}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              ariaLabel={t('prog.skillReadinessTitle')}
+              tone="paper"
+              className="bg-[#F3EFE8] border-transparent"
+              segmentClassName="px-3 py-1"
+              value={sectionFilter}
+              onChange={setSectionFilter}
+              options={(['ALL', 'READ', 'MATH', 'THINK', 'WRIT'] as const).map((sec) => ({
+                value: sec,
+                label: sec === 'ALL' ? t('prog.allFilter') : sectionShortLabel(sec),
+              }))}
+            />
             <label className="inline-flex items-center gap-2 text-xs text-[#4A5955] cursor-pointer whitespace-nowrap">
               <input
                 type="checkbox"
@@ -449,7 +446,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {groupedByFamily.map(([family, skills]) => (
             <div
               key={family}
@@ -463,11 +460,11 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                   const pct = sk.state ? Math.round(sk.state.masteryScore * 100) : null;
                   return (
                     <div key={sk.skillId} className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 text-xs">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
                         <span className="text-[#113C36] font-medium min-w-0 break-words">
                           {skillName(sk.skillId)}
                         </span>
-                        <span className="tabular-nums text-[#4A5955] shrink-0 whitespace-nowrap">
+                        <span className="tabular-nums text-[#4A5955] ml-auto text-right">
                           {pct !== null
                             ? `${pct}% (${sk.state!.correctCount}/${sk.state!.attemptsCount})`
                             : t('prog.notTried')}
@@ -502,7 +499,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
               type="button"
               aria-pressed={compareEssaysOpen}
               onClick={() => setCompareEssaysOpen((open) => !open)}
-              className={`px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+              className={`px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-tactile ${
                 compareEssaysOpen
                   ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
                   : 'border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36]'
@@ -548,7 +545,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                           {latestEval.bandCappedByTopicAdherence ? t('prog.cappedBadge') : ''}
                         </span>
                       ) : (
-                        <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-[#78756E] font-medium">
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-[#615E57] font-medium">
                           {t('prog.notYetGraded')}
                         </span>
                       )}
@@ -556,7 +553,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                     <button
                       type="button"
                       onClick={() => onOpenSession(sub.sessionId)}
-                      className="px-3 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-[#113C36] font-sans-display font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                      className="px-3 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-[#113C36] font-sans-display font-semibold transition-tactile cursor-pointer whitespace-nowrap"
                     >
                       {t('prog.openReview')}
                     </button>
@@ -581,8 +578,8 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
             {t('prog.noSessionsYet')}
           </p>
         ) : (
-          <div className="border border-[#E5DFD5] rounded-[14px] bg-white overflow-x-auto">
-            <table className="w-full text-sm text-left tabular-nums">
+          <div className="scroll-x border border-[#E5DFD5] rounded-[14px] bg-white">
+            <table className="w-full min-w-[34rem] text-sm text-left tabular-nums">
               <thead className="border-b border-[#E5DFD5] bg-[#FAF8F5] text-xs text-[#4A5955]">
                 <tr>
                   <th className="px-4 py-3 font-sans-display font-semibold">{t('prog.colSession')}</th>
@@ -606,7 +603,7 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
                     <td className="px-4 py-3 text-xs font-medium text-[#113C36]">
                       {s.status === 'submitted' ? `${s.correctSlots} / ${s.totalSlots}` : t('home.inProgress')}
                     </td>
-                    <td className="px-4 py-3 text-xs text-[#78756E]">
+                    <td className="px-4 py-3 text-xs text-[#615E57]">
                       {formatDate(s.startedAt)}
                     </td>
                     <td className="px-4 py-3 text-right">

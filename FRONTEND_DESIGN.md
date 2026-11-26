@@ -81,7 +81,7 @@ Always pair the design constitution above with Selective Lab's established studi
   - Floating studio sheet: `#FFFFFF` (hairline border `#E5DFD5`, `18px` radius)
   - Subtle warm surface: `#FAF8F5`
   - Deep pine ink & primary CTA: `#113C36` (hover `#0B2B26`)
-  - Secondary ink: `#4A5955` | Quiet metadata: `#78756E`
+  - Secondary ink: `#4A5955` | Quiet metadata: `#615E57` (warm charcoal-taupe; was `#78756E`, darkened to clear WCAG AA 4.5:1 on `#FFFFFF` 6.5, `#FAF8F5` 6.1, `#F3EFE8` 5.6, `#EAE4DA` 5.1; checked in `src/client/pack5Helpers.test.ts`)
   - Hero accents: Warm Apricot `#F9CAA7`, Warm Stone `#ECE8E1` + Coral CTA `#F29A63`, Soft Eucalyptus `#E5F0EA`
 - **Typography** (`/public/fonts/*.woff2`, `button, input, select, textarea { font-family: inherit; }`):
   - `AnthropicSerifDisplay`: wordmark, expressive hero figures, writing headline
@@ -90,5 +90,10 @@ Always pair the design constitution above with Selective Lab's established studi
   - `AnthropicSansText`: body copy, options, labels
   - `AnthropicMono`: exam countdown clock and Admin IDs/JSON only
 - **Loading states**: layout-matched `Skeleton` blocks (`components/ui/Skeleton.tsx`, `.skeleton` in `tokens.css`, static under reduced motion) instead of bare "Loading..." text; paint cached data immediately when it exists.
+- **Motion & press feedback** (`tokens.css`): every `button`, `[role=button]`, `[role=tab]`, `summary` and `.press` scales to `0.98` on `:active` via the composited `scale` property (never on `:disabled` / `aria-disabled="true"`, never under `prefers-reduced-motion: reduce`; opt out with `data-press="off"` on full-width rows). List `scale` in arbitrary transitions (`transition-[background-color,scale]`). Easing tokens: `--ease-out` `cubic-bezier(0.23, 1, 0.32, 1)` for enters/feedback, `--ease-move` `cubic-bezier(0.22, 1, 0.36, 1)` for on-screen movement; UI motion stays 150–280ms.
+- **Selection pills**: tabs and connected toggles use a measured sliding pill (`ui/useSlidingIndicator.ts`, `.sliding-indicator`): `TabList`, `SegmentedControl` (Auto-calibrate / Manual counts, gender filter, writing review modes) and the Admin section tabs. No transition on first paint; static under reduced motion.
+- **Disclosures**: expand/collapse with `ui/Collapsible.tsx` (`.collapsible` grid-rows `0fr` ↔ `1fr` + opacity, closed content `inert`) and `DisclosureChevron`; triggers carry `aria-expanded` + `aria-controls`.
+- **Focus & dialogs**: keyboard-only `:focus-visible` ring (`--focus-ring` pine, 2px, 2px offset; text fields get a soft halo; `.on-dark` swaps to apricot `--focus-ring-on-dark`); mouse focus never paints a ring. Every modal traps Tab/Shift+Tab, closes on Escape and returns focus to its opener (`ConfirmDialog`, `Sheet`, or `useFocusTrap` from `ui/focusTrap.ts` for hand-rolled dialogs such as the onboarding tour and zoom views).
+- **Narrow screens** (390px / 768px): wide tables scroll inside `.scroll-x` wrappers (sticky first columns keep a solid row-matched surface and a hairline edge), never the page; split views stack below `lg`.
 - **Quiet Exam Room rule**: Drop the oat sidebar, hero cards, and illustrations during locked exam sessions.
 - **Anti-slop discipline**: Sentence case labels, zero ALL-CAPS eyebrows, zero middle-dot (`·`) chains in student views, zero `→` arrows on button labels, and zero single-word italic headline tricks.

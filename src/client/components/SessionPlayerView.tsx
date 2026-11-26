@@ -1009,6 +1009,7 @@ export function SessionPlayerView({
             answeredSlots={answeredSlotsCount}
             totalSlots={totalSlotsCount}
             onGoIndex={handleGoIndex}
+            onClose={() => setNavOpen(false)}
           />
         }
       />
@@ -1145,7 +1146,7 @@ export function SessionPlayerView({
               type="button"
               disabled={currentIndex <= sectionStart}
               onClick={() => handleGoIndex(currentIndex - 1)}
-              className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-colors"
+              className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-sm font-sans-display font-medium text-[#113C36] inline-flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-tactile"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>{t('session.previous')}</span>
@@ -1156,7 +1157,7 @@ export function SessionPlayerView({
                 <button
                   type="button"
                   onClick={() => handleGoIndex(currentIndex + 1)}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-tactile"
                 >
                   <span>{t('session.next')}</span>
                   <ArrowRight className="w-4 h-4" />
@@ -1166,7 +1167,7 @@ export function SessionPlayerView({
                   type="button"
                   disabled={submitting}
                   onClick={() => setSubmitConfirmOpen(true)}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-colors"
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-sm font-sans-display font-semibold cursor-pointer disabled:opacity-60 transition-tactile"
                 >
                   {finishBtnLabel}
                 </button>

@@ -1,6 +1,6 @@
-import { memo, useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, Maximize2, X, XCircle } from 'lucide-react';
+import { BookOpen, Check, CheckCircle2, Maximize2, X, XCircle } from 'lucide-react';
 import { useI18n } from '../i18n';
 import type {
   EvidenceCitationRef,
@@ -14,6 +14,9 @@ import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../op
 import { FormattedText } from './FormattedText';
 import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
 import { VisualRenderer } from './VisualRenderer';
+import { Collapsible, DisclosureChevron } from './ui/Collapsible';
+import { useFocusTrap } from './ui/focusTrap';
+import { useSlidingIndicator } from './ui/useSlidingIndicator';
 import { WritingAnswerPane, WritingStimulusPane } from './WritingEditor';
 import type { SessionClock } from '../sessionClock';
 
@@ -99,7 +102,14 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
   const [internalGapIdx, setInternalGapIdx] = useState(0);
   const [mobileTab, setMobileTab] = useState<'stimulus' | 'answer'>('stimulus');
   const [expandedBreakdown, setExpandedBreakdown] = useState(false);
+  const workspaceUid = useId().replace(/:/g, '');
+  const breakdownId = `ws-breakdown-${workspaceUid}`;
+  const paneIdBase = `ws-pane-${workspaceUid}`;
+  const paneTrackRef = useRef<HTMLDivElement>(null);
+  const paneIndicator = useSlidingIndicator(paneTrackRef, mobileTab);
   const [zoomedOption, setZoomedOption] = useState<{ key: string; visual: VisualSpec } | null>(null);
+  const optionZoomRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(optionZoomRef, zoomedOption !== null, { onEscape: () => setZoomedOption(null) });
 
   useEffect(() => {
     setInternalGapIdx(0);
@@ -195,7 +205,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                     role="tab"
                     aria-selected={pIdx === safePartIdx}
                     onClick={() => setActiveGapIndex(pIdx)}
-                    className={`px-2.5 py-1 rounded-[var(--radius-sm)] border text-[11px] font-semibold cursor-pointer transition-colors ${
+                    className={`px-2.5 py-1 rounded-[var(--radius-sm)] border text-[11px] font-semibold cursor-pointer transition-tactile ${
                       pIdx === safePartIdx
                         ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
                         : 'border-[var(--border-strong)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -230,7 +240,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                         key={ev.refId}
                         type="button"
                         onClick={() => handleCitationClick(ev)}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] border text-xs font-medium cursor-pointer transition-colors ${
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] border text-xs font-medium cursor-pointer transition-tactile ${
                           isActive
                             ? 'border-sky-600 bg-sky-100 text-sky-900'
                             : 'border-[var(--border-strong)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-surface)] text-[var(--text-primary)]'
@@ -250,20 +260,28 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
         <div className="border border-[var(--border-hairline)] rounded-[var(--radius-md)] bg-[var(--bg-elevated)]">
           <button
             type="button"
+            id={`${breakdownId}-trigger`}
             onClick={() => setExpandedBreakdown((v) => !v)}
             aria-expanded={expandedBreakdown}
-            className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+            aria-controls={`${breakdownId}-panel`}
+            data-press="off"
+            data-focus-ring="inset"
+            className="w-full px-4 py-2.5 flex items-center justify-between gap-3 rounded-[var(--radius-md)] text-left text-xs font-semibold text-[var(--text-secondary)] transition-tactile duration-150 hover:text-[var(--text-primary)] active:bg-[var(--bg-canvas)] cursor-pointer"
           >
             <span>
               {fullParts.length > 1
                 ? t('ws.allPartsBreakdown', { count: fullParts.length })
                 : t('ws.distractorBreakdown')}
             </span>
-            {expandedBreakdown ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            <DisclosureChevron open={expandedBreakdown} />
           </button>
 
-          {expandedBreakdown && (
-            <div className="px-4 pb-4 space-y-3 border-t border-[var(--border-hairline)] pt-3">
+          <Collapsible
+            open={expandedBreakdown}
+            id={`${breakdownId}-panel`}
+            labelledBy={`${breakdownId}-trigger`}
+            innerClassName="px-4 pb-4 space-y-3 border-t border-[var(--border-hairline)] pt-3"
+          >
               {fullParts.map((part, pIdx) => {
                 const res = reviewByPartId[part.partId];
                 const explanation = res?.workedExplanation || (mode === 'adminPreview' ? part.workedExplanation : '');
@@ -342,8 +360,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                   </div>
                 );
               })}
-            </div>
-          )}
+          </Collapsible>
         </div>
       </div>
     );
@@ -362,30 +379,44 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
           : 'flex-1 min-h-0 flex flex-col'
       }
     >
-      {/* Mobile sticky pane switcher (< lg) */}
-      <div className="lg:hidden sticky top-0 z-20 flex border-b border-[#E5DFD5] bg-[#F3EFE8] px-3 py-2 gap-2">
-        <button
-          type="button"
-          onClick={() => setMobileTab('stimulus')}
-          className={`flex-1 py-1.5 px-3 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer transition-colors ${
-            mobileTab === 'stimulus'
-              ? 'bg-white text-[#113C36] border border-[#E5DFD5]'
-              : 'text-[#4A5955]'
-          }`}
-        >
-          {t('ws.passageAndVisual')}
-        </button>
-        <button
-          type="button"
-          onClick={() => setMobileTab('answer')}
-          className={`flex-1 py-1.5 px-3 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer transition-colors ${
-            mobileTab === 'answer'
-              ? 'bg-white text-[#113C36] border border-[#E5DFD5]'
-              : 'text-[#4A5955]'
-          }`}
-        >
-          {t('ws.questionAndAnswer')}
-        </button>
+      {/* Stacked-layout pane switcher (< lg): sticks just below the exam rail, sliding pill */}
+      <div
+        role="group"
+        aria-label={t('ws.paneSwitcherAria')}
+        className="lg:hidden sticky top-[var(--exam-rail-h,0px)] z-20 border-b border-[#E5DFD5] bg-[#F3EFE8] px-3 py-2"
+      >
+        <div ref={paneTrackRef} className="relative isolate flex gap-2">
+          <span
+            aria-hidden="true"
+            className="sliding-indicator pointer-events-none absolute left-0 top-0 -z-10 rounded-[8px] border border-[#E5DFD5] bg-white"
+            style={paneIndicator.style}
+          />
+          {(
+            [
+              ['stimulus', t('ws.passageAndVisual')],
+              ['answer', t('ws.questionAndAnswer')],
+            ] as const
+          ).map(([pane, label]) => {
+            const active = mobileTab === pane;
+            return (
+              <button
+                key={pane}
+                type="button"
+                aria-pressed={active}
+                aria-controls={`${paneIdBase}-${pane}`}
+                data-indicator-active={active ? 'true' : undefined}
+                onClick={() => setMobileTab(pane)}
+                className={`flex-1 min-w-0 py-1.5 px-3 rounded-[8px] border text-xs font-sans-display font-semibold cursor-pointer transition-tactile ${
+                  active
+                    ? `text-[#113C36] ${paneIndicator.visible ? 'border-transparent' : 'bg-white border-[#E5DFD5]'}`
+                    : 'border-transparent text-[#4A5955] hover:text-[#113C36]'
+                }`}
+              >
+                <span className="block truncate">{label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div
@@ -397,14 +428,15 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
       >
         {/* LEFT PANE: #FFFFFF Open-Book Reading / Stimulus Sheet */}
         <section
+          id={`${paneIdBase}-stimulus`}
           aria-label={t('ws.passageAndVisual')}
-          className={`${mobileTab === 'stimulus' ? 'block' : 'hidden lg:block'} ${
+          className={`min-w-0 ${mobileTab === 'stimulus' ? 'block' : 'hidden lg:block'} ${
             embedded
-              ? 'xl:col-span-6 p-5 border-b xl:border-b-0 xl:border-r'
-              : `${isReading ? 'lg:col-span-7' : 'lg:col-span-6'} p-6 lg:p-9 border-b lg:border-b-0 lg:border-r lg:h-full lg:overflow-y-auto`
+              ? 'xl:col-span-6 p-4 sm:p-5 border-b xl:border-b-0 xl:border-r'
+              : `${isReading ? 'lg:col-span-7' : 'lg:col-span-6'} px-4 py-5 sm:p-6 lg:p-9 border-b lg:border-b-0 lg:border-r lg:h-full lg:overflow-y-auto lg:overscroll-contain`
           } border-[#E5DFD5] bg-white`}
         >
-          <div className="flex flex-wrap items-center gap-2 text-xs text-[#78756E] mb-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-[#615E57] mb-4">
             <span className="font-sans-display font-semibold text-[#113C36]">
               {sectionLabel(question.section)}
             </span>
@@ -455,11 +487,12 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
 
         {/* RIGHT PANE: #FAF8F5 Answer Pane */}
         <section
-          aria-label="Answer selection panel"
-          className={`${mobileTab === 'answer' ? 'flex' : 'hidden lg:flex'} ${
+          id={`${paneIdBase}-answer`}
+          aria-label={t('ws.questionAndAnswer')}
+          className={`min-w-0 ${mobileTab === 'answer' ? 'flex' : 'hidden lg:flex'} ${
             embedded
-              ? 'xl:col-span-6 p-5'
-              : `${isReading ? 'lg:col-span-5' : 'lg:col-span-6'} p-6 lg:p-8 lg:h-full lg:overflow-y-auto`
+              ? 'xl:col-span-6 p-4 sm:p-5'
+              : `${isReading ? 'lg:col-span-5' : 'lg:col-span-6'} px-4 py-5 sm:p-6 lg:p-8 lg:h-full lg:overflow-y-auto lg:overscroll-contain`
           } bg-[#FAF8F5] flex-col justify-between gap-6`}
         >
           <div className="space-y-5">
@@ -519,7 +552,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                         })}
                   </span>
                   {!readOnly && (
-                    <span className="text-[#78756E]">
+                    <span className="text-[#615E57]">
                       {t('ws.shortcutsHint', { count: activePart.options.length })}
                     </span>
                   )}
@@ -584,7 +617,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                                 {opt.text && (
                                   <span
                                     className={`text-xs font-medium text-[#113C36] truncate ${
-                                      elim ? 'line-through text-[#78756E]' : ''
+                                      elim ? 'line-through text-[#615E57]' : ''
                                     }`}
                                   >
                                     {opt.text}
@@ -617,13 +650,14 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                           {!readOnly && (
                             <button
                               type="button"
-                              aria-label={`Eliminate option ${opt.key}`}
+                              aria-label={`${t('ws.crossOutOption')} ${opt.key}`}
+                              aria-pressed={elim}
                               title={t('ws.crossOutOption')}
                               onClick={() => onToggleEliminate(activePart.partId, opt.key)}
-                              className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-colors ${
+                              className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-tactile ${
                                 elim
                                   ? 'border-[#CFC6B9] bg-[#EAE4DA] text-[#113C36]'
-                                  : 'border-[#E5DFD5] bg-white/95 text-[#78756E] hover:text-[#113C36]'
+                                  : 'border-[#E5DFD5] bg-white/95 text-[#615E57] hover:text-[#113C36]'
                               }`}
                             >
                               <X className="w-3 h-3" />
@@ -638,7 +672,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                                 aria-label={t('ws.zoomOption', { key: opt.key })}
                                 title={t('ws.zoomOption', { key: opt.key })}
                                 onClick={() => setZoomedOption({ key: opt.key, visual: opt.visual! })}
-                                className="absolute bottom-3.5 right-3.5 z-10 w-6 h-6 rounded-[7px] border border-[#E5DFD5] bg-white/90 hover:bg-white text-[#78756E] hover:text-[#113C36] flex items-center justify-center cursor-pointer transition-colors"
+                                className="absolute bottom-3.5 right-3.5 z-10 w-6 h-6 rounded-[7px] border border-[#E5DFD5] bg-white/90 hover:bg-white text-[#615E57] hover:text-[#113C36] flex items-center justify-center cursor-pointer transition-tactile"
                               >
                                 <Maximize2 className="w-3 h-3" />
                               </button>
@@ -700,7 +734,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                               {opt.text && (
                                 <div
                                   className={`text-[14px] font-medium text-[#113C36] whitespace-pre-line ${
-                                    elim ? 'line-through text-[#78756E]' : ''
+                                    elim ? 'line-through text-[#615E57]' : ''
                                   }`}
                                 >
                                   {opt.text}
@@ -722,13 +756,14 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                           {!readOnly && (
                             <button
                               type="button"
-                              aria-label={`Eliminate option ${opt.key}`}
+                              aria-label={`${t('ws.crossOutOption')} ${opt.key}`}
+                              aria-pressed={elim}
                               title={t('ws.crossOutOption')}
                               onClick={() => onToggleEliminate(activePart.partId, opt.key)}
-                              className={`px-2.5 rounded-[12px] border cursor-pointer transition-colors ${
+                              className={`px-2.5 rounded-[12px] border cursor-pointer transition-tactile ${
                                 elim
                                   ? 'border-[#CFC6B9] bg-[#EAE4DA] text-[#113C36]'
-                                  : 'border-[#E5DFD5] bg-white text-[#78756E] hover:text-[#113C36]'
+                                  : 'border-[#E5DFD5] bg-white text-[#615E57] hover:text-[#113C36]'
                               }`}
                             >
                               <X className="w-3.5 h-3.5" />
@@ -753,18 +788,21 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
         typeof document !== 'undefined' &&
         createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={t('ws.optionHeading', { key: zoomedOption.key })}
-            className="fixed inset-0 z-50 m-0 bg-black/60 flex items-center justify-center p-6"
+            role="presentation"
+            className="fixed inset-0 z-50 m-0 bg-[#113C36]/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-6 transition-opacity duration-150 starting:opacity-0"
             onClick={() => setZoomedOption(null)}
           >
             <div
-              className="max-w-3xl w-full bg-white rounded-[16px] border border-[#E5DFD5] p-5 shadow-xl space-y-3"
+              ref={optionZoomRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="ws-option-zoom-title"
+              tabIndex={-1}
+              className="max-w-3xl w-full max-h-[calc(100dvh-1.5rem)] overflow-auto bg-white rounded-[16px] border border-[#E5DFD5] p-4 sm:p-5 shadow-xl space-y-3 outline-none transition-[opacity,scale] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] starting:opacity-0 starting:scale-[0.97]"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
-                <h3 className="font-sans-display font-semibold text-sm text-[#113C36]">
+                <h3 id="ws-option-zoom-title" className="font-sans-display font-semibold text-sm text-[#113C36]">
                   {t('ws.optionHeading', { key: zoomedOption.key })}
                 </h3>
                 <button

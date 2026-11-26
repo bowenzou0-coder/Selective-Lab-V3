@@ -214,7 +214,7 @@ export function BatchImporterPanel({
 
           <div className="flex flex-wrap items-center gap-2 max-w-full">
             <div className="relative min-w-0">
-              <Search className="w-3.5 h-3.5 text-[#78756E] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Search className="w-3.5 h-3.5 text-[#615E57] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="search"
                 aria-label={t('batch.searchPlaceholder')}
@@ -244,7 +244,7 @@ export function BatchImporterPanel({
                     setBatchFilter(val);
                     setPage(1);
                   }}
-                  className={`px-2.5 py-1 rounded-full font-medium cursor-pointer whitespace-nowrap transition-colors ${
+                  className={`px-2.5 py-1 rounded-full font-medium cursor-pointer whitespace-nowrap transition-tactile ${
                     batchFilter === val
                       ? 'bg-[#113C36] text-white'
                       : 'bg-[#F3EFE8] text-[#4A5955] hover:bg-[#E8E2D7]'
@@ -259,9 +259,9 @@ export function BatchImporterPanel({
 
         <div className="border-t border-b border-[#E5DFD5] divide-y divide-[#E5DFD5]">
           {loadingBatches ? (
-            <div className="py-8 text-center text-xs text-[#78756E]">{t('batch.loading')}</div>
+            <div className="py-8 text-center text-xs text-[#615E57]">{t('batch.loading')}</div>
           ) : pagedBatches.length === 0 ? (
-            <div className="py-8 text-center text-xs text-[#78756E]">
+            <div className="py-8 text-center text-xs text-[#615E57]">
               {t('batch.empty')}
             </div>
           ) : (
@@ -280,10 +280,10 @@ export function BatchImporterPanel({
                       <span className="font-sans-display font-semibold text-sm text-[#113C36] break-words">
                         {batch.batchLabel}
                       </span>
-                      <span className="font-mono-code text-[11px] text-[#78756E] break-all">
+                      <span className="font-mono-code text-[11px] text-[#615E57] break-all">
                         {batch.batchId}
                       </span>
-                      <span className="text-[11px] text-[#78756E] tabular-nums whitespace-nowrap">
+                      <span className="text-[11px] text-[#615E57] tabular-nums whitespace-nowrap">
                         {formatDate(batch.createdAtIso)}
                       </span>
                     </div>
@@ -294,7 +294,7 @@ export function BatchImporterPanel({
                       <span>{t('batch.unseenCount', { count: batch.unseen })}</span>
                       <span className="text-[#1F7A4C]">{t('batch.doneCount', { count: batch.done })}</span>
                       {batch.paused > 0 && <span className="text-[#A35116]">{t('batch.pausedCount', { count: batch.paused })}</span>}
-                      {batch.archived > 0 && <span className="text-[#78756E]">{t('batch.archivedCount', { count: batch.archived })}</span>}
+                      {batch.archived > 0 && <span className="text-[#615E57]">{t('batch.archivedCount', { count: batch.archived })}</span>}
                     </div>
 
                     <div className="h-1.5 w-full max-w-md rounded-full bg-[#F3EFE8] overflow-hidden flex">
@@ -345,7 +345,7 @@ export function BatchImporterPanel({
                         type="button"
                         disabled={isBusy}
                         onClick={() => handleBulkBatchStatus(batch, 'retired')}
-                        className="px-2.5 py-1.5 rounded-[10px] border border-[#E5DFD5] bg-[#FAF8F5] text-[#78756E] hover:text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap disabled:opacity-40"
+                        className="px-2.5 py-1.5 rounded-[10px] border border-[#E5DFD5] bg-[#FAF8F5] text-[#615E57] hover:text-[#113C36] text-xs font-sans-display font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap disabled:opacity-40"
                       >
                         <Archive className="w-3.5 h-3.5" />
                         <span>{t('batch.archiveAll')}</span>
@@ -359,7 +359,7 @@ export function BatchImporterPanel({
         </div>
 
         {totalPages > 1 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#78756E]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#615E57]">
             <span className="tabular-nums">
               {t('batch.showingRange', {
                 start: (page - 1) * PAGE_SIZE + 1,

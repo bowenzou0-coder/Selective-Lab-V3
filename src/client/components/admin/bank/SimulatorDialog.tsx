@@ -48,7 +48,7 @@ function Segmented<T extends string | number>({
               type="button"
               aria-pressed={active}
               onClick={() => onChange(opt)}
-              className={`flex-1 cursor-pointer whitespace-nowrap rounded-[9px] px-2.5 py-1.5 text-xs font-medium tabular-nums transition-colors ${
+              className={`flex-1 cursor-pointer whitespace-nowrap rounded-[9px] px-2.5 py-1.5 text-xs font-medium tabular-nums transition-tactile ${
                 active ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]' : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
@@ -90,7 +90,7 @@ export function SimulatorDialog({ open, onClose, selectedCount, matchingCount, l
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-[10px] px-3 py-2 text-xs font-medium text-[#4A5955] transition-colors hover:text-[#113C36]"
+            className="cursor-pointer rounded-[10px] px-3 py-2 text-xs font-medium text-[#4A5955] transition-tactile hover:text-[#113C36]"
           >
             {t('home.modalCancel')}
           </button>
@@ -98,7 +98,7 @@ export function SimulatorDialog({ open, onClose, selectedCount, matchingCount, l
             type="button"
             disabled={launching || emptyScope}
             onClick={() => onLaunch({ useSelected: scopeSelected, limit, timerMin, sandbox })}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] bg-[#113C36] px-4 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform] duration-150 hover:bg-[#0B2B26] active:scale-[0.97] disabled:opacity-50"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] bg-[#113C36] px-4 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform,translate,scale] duration-150 hover:bg-[#0B2B26] active:scale-[0.97] disabled:opacity-50"
           >
             <Play className="h-3 w-3 fill-current" />
             <span>{launching ? t('bank.launching') : t('bank.simLaunch')}</span>
@@ -150,7 +150,7 @@ export function SimulatorDialog({ open, onClose, selectedCount, matchingCount, l
           <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} className="mt-0.5 accent-[#113C36]" />
           <span className="space-y-0.5">
             <span className="block text-sm text-[#113C36]">{t('bank.sandboxClean')}</span>
-            <span className="block text-xs text-[#78756E]">{t('bank.sandboxHint')}</span>
+            <span className="block text-xs text-[#615E57]">{t('bank.sandboxHint')}</span>
           </span>
         </label>
       </div>

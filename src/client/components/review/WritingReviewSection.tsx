@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import { ArrowUpRight, Check, Loader2, Sparkles, Star, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import {
@@ -12,6 +12,7 @@ import {
 } from '../../../shared/contracts';
 import { buildAnnotatedParagraphs } from '../../writingHighlight';
 import { WritingStimulusPane } from '../WritingEditor';
+import { Collapsible, DisclosureChevron } from '../ui/Collapsible';
 import {
   bandBadgeClass,
   legacyEstimateToBand,
@@ -64,6 +65,8 @@ export function WritingReviewSection({
   footerNav: writingFooterNav,
 }: WritingReviewSectionProps) {
   const { t, skillName } = useI18n();
+  const [planNotesOpen, setPlanNotesOpen] = useState(false);
+  const planNotesId = `plan-notes-${useId().replace(/:/g, '')}`;
 
   const getEffectiveAnnotations = (ev: WritingEvaluationRecord | undefined): {
     items: WritingTextAnnotation[];
@@ -192,7 +195,7 @@ export function WritingReviewSection({
                 key={fid}
                 type="button"
                 onClick={() => setAnnotationFilter(fid)}
-                className={`px-2.5 py-1 rounded-full border text-[11px] font-sans-display font-semibold cursor-pointer transition-colors ${
+                className={`px-2.5 py-1 rounded-full border text-[11px] font-sans-display font-semibold cursor-pointer transition-tactile ${
                   annotationFilter === fid
                     ? 'bg-[#113C36] border-[#113C36] text-white'
                     : 'bg-[#FAF8F5] border-[#E5DFD5] text-[#4A5955] hover:border-[#CFC6B9]'
@@ -205,14 +208,29 @@ export function WritingReviewSection({
         )}
 
         {planNotes.trim().length > 0 && (
-          <details className="rounded-[12px] border border-[#E5DFD5] bg-[#FAF8F5] px-4 py-2.5">
-            <summary className="text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer select-none">
-              {t('rev.planNotesTitle')}
-            </summary>
-            <p className="mt-2 text-xs text-[#4A5955] whitespace-pre-wrap leading-relaxed">
-              {planNotes}
-            </p>
-          </details>
+          <div className="rounded-[12px] border border-[#E5DFD5] bg-[#FAF8F5]">
+            <button
+              type="button"
+              id={`${planNotesId}-trigger`}
+              aria-expanded={planNotesOpen}
+              aria-controls={`${planNotesId}-panel`}
+              data-press="off"
+              data-focus-ring="inset"
+              onClick={() => setPlanNotesOpen((v) => !v)}
+              className="flex w-full cursor-pointer select-none items-center justify-between gap-3 rounded-[12px] px-4 py-2.5 text-left text-xs font-sans-display font-semibold text-[#4A5955] transition-colors duration-150 hover:text-[#113C36]"
+            >
+              <span>{t('rev.planNotesTitle')}</span>
+              <DisclosureChevron open={planNotesOpen} className="h-3.5 w-3.5" />
+            </button>
+            <Collapsible
+              open={planNotesOpen}
+              id={`${planNotesId}-panel`}
+              labelledBy={`${planNotesId}-trigger`}
+              innerClassName="px-4 pb-3"
+            >
+              <p className="text-xs text-[#4A5955] whitespace-pre-wrap leading-relaxed">{planNotes}</p>
+            </Collapsible>
+          </div>
         )}
 
         {paragraphs.length > 0 ? (
@@ -253,7 +271,7 @@ export function WritingReviewSection({
                           handleSelectFromEssay(ann.id);
                         }
                       }}
-                      className={`rounded-[4px] px-0.5 cursor-pointer transition-colors ${markStyle} ${
+                      className={`rounded-[4px] px-0.5 cursor-pointer transition-tactile ${markStyle} ${
                         isSelected ? 'ring-2 ring-[#113C36] ring-offset-1' : 'hover:brightness-95'
                       }`}
                     >
@@ -273,7 +291,7 @@ export function WritingReviewSection({
             ))}
           </div>
         ) : (
-          <p className="text-sm text-[#78756E] italic">{t('rev.emptyEssay')}</p>
+          <p className="text-sm text-[#615E57] italic">{t('rev.emptyEssay')}</p>
         )}
       </div>
     );
@@ -385,7 +403,7 @@ export function WritingReviewSection({
                 type="button"
                 disabled={isBusy}
                 onClick={() => handleEvaluateWriting(wr.submissionId)}
-                className={`px-3 py-1.5 rounded-[10px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 disabled:opacity-60 cursor-pointer transition-colors whitespace-nowrap ${
+                className={`px-3 py-1.5 rounded-[10px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 disabled:opacity-60 cursor-pointer transition-tactile whitespace-nowrap ${
                   latestEval
                     ? 'border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-[#113C36]'
                     : 'bg-[#113C36] hover:bg-[#0B2B26] text-white'
@@ -426,7 +444,7 @@ export function WritingReviewSection({
           )}
 
           {(m || latestEval?.modelId) && (
-            <div className="text-[11px] text-[#78756E] tabular-nums flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <div className="text-[11px] text-[#615E57] tabular-nums flex flex-wrap items-center gap-x-2 gap-y-0.5">
               {m && (
                 <>
                   <span>{t('rev.wordsCount', { count: m.wordCount })}</span>
@@ -482,7 +500,7 @@ export function WritingReviewSection({
                 <button
                   type="button"
                   onClick={() => handleEvaluateWriting(wr.submissionId)}
-                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
+                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-2 cursor-pointer transition-tactile"
                 >
                   <Sparkles className="w-3.5 h-3.5 shrink-0" />
                   <span>{t('rev.getRubricFeedback')}</span>
@@ -501,13 +519,13 @@ export function WritingReviewSection({
             )}
 
             {annotations.length > 0 && (
-              <p className="text-[11px] text-[#78756E] px-0.5">
+              <p className="text-[11px] text-[#615E57] px-0.5">
                 {t('rev.clickHighlightHint')}
               </p>
             )}
 
             {visibleAnnotations.length === 0 ? (
-              <div className="p-3.5 rounded-[12px] bg-white border border-[#E5DFD5] text-xs text-[#78756E]">
+              <div className="p-3.5 rounded-[12px] bg-white border border-[#E5DFD5] text-xs text-[#615E57]">
                 {t('rev.noAnnotationsInFilter')}
               </div>
             ) : (
@@ -553,7 +571,7 @@ export function WritingReviewSection({
                           <span>{ann.tag}</span>
                         </span>
                         {ann.criterionSkillId && (
-                          <span className="text-[11px] text-[#78756E]">
+                          <span className="text-[11px] text-[#615E57]">
                             {shortCriterionLabel(ann.criterionSkillId)}
                           </span>
                         )}
@@ -619,7 +637,7 @@ export function WritingReviewSection({
                   type="button"
                   disabled={isBusy}
                   onClick={() => handleEvaluateWriting(wr.submissionId)}
-                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-2 disabled:opacity-60 cursor-pointer transition-colors"
+                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-2 disabled:opacity-60 cursor-pointer transition-tactile"
                 >
                   <Sparkles className="w-3.5 h-3.5 shrink-0" />
                   <span>
@@ -702,7 +720,7 @@ export function WritingReviewSection({
                             handleSelectExemplar(ann.id, 'card');
                           }
                         }}
-                        className={`rounded-[4px] px-0.5 bg-[#E5F0EA] border-b-2 border-[#113C36] cursor-pointer transition-colors ${
+                        className={`rounded-[4px] px-0.5 bg-[#E5F0EA] border-b-2 border-[#113C36] cursor-pointer transition-tactile ${
                           isSelected ? 'ring-2 ring-[#113C36] ring-offset-1' : 'hover:brightness-95'
                         }`}
                       >

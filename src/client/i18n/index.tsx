@@ -257,7 +257,7 @@ export function LanguageToggle({
             type="button"
             aria-pressed={active}
             onClick={() => setLocale(code)}
-            className={`px-2.5 py-1 rounded-[8px] text-[11px] font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+            className={`px-2.5 py-1 rounded-[8px] text-[11px] font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-tactile ${
               active
                 ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                 : 'text-[#4A5955] hover:text-[#113C36]'

@@ -20,6 +20,7 @@ import { ConfirmDialog } from './ui/ConfirmDialog';
 import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { StatusBanner } from './ui/StatusBanner';
 import { useI18n } from '../i18n';
+import { SegmentedControl } from './ui/SegmentedControl';
 import type { BenchmarkReportRecord, SectionCode } from '../../shared/contracts';
 import {
   buildParentVerdict,
@@ -207,7 +208,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
 
   if (loading && !hub) {
     return (
-      <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
+      <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
         {header}
         <SkeletonRegion label={t('bm.loading')} className="space-y-10">
           <section className="space-y-3">
@@ -275,7 +276,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
       : null;
 
   return (
-    <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
       {/* Locked Official Benchmark Confirmation Modal */}
       <ConfirmDialog
         open={pendingBatch !== null}
@@ -292,13 +293,13 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
           <>
             <dl className="grid grid-cols-2 gap-3 p-4 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] text-xs">
               <div>
-                <dt className="text-[#78756E]">{t('home.modalQuestions')}</dt>
+                <dt className="text-[#615E57]">{t('home.modalQuestions')}</dt>
                 <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
                   {t('bm.fullPaperSummary', { count: pendingBatch.total })}
                 </dd>
               </div>
               <div>
-                <dt className="text-[#78756E]">{t('home.modalTimeAllowed')}</dt>
+                <dt className="text-[#615E57]">{t('home.modalTimeAllowed')}</dt>
                 <dd className="mt-1 font-sans-display font-semibold text-sm text-[#113C36]">
                   {t('bm.lockedTimeLabel')}
                 </dd>
@@ -323,7 +324,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
           <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
             {t('bm.sitExamTitle')}
           </h2>
-          <span className="text-xs text-[#78756E]">{t('bm.sitExamSub')}</span>
+          <span className="text-xs text-[#615E57]">{t('bm.sitExamSub')}</span>
         </div>
 
         {batches.length === 0 ? (
@@ -367,7 +368,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
 
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#E5DFD5]">
                     <div className="flex items-center gap-2 text-xs text-[#4A5955] tabular-nums">
-                      <Clock className="w-3.5 h-3.5 text-[#78756E]" />
+                      <Clock className="w-3.5 h-3.5 text-[#615E57]" />
                       <span>{t('bm.lockedTimeShort')}</span>
                       {completedCount > 0 && (
                         <span className="px-2 py-0.5 rounded-full bg-[#E5F3EC] text-[#1D6346] font-medium">
@@ -378,7 +379,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                     <button
                       type="button"
                       onClick={() => setPendingBatch(b)}
-                      className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+                      className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
                     >
                       <Play className="w-3.5 h-3.5 fill-current" />
                       <span>{t('bm.startBenchmark')}</span>
@@ -397,7 +398,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
           <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
             {t('bm.savedReportsTitle')}
           </h2>
-          <span className="text-xs text-[#78756E] tabular-nums">
+          <span className="text-xs text-[#615E57] tabular-nums">
             {t('bm.savedReportsCount', { count: reports.length })}
           </span>
         </div>
@@ -423,7 +424,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                     key={rep.sessionId}
                     type="button"
                     onClick={() => setSelectedSessionId(rep.sessionId)}
-                    className={`px-3.5 py-2.5 rounded-[12px] border text-left transition-[background-color,border-color,color,transform] duration-150 ease-out active:scale-[0.98] cursor-pointer ${
+                    className={`px-3.5 py-2.5 rounded-[12px] border text-left transition-[background-color,border-color,color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] cursor-pointer ${
                       isSelected
                         ? 'bg-[#113C36] border-[#113C36] text-white shadow-[0_2px_8px_rgba(17,60,54,0.14)]'
                         : 'bg-white border-[#E5DFD5] text-[#113C36] hover:border-[#CFC6B9]'
@@ -441,7 +442,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                     </div>
                     <div
                       className={`mt-1 text-[11px] tabular-nums flex items-center gap-2 ${
-                        isSelected ? 'text-white/80' : 'text-[#78756E]'
+                        isSelected ? 'text-white/80' : 'text-[#615E57]'
                       }`}
                     >
                       <span>{formatDate(rep.completedAtIso)}</span>
@@ -476,7 +477,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                           {t('bm.officialReportBadge')}
                         </span>
                         <span className="font-medium text-[#113C36]">{activeReport.batchLabel}</span>
-                        <span className="text-[#78756E]">{formatDate(activeReport.completedAtIso, true)}</span>
+                        <span className="text-[#615E57]">{formatDate(activeReport.completedAtIso, true)}</span>
                         {activeReport.writingStatus === 'pending' && (
                           <span className="px-2.5 py-0.5 rounded-full bg-[#FDF0E2] border border-[#A35116]/25 text-[#A35116] font-sans-display font-semibold text-[11px]">
                             {t('bm.writingPendingPill')}
@@ -493,7 +494,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
 
                     {/* Single /120 Score Block + Trend + Gender Filter */}
                     <div className="flex flex-col sm:items-end gap-3 shrink-0">
-                      <div className="flex items-baseline gap-2.5 bg-white px-4 py-3 rounded-[14px] border border-[#E5DFD5]">
+                      <div className="flex max-w-full flex-wrap items-baseline gap-x-2.5 gap-y-1.5 bg-white px-4 py-3 rounded-[14px] border border-[#E5DFD5]">
                         <span className="font-serif-display font-extrabold text-[40px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
                           {evaluatedActive.scaledScore120.toFixed(1)}
                         </span>
@@ -501,7 +502,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                           <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
                             / 120 (±{evaluatedActive.uncertaintyHalfWidth120})
                           </div>
-                          <div className="text-[11px] text-[#78756E]">
+                          <div className="text-[11px] text-[#615E57]">
                             {t('bm.rankCompact', {
                               rank: evaluatedActive.estimatedStateRank.toLocaleString(),
                               topPct: Math.max(0.1, 100 - evaluatedActive.estimatedPercentile).toFixed(1),
@@ -526,48 +527,33 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                         )}
                       </div>
 
-                      <div
-                        className="inline-flex items-center p-1 rounded-[10px] bg-white/85 border border-[#E5DFD5]"
-                        role="group"
-                        aria-label={t('bench.genderFilterLabel')}
-                      >
-                        {(
-                          [
-                            ['all', t('bench.genderAll')],
-                            ['girls', t('bench.genderGirls')],
-                            ['boys', t('bench.genderBoys')],
-                          ] as [ApplicantGenderFilter, string][]
-                        ).map(([val, label]) => (
-                          <button
-                            key={val}
-                            type="button"
-                            aria-pressed={genderFilter === val}
-                            onClick={() => setGenderFilter(val)}
-                            className={`px-3 py-1 rounded-[7px] text-xs font-sans-display font-semibold cursor-pointer transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98] whitespace-nowrap ${
-                              genderFilter === val
-                                ? 'bg-[#113C36] text-white'
-                                : 'text-[#4A5955] hover:text-[#113C36]'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                      <SegmentedControl<ApplicantGenderFilter>
+                        ariaLabel={t('bench.genderFilterLabel')}
+                        className="bg-white/85 border-[#E5DFD5]"
+                        segmentClassName="px-3 py-1"
+                        value={genderFilter}
+                        onChange={setGenderFilter}
+                        options={[
+                          { value: 'all', label: t('bench.genderAll') },
+                          { value: 'girls', label: t('bench.genderGirls') },
+                          { value: 'boys', label: t('bench.genderBoys') },
+                        ]}
+                      />
                     </div>
                   </div>
                 </div>
 
-                <div className="p-6 sm:p-7 space-y-8">
+                <div className="p-5 sm:p-7 space-y-8">
                   {/* Official NSW 4-Section Performance Report (4-Band Bars + Accuracies + Unanswered) */}
                   <section className="space-y-3.5">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <h4 className="font-sans-display font-semibold text-base text-[#113C36]">
                         {t('bm.sectionReportTitle')}
                       </h4>
-                      <span className="text-xs text-[#78756E]">{t('bm.sectionReportSub')}</span>
+                      <span className="text-xs text-[#615E57]">{t('bm.sectionReportSub')}</span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
                       {(['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => {
                         const snap = activeReport.sections[sec];
                         const activeBandIdx = bandIndex(snap.band);
@@ -577,7 +563,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                             className="p-4 rounded-[14px] bg-[#FAF8F5] border border-[#E5DFD5] space-y-3 tabular-nums"
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <div>
+                              <div className="min-w-0">
                                 <div className="font-sans-display font-semibold text-sm text-[#113C36]">
                                   {sectionLabel(sec)}
                                 </div>
@@ -625,7 +611,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                                   );
                                 })}
                               </div>
-                              <div className="grid grid-cols-4 gap-1.5 text-[10px] text-[#78756E] text-center">
+                              <div className="grid grid-cols-4 gap-1.5 text-[10px] text-[#615E57] text-center">
                                 <span>{t('bench.bandLowest50')}</span>
                                 <span>{t('bench.bandNext25')}</span>
                                 <span>{t('bench.bandNext15')}</span>
@@ -644,7 +630,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                       <h4 className="font-sans-display font-semibold text-base text-[#113C36]">
                         {t('bm.schoolTiersTitle')}
                       </h4>
-                      <span className="text-xs text-[#78756E]">{t('bm.schoolTiersSub')}</span>
+                      <span className="text-xs text-[#615E57]">{t('bm.schoolTiersSub')}</span>
                     </div>
 
                     <div className="space-y-3.5">
@@ -664,7 +650,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                             <button
                               type="button"
                               onClick={() => setShowAllAboveCutoff((v) => !v)}
-                              className="px-2.5 py-1 rounded-full bg-white border border-[#C5DDD1] hover:bg-[#FAF8F5] text-[11px] font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+                              className="px-2.5 py-1 rounded-full bg-white border border-[#C5DDD1] hover:bg-[#FAF8F5] text-[11px] font-sans-display font-semibold text-[#113C36] cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
                             >
                               {showAllAboveCutoff
                                 ? t('bm.showTopCount', { count: 6 })
@@ -682,10 +668,10 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                                 className="px-3.5 py-2.5 rounded-[10px] bg-white border border-[#D4E4DC] flex items-center justify-between gap-2 text-xs tabular-nums"
                               >
                                 <div className="min-w-0">
-                                  <div className="font-sans-display font-semibold text-[#113C36] truncate">
+                                  <div className="font-sans-display font-semibold leading-snug text-[#113C36] [overflow-wrap:anywhere]">
                                     {s.school.shortName}
                                   </div>
-                                  <div className="text-[11px] text-[#78756E] mt-0.5">
+                                  <div className="text-[11px] text-[#615E57] mt-0.5">
                                     {t('bm.schoolSpotsLine', {
                                       cutoff: s.firstRoundCutoff120.toFixed(1),
                                       gen: s.estimatedGeneralSpots,
@@ -722,7 +708,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                               >
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5 min-w-0">
-                                    <span className="font-sans-display font-semibold text-[#113C36] truncate">
+                                    <span className="font-sans-display font-semibold leading-snug text-[#113C36] [overflow-wrap:anywhere]">
                                       {s.school.shortName}
                                     </span>
                                     <span className="px-1.5 py-0.5 rounded bg-[#FDF0E2] text-[#A35116] text-[10px] font-medium shrink-0">
@@ -731,7 +717,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                                         : t('bm.tagReserve')}
                                     </span>
                                   </div>
-                                  <div className="text-[11px] text-[#78756E] mt-0.5">
+                                  <div className="text-[11px] text-[#615E57] mt-0.5">
                                     {t('bm.schoolReserveLine', {
                                       cutoff: s.firstRoundCutoff120.toFixed(1),
                                       reserve: s.reserveCutoff120.toFixed(1),
@@ -765,10 +751,10 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                                 className="px-3.5 py-2.5 rounded-[10px] bg-white border border-[#E5DFD5] flex items-center justify-between gap-2 text-xs tabular-nums"
                               >
                                 <div className="min-w-0">
-                                  <div className="font-sans-display font-semibold text-[#113C36] truncate">
+                                  <div className="font-sans-display font-semibold leading-snug text-[#113C36] [overflow-wrap:anywhere]">
                                     {s.school.shortName}
                                   </div>
-                                  <div className="text-[11px] text-[#78756E] mt-0.5">
+                                  <div className="text-[11px] text-[#615E57] mt-0.5">
                                     {t('bm.schoolSpotsLine', {
                                       cutoff: s.firstRoundCutoff120.toFixed(1),
                                       gen: s.estimatedGeneralSpots,
@@ -795,7 +781,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                           {t('bm.aiBriefTitle')}
                         </h4>
                         {activeReport.aiCoaching && (
-                          <span className="px-2 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-[10px] font-medium text-[#78756E]">
+                          <span className="px-2 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-[10px] font-medium text-[#615E57]">
                             {activeReport.aiCoaching.source === 'hybrid_gemini'
                               ? t('bm.aiBadgeHybrid')
                               : t('bm.aiBadgeFormula')}
@@ -808,7 +794,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                           type="button"
                           disabled={analyzingId === activeReport.sessionId}
                           onClick={() => runAnalysis(activeReport.sessionId, true)}
-                          className="px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+                          className="px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
                         >
                           {analyzingId === activeReport.sessionId ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -820,7 +806,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                         <button
                           type="button"
                           onClick={() => onOpenSession(activeReport.sessionId, false)}
-                          className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98]"
+                          className="px-3.5 py-1.5 rounded-[8px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           <span>{t('bm.openQuestionReview')}</span>
@@ -890,7 +876,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                     ) : null}
                   </section>
 
-                  <div className="flex items-start gap-2 text-[11px] text-[#78756E] leading-relaxed">
+                  <div className="flex items-start gap-2 text-[11px] text-[#615E57] leading-relaxed">
                     <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <span>{t('bench.disclaimer')}</span>
                   </div>

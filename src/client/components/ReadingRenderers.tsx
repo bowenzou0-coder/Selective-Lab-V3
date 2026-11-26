@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Check, Highlighter, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { SegmentedControl } from './ui/SegmentedControl';
 import type {
   EvidenceCitationRef,
   MarkingResult,
@@ -226,11 +227,11 @@ export const ReadingStimulusPane = memo(function ReadingStimulusPane({
             }
             lineNum++;
             return (
-              <div key={idx} className="flex items-baseline gap-4">
+              <div key={idx} className="flex items-baseline gap-3 sm:gap-4">
                 <span className="w-6 text-right text-xs text-[var(--text-muted)] tabular-nums select-none shrink-0">
                   {lineNum % 5 === 0 || lineNum === 1 ? lineNum : ''}
                 </span>
-                <span>
+                <span className="min-w-0 break-words">
                   {renderTextWithHighlightsAndEvidence(
                     line,
                     highlights,
@@ -342,7 +343,7 @@ export const ReadingStimulusPane = memo(function ReadingStimulusPane({
                       key={tIdx}
                       type="button"
                       onClick={() => onSelectGapIndex(gapNum - 1)}
-                      className={`inline-flex items-center gap-1.5 mx-1 px-2.5 py-1 rounded-[var(--radius-sm)] border text-xs font-sans font-semibold transition-colors cursor-pointer align-baseline ${
+                      className={`inline-flex items-center gap-1.5 mx-1 px-2.5 py-1 rounded-[var(--radius-sm)] border text-xs font-sans font-semibold transition-tactile cursor-pointer align-baseline ${
                         isActive
                           ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--text-primary)] ring-2 ring-[var(--accent-primary)]/20'
                           : placedExtract
@@ -384,7 +385,7 @@ export const ReadingStimulusPane = memo(function ReadingStimulusPane({
               {stim.title}
             </h2>
           )}
-          <div className="text-xs text-[#78756E] capitalize mt-0.5">
+          <div className="text-xs text-[#615E57] capitalize mt-0.5">
             {stim.genreOrTextType.replace(/_/g, ' ')}
           </div>
         </div>
@@ -462,33 +463,18 @@ export const ReadingStimulusPane = memo(function ReadingStimulusPane({
       {showExtractsInLeftPane && stim.extracts && (
         <div className="space-y-4">
           {stim.extracts.length > 2 && (
-            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[var(--bg-surface)] rounded-[var(--radius-sm)] w-fit">
-              <button
-                type="button"
-                onClick={() => setExtractTab('ALL')}
-                className={`px-3 py-1 text-xs font-semibold rounded-[var(--radius-sm)] cursor-pointer ${
-                  extractTab === 'ALL'
-                    ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                {t('read.allExtracts')}
-              </button>
-              {stim.extracts.map((ex) => (
-                <button
-                  key={ex.label}
-                  type="button"
-                  onClick={() => setExtractTab(ex.label)}
-                  className={`px-3 py-1 text-xs font-semibold rounded-[var(--radius-sm)] cursor-pointer ${
-                    extractTab === ex.label
-                      ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  {t('read.extractNum', { label: ex.label })}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              ariaLabel={t('read.allExtracts')}
+              tone="paper"
+              className="bg-[var(--bg-surface)] border-transparent"
+              segmentClassName="px-3 py-1"
+              value={extractTab}
+              onChange={setExtractTab}
+              options={[
+                { value: 'ALL', label: t('read.allExtracts') },
+                ...stim.extracts.map((ex) => ({ value: ex.label, label: t('read.extractNum', { label: ex.label }) })),
+              ]}
+            />
           )}
 
           {stim.extracts
@@ -654,9 +640,9 @@ export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
                               : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-surface)] text-[var(--text-primary)]'
                       }`}
                     >
-                      <span className="flex items-center gap-2 min-w-0">
-                        <span className="font-sans-display font-semibold text-xs text-[#78756E]">{opt.key}</span>
-                        <span className="truncate">{opt.text}</span>
+                      <span className="flex items-baseline gap-2 min-w-0">
+                        <span className="font-sans-display font-semibold text-xs text-[#615E57] shrink-0">{opt.key}</span>
+                        <span className="min-w-0 break-words">{opt.text}</span>
                       </span>
                       {readOnly && isCorrect && (
                         <span className="text-[10px] font-bold text-[var(--status-success)] shrink-0">
@@ -722,7 +708,7 @@ export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
                 key={p.partId}
                 type="button"
                 onClick={() => onSelectGapIndex(idx)}
-                className={`px-3 py-1.5 rounded-[var(--radius-sm)] border text-xs font-semibold tabular-nums cursor-pointer transition-colors ${
+                className={`px-3 py-1.5 rounded-[var(--radius-sm)] border text-xs font-semibold tabular-nums cursor-pointer transition-tactile ${
                   isCurrent
                     ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white'
                     : val
@@ -819,7 +805,7 @@ export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
                 }}
                 className="text-sm text-[var(--text-primary)] text-left whitespace-pre-line cursor-pointer"
               >
-                <span className="font-sans-display font-semibold text-xs text-[#78756E] mr-2 tabular-nums">
+                <span className="font-sans-display font-semibold text-xs text-[#615E57] mr-2 tabular-nums">
                   {idx + 1}.
                 </span>
                 {part.promptText}
@@ -839,7 +825,7 @@ export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
                         onSelectGapIndex(idx);
                         if (!readOnly) onSelectAnswer(part.partId, selected ? null : k);
                       }}
-                      className={`w-9 h-9 rounded-[var(--radius-sm)] border text-xs font-bold transition-colors cursor-pointer ${
+                      className={`w-9 h-9 rounded-[var(--radius-sm)] border text-xs font-bold transition-tactile cursor-pointer ${
                         readOnly && isCorrect
                           ? 'border-[var(--status-success)] bg-[var(--status-success)] text-white'
                           : isWrongSelected
@@ -944,7 +930,7 @@ export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
                     aria-label={`Eliminate option ${opt.key}`}
                     title={t('ws.crossOutOption')}
                     onClick={() => onToggleEliminate(part.partId, opt.key)}
-                    className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-colors ${
+                    className={`absolute top-2 right-2 z-10 w-6 h-6 rounded-[7px] border flex items-center justify-center cursor-pointer transition-tactile ${
                       isElim
                         ? 'border-[var(--border-strong)] bg-[var(--bg-hover)] text-[var(--text-primary)]'
                         : 'border-[var(--border-hairline)] bg-white/95 text-[var(--text-muted)] hover:text-[var(--text-primary)]'
@@ -1028,7 +1014,7 @@ export const ReadingRightAnswerPane = memo(function ReadingRightAnswerPane({
                     aria-label={`Eliminate option ${opt.key}`}
                     title={t('ws.crossOutOption')}
                     onClick={() => onToggleEliminate(part.partId, opt.key)}
-                    className={`px-2.5 rounded-[var(--radius-md)] border text-xs cursor-pointer transition-colors ${
+                    className={`px-2.5 rounded-[var(--radius-md)] border text-xs cursor-pointer transition-tactile ${
                       isElim
                         ? 'border-[var(--border-strong)] bg-[var(--bg-hover)] text-[var(--text-primary)]'
                         : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'

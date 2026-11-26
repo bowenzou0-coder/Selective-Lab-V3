@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { clampShiftX } from './viewportClamp';
 
 interface PopoverTriggerProps {
   'aria-expanded': boolean;
@@ -38,6 +39,8 @@ export function Popover({
   const open = controlledOpen ?? uncontrolledOpen;
   const panelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [shiftX, setShiftX] = useState(0);
 
   const setOpen = useCallback(
     (next: boolean) => {
@@ -47,6 +50,26 @@ export function Popover({
     [controlledOpen, onOpenChange]
   );
   const close = useCallback(() => setOpen(false), [setOpen]);
+
+  // Keep the panel on-screen at narrow widths (e.g. a filter trigger near the right edge at 390px).
+  useLayoutEffect(() => {
+    if (!open) {
+      setShiftX(0);
+      return;
+    }
+    const measure = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const rect = panel.getBoundingClientRect();
+      setShiftX((prev) => {
+        const baseLeft = rect.left - prev;
+        return clampShiftX(baseLeft, baseLeft + rect.width, window.innerWidth);
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -80,10 +103,12 @@ export function Popover({
       )}
       {open && (
         <div
+          ref={panelRef}
           id={panelId}
           role="dialog"
           aria-label={label}
-          className={`absolute top-full z-40 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-[14px] border border-[#E5DFD5] bg-white p-4 shadow-[0_12px_32px_-12px_rgba(17,60,54,0.28)] transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] starting:opacity-0 starting:scale-[0.97] ${
+          style={shiftX ? { translate: `${shiftX}px 0` } : undefined}
+          className={`absolute top-full z-40 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-[14px] border border-[#E5DFD5] bg-white p-4 shadow-[0_12px_32px_-12px_rgba(17,60,54,0.28)] transition-[opacity,scale] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] starting:opacity-0 starting:scale-[0.97] ${
             align === 'end' ? 'right-0 origin-top-right' : 'left-0 origin-top-left'
           } ${panelClassName}`}
         >

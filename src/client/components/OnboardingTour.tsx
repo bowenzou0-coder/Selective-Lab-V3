@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Award,
@@ -13,6 +13,8 @@ import {
   X,
 } from 'lucide-react';
 import { useI18n, type MessageKey } from '../i18n';
+import { computeTourPlacement, padTargetRect, type TourRect } from './onboarding/tourPlacement';
+import { useFocusTrap } from './ui/focusTrap';
 import {
   IsometricBookStarIllustration,
   IsometricCompassTimerIllustration,
@@ -91,26 +93,15 @@ const TOUR_STEPS: TourStepSpec[] = [
   },
 ];
 
-interface TargetRect {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
+type TargetRect = TourRect;
 
-function findVisibleTargetRect(selector?: string): TargetRect | null {
+function findVisibleTargetRect(selector: string | undefined, viewport: { w: number; h: number }): TargetRect | null {
   if (!selector || typeof document === 'undefined') return null;
   const nodes = Array.from(document.querySelectorAll(selector));
   for (const el of nodes) {
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) {
-      const pad = 6;
-      return {
-        top: Math.max(4, r.top - pad),
-        left: Math.max(4, r.left - pad),
-        width: r.width + pad * 2,
-        height: r.height + pad * 2,
-      };
+      return padTargetRect({ top: r.top, left: r.left, width: r.width, height: r.height }, viewport);
     }
   }
   return null;
@@ -155,8 +146,9 @@ export function OnboardingTour({
   // Measure active target rectangle smoothly on step change, resize, and scroll
   const measureTarget = useCallback(() => {
     if (!open) return;
-    setViewport({ w: window.innerWidth, h: window.innerHeight });
-    setTargetRect(findVisibleTargetRect(step.targetSelector));
+    const next = { w: window.innerWidth, h: window.innerHeight };
+    setViewport((prev) => (prev.w === next.w && prev.h === next.h ? prev : next));
+    setTargetRect(findVisibleTargetRect(step.targetSelector, next));
   }, [open, step.targetSelector]);
 
   useLayoutEffect(() => {
@@ -184,15 +176,29 @@ export function OnboardingTour({
     setStepIndex((prev) => Math.max(0, prev - 1));
   }, []);
 
-  // Keyboard shortcuts: Escape skips anytime, Left/Right navigate steps
+  // Focus stays inside the card while the tour runs; Escape skips; focus returns to the opener.
+  const cardRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(cardRef, open, {
+    onEscape: () => {
+      if (!launchingCalibration) onDismiss();
+    },
+    initialFocus: () => cardRef.current?.querySelector<HTMLElement>('[data-tour-primary]'),
+  });
+
+  // Step changes swap the footer buttons; keep focus on the new primary action instead of <body>.
+  useEffect(() => {
+    if (!open) return;
+    const card = cardRef.current;
+    if (!card || card.contains(document.activeElement)) return;
+    card.querySelector<HTMLElement>('[data-tour-primary]')?.focus({ preventScroll: true });
+  }, [open, stepIndex]);
+
+  // Left/Right step through the tour.
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (launchingCalibration) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onDismiss();
-      } else if (e.key === 'ArrowRight' && stepIndex < TOUR_STEPS.length - 1) {
+      if (e.key === 'ArrowRight' && stepIndex < TOUR_STEPS.length - 1) {
         e.preventDefault();
         handleNext();
       } else if (e.key === 'ArrowLeft' && stepIndex > 0) {
@@ -202,7 +208,7 @@ export function OnboardingTour({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, stepIndex, launchingCalibration, onDismiss, handleNext, handleBack]);
+  }, [open, stepIndex, launchingCalibration, handleNext, handleBack]);
 
   const handleTriggerCalibration = async () => {
     setLaunchingCalibration(true);
@@ -220,63 +226,10 @@ export function OnboardingTour({
   const isWelcome = step.id === 'welcome';
   const isFinish = step.id === 'finish';
   const isCentered = isWelcome || isFinish || !targetRect;
-  const isDesktopSidebarTarget = Boolean(targetRect && viewport.w >= 768 && targetRect.left < 280);
-  const isMobileBottomTarget = Boolean(targetRect && !isDesktopSidebarTarget && targetRect.top > viewport.h * 0.58);
-
-  const cardWidth = Math.min(410, viewport.w - 32);
-  let cardStyle: React.CSSProperties;
-  let caretSide: 'left' | 'bottom' | null = null;
-  let caretOffsetPx = 28;
-
-  if (isCentered) {
-    cardStyle = {
-      top: '50%',
-      left: '50%',
-      width: Math.min(460, viewport.w - 32),
-      transform: 'translate(-50%, -50%)',
-    };
-  } else if (isDesktopSidebarTarget && targetRect) {
-    const desiredTop = targetRect.top - 22;
-    const clampedTop = Math.max(20, Math.min(viewport.h - 280, desiredTop));
-    caretSide = 'left';
-    caretOffsetPx = Math.max(22, Math.min(200, targetRect.top + targetRect.height / 2 - clampedTop - 7));
-    cardStyle = {
-      top: clampedTop,
-      left: targetRect.left + targetRect.width + 20,
-      width: cardWidth,
-      transform: 'translate(0, 0)',
-    };
-  } else if (isMobileBottomTarget && targetRect) {
-    const cardLeft = Math.max(16, (viewport.w - cardWidth) / 2);
-    const bottomSpace = viewport.h - targetRect.top + 18;
-    caretSide = 'bottom';
-    caretOffsetPx = Math.max(
-      24,
-      Math.min(cardWidth - 36, targetRect.left + targetRect.width / 2 - cardLeft - 7)
-    );
-    cardStyle = {
-      bottom: bottomSpace,
-      left: cardLeft,
-      width: cardWidth,
-      transform: 'translate(0, 0)',
-    };
-  } else if (targetRect) {
-    const cardLeft = Math.max(16, Math.min(viewport.w - cardWidth - 16, targetRect.left));
-    const cardTop = Math.min(viewport.h - 260, targetRect.top + targetRect.height + 16);
-    cardStyle = {
-      top: Math.max(20, cardTop),
-      left: cardLeft,
-      width: cardWidth,
-      transform: 'translate(0, 0)',
-    };
-  } else {
-    cardStyle = {
-      top: '50%',
-      left: '50%',
-      width: cardWidth,
-      transform: 'translate(-50%, -50%)',
-    };
-  }
+  const placement = computeTourPlacement(targetRect, viewport, isCentered);
+  const cardStyle: React.CSSProperties = placement.style;
+  const caretSide = placement.caretSide;
+  const caretOffsetPx = placement.caretOffset;
 
   const StepIcon = step.icon;
 
@@ -284,7 +237,6 @@ export function OnboardingTour({
     <div
       className="fixed inset-0 z-50 tour-backdrop-enter"
       role="presentation"
-      aria-live="polite"
     >
       {/* Full-viewport translucent pine backdrop with crisp SVG spotlight cutout */}
       <svg
@@ -339,13 +291,19 @@ export function OnboardingTour({
 
       {/* Floating Editorial Walkthrough Card */}
       <div
+        ref={cardRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-tour-title"
+        aria-describedby="onboarding-tour-body"
+        tabIndex={-1}
         style={cardStyle}
-        className="fixed z-10 rounded-[20px] bg-white border border-[#E5DFD5] shadow-[0_24px_60px_rgba(17,60,54,0.22)] tour-card-glide"
+        className="fixed z-10 rounded-[20px] bg-white border border-[#E5DFD5] shadow-[0_24px_60px_rgba(17,60,54,0.22)] outline-none tour-card-glide"
       >
         {/* Directional Caret Pointer */}
+        <p className="sr-only" aria-live="polite" aria-atomic="true">
+          {`${t('tour.stepOf', { current: stepIndex + 1, total: TOUR_STEPS.length })}: ${t(step.titleKey)}`}
+        </p>
         {caretSide === 'left' && (
           <span
             aria-hidden="true"
@@ -360,8 +318,18 @@ export function OnboardingTour({
             className="absolute -bottom-[7px] w-3.5 h-3.5 rotate-45 bg-white border-r border-b border-[#E5DFD5]"
           />
         )}
+        {caretSide === 'top' && (
+          <span
+            aria-hidden="true"
+            style={{ left: caretOffsetPx }}
+            className="absolute -top-[7px] w-3.5 h-3.5 rotate-45 bg-white border-l border-t border-[#E5DFD5]"
+          />
+        )}
 
-        <div className="p-6 space-y-5 tour-card-enter">
+        <div
+          style={{ maxHeight: placement.maxBodyHeight }}
+          className="p-5 sm:p-6 space-y-5 overflow-y-auto overscroll-contain rounded-[20px] tour-card-enter"
+        >
           {/* Top Bar: Animated Segmented Progress + Skip Button */}
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-1.5" aria-label={t('tour.stepOf', { current: stepIndex + 1, total: TOUR_STEPS.length })}>
@@ -375,7 +343,9 @@ export function OnboardingTour({
                     disabled={launchingCalibration}
                     onClick={() => setStepIndex(idx)}
                     aria-label={t('tour.stepOf', { current: idx + 1, total: TOUR_STEPS.length })}
-                    className={`h-1.5 rounded-full transition-[width,background-color] duration-300 ease-out cursor-pointer ${
+                    aria-current={active ? 'step' : undefined}
+                    data-press="off"
+                    className={`relative h-1.5 rounded-full before:absolute before:-inset-x-1 before:-inset-y-2 before:content-[''] transition-[width,background-color] duration-300 ease-out cursor-pointer ${
                       active
                         ? 'w-7 bg-[#113C36]'
                         : done
@@ -392,7 +362,7 @@ export function OnboardingTour({
                 type="button"
                 disabled={launchingCalibration}
                 onClick={onDismiss}
-                className="px-2.5 py-1 rounded-[8px] text-xs font-sans-display font-medium text-[#78756E] hover:text-[#113C36] hover:bg-[#FAF8F5] transition-colors cursor-pointer disabled:opacity-40"
+                className="px-2.5 py-1 rounded-[8px] text-xs font-sans-display font-medium text-[#615E57] hover:text-[#113C36] hover:bg-[#FAF8F5] transition-tactile cursor-pointer disabled:opacity-40"
               >
                 {t('tour.skip')}
               </button>
@@ -401,7 +371,7 @@ export function OnboardingTour({
                 disabled={launchingCalibration}
                 onClick={onDismiss}
                 aria-label={t('tour.skip')}
-                className="p-1 rounded-[8px] text-[#78756E] hover:text-[#113C36] hover:bg-[#FAF8F5] transition-colors cursor-pointer disabled:opacity-40"
+                className="p-1 rounded-[8px] text-[#615E57] hover:text-[#113C36] hover:bg-[#FAF8F5] transition-tactile cursor-pointer disabled:opacity-40"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -428,7 +398,7 @@ export function OnboardingTour({
                 <div className={`w-9 h-9 rounded-[11px] ${step.accentBg} border border-[#E5DFD5] flex items-center justify-center text-[#113C36]`}>
                   <StepIcon className="w-4 h-4" />
                 </div>
-                <span className="text-xs font-sans-display font-medium text-[#78756E] tabular-nums">
+                <span className="text-xs font-sans-display font-medium text-[#615E57] tabular-nums">
                   {t('tour.stepOf', { current: stepIndex + 1, total: TOUR_STEPS.length })}
                 </span>
               </div>
@@ -441,7 +411,7 @@ export function OnboardingTour({
               >
                 {t(step.titleKey)}
               </h2>
-              <p className="text-[14px] text-[#4A5955] leading-relaxed">
+              <p id="onboarding-tour-body" className="text-[14px] text-[#4A5955] leading-relaxed">
                 {t(step.bodyKey)}
               </p>
             </div>
@@ -463,14 +433,15 @@ export function OnboardingTour({
                 <button
                   type="button"
                   onClick={onDismiss}
-                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer"
+                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] cursor-pointer"
                 >
                   {t('tour.skip')}
                 </button>
                 <button
                   type="button"
+                  data-tour-primary
                   onClick={handleNext}
-                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer"
+                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] cursor-pointer"
                 >
                   <span>{t('tour.startTour')}</span>
                   <ChevronRight className="w-3.5 h-3.5" />
@@ -482,15 +453,16 @@ export function OnboardingTour({
                   type="button"
                   disabled={launchingCalibration}
                   onClick={onDismiss}
-                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer disabled:opacity-50"
+                  className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] cursor-pointer disabled:opacity-50"
                 >
                   {t('tour.finishSkipBtn')}
                 </button>
                 <button
                   type="button"
+                  data-tour-primary
                   disabled={launchingCalibration}
                   onClick={handleTriggerCalibration}
-                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer disabled:opacity-60"
+                  className="px-5 py-2.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] cursor-pointer disabled:opacity-60"
                 >
                   {launchingCalibration ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -509,15 +481,16 @@ export function OnboardingTour({
                 <button
                   type="button"
                   onClick={handleBack}
-                  className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] inline-flex items-center gap-1 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer"
+                  className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] inline-flex items-center gap-1 transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] cursor-pointer"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                   <span>{t('tour.back')}</span>
                 </button>
                 <button
                   type="button"
+                  data-tour-primary
                   onClick={handleNext}
-                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer"
+                  className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] cursor-pointer"
                 >
                   <span>{t('tour.next')}</span>
                   <ChevronRight className="w-3.5 h-3.5" />

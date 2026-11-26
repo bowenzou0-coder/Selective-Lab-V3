@@ -25,7 +25,7 @@ export const ExamTimer = memo(function ExamTimer({
       onClick={onToggleHidden}
       aria-label={hidden ? t('session.showTimer') : t('session.hideTimer')}
       title={hidden ? t('session.showTimer') : t('session.hideTimer')}
-      className={`inline-flex cursor-pointer items-center gap-2 rounded-[10px] border px-4 py-1 transition-colors ${
+      className={`inline-flex cursor-pointer items-center gap-2 rounded-[10px] border px-4 py-1 transition-tactile ${
         urgent
           ? 'border-[#B42318]/50 bg-[#FDECEB] text-[#B42318]'
           : warning

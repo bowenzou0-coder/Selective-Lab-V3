@@ -1,6 +1,8 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { ChevronDown, ChevronUp, Save, Sparkles } from 'lucide-react';
+import { Save, Sparkles } from 'lucide-react';
 import { useI18n } from '../../i18n';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { Collapsible, DisclosureChevron } from '../ui/Collapsible';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_POOL_POLICY,
@@ -98,28 +100,17 @@ export function PlatformDefaultsSection({
               {t('cfg.sharedRulesBadge')}
             </span>
           </div>
-          <div className="inline-flex items-center p-1 rounded-[12px] bg-[#FAF8F5] border border-[#CFC6B9] gap-1">
-            <button
-              type="button"
-              aria-pressed={autoCal.enabled}
-              onClick={() => updateGlobalAuto({ enabled: true })}
-              className={`px-3 py-1 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer ${
-                autoCal.enabled ? 'bg-[#113C36] text-white' : 'text-[#4A5955]'
-              }`}
-            >
-              {t('cfg.modeAuto')}
-            </button>
-            <button
-              type="button"
-              aria-pressed={!autoCal.enabled}
-              onClick={() => updateGlobalAuto({ enabled: false })}
-              className={`px-3 py-1 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer ${
-                !autoCal.enabled ? 'bg-[#113C36] text-white' : 'text-[#4A5955]'
-              }`}
-            >
-              {t('cfg.modeManual')}
-            </button>
-          </div>
+          <SegmentedControl
+            ariaLabel={t('cfg.title')}
+            className="bg-[#FAF8F5] border-[#CFC6B9]"
+            segmentClassName="px-3 py-1"
+            value={autoCal.enabled ? 'auto' : 'manual'}
+            onChange={(mode) => updateGlobalAuto({ enabled: mode === 'auto' })}
+            options={[
+              { value: 'auto', label: t('cfg.modeAuto') },
+              { value: 'manual', label: t('cfg.modeManual') },
+            ]}
+          />
         </div>
 
         {autoCal.enabled ? (
@@ -275,7 +266,7 @@ export function PlatformDefaultsSection({
             onClick={() =>
               setConfig((prev) => ({ ...prev, poolPolicy: { autoRetireMastered: false } }))
             }
-            className={`p-4 rounded-[12px] border text-left space-y-1 cursor-pointer transition-colors ${
+            className={`p-4 rounded-[12px] border text-left space-y-1 cursor-pointer transition-tactile ${
               !poolPolicy.autoRetireMastered
                 ? 'bg-[#E5F0EA] border-[#113C36] text-[#113C36]'
                 : 'bg-[#FAF8F5] border-[#E5DFD5] text-[#4A5955]'
@@ -292,7 +283,7 @@ export function PlatformDefaultsSection({
             onClick={() =>
               setConfig((prev) => ({ ...prev, poolPolicy: { autoRetireMastered: true } }))
             }
-            className={`p-4 rounded-[12px] border text-left space-y-1 cursor-pointer transition-colors ${
+            className={`p-4 rounded-[12px] border text-left space-y-1 cursor-pointer transition-tactile ${
               poolPolicy.autoRetireMastered
                 ? 'bg-[#E5F0EA] border-[#113C36] text-[#113C36]'
                 : 'bg-[#FAF8F5] border-[#E5DFD5] text-[#4A5955]'
@@ -310,27 +301,33 @@ export function PlatformDefaultsSection({
       <section className="rounded-[16px] bg-white border border-[#E5DFD5] overflow-hidden">
         <button
           type="button"
+          id="cfg-advanced-trigger"
           aria-expanded={showAdvanced}
+          aria-controls="cfg-advanced-panel"
+          data-press="off"
+          data-focus-ring="inset"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-[#FAF8F5] cursor-pointer"
+          className={`w-full px-6 py-4 flex items-center justify-between gap-3 text-left transition-tactile duration-150 hover:bg-[#FAF8F5] active:bg-[#F3EFE8] cursor-pointer ${
+            showAdvanced ? 'rounded-t-[16px]' : 'rounded-[16px]'
+          }`}
         >
-          <div>
+          <div className="min-w-0">
             <div className="font-sans-display font-semibold text-sm text-[#113C36]">
               {t('cfg.advancedTitle')}
             </div>
-            <div className="text-xs text-[#78756E]">
+            <div className="text-xs text-[#615E57]">
               {t('cfg.advancedSub', { version: versionNumber, count: history.length })}
             </div>
           </div>
-          {showAdvanced ? (
-            <ChevronUp className="w-4 h-4 text-[#78756E]" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-[#78756E]" />
-          )}
+          <DisclosureChevron open={showAdvanced} className="w-4 h-4 text-[#615E57]" />
         </button>
 
-        {showAdvanced && (
-          <div className="px-6 pb-6 pt-3 border-t border-[#E5DFD5] space-y-5">
+        <Collapsible
+          open={showAdvanced}
+          id="cfg-advanced-panel"
+          labelledBy="cfg-advanced-trigger"
+          innerClassName="px-6 pb-6 pt-3 border-t border-[#E5DFD5] space-y-5"
+        >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <label htmlFor="cfg-spaced-weight" className="block text-xs text-[#4A5955]">{t('cfg.spacedWeight')}</label>
@@ -424,7 +421,7 @@ export function PlatformDefaultsSection({
                         <strong className="text-[#113C36]">v{h.versionNumber}</strong>{' '}
                         {h.notes ? `— ${h.notes}` : ''}
                       </span>
-                      <span className="text-[#78756E] tabular-nums shrink-0">
+                      <span className="text-[#615E57] tabular-nums shrink-0">
                         {formatDate(h.createdAt, true)}
                       </span>
                     </div>
@@ -432,8 +429,7 @@ export function PlatformDefaultsSection({
                 </div>
               </div>
             )}
-          </div>
-        )}
+        </Collapsible>
       </section>
 
       {/* Save Platform Defaults Bar (only appears when platform defaults have unsaved changes) */}
@@ -455,7 +451,7 @@ export function PlatformDefaultsSection({
               type="button"
               disabled={savingGlobal}
               onClick={onDiscard}
-              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
             >
               {t('settings.discardChanges')}
             </button>
@@ -463,7 +459,7 @@ export function PlatformDefaultsSection({
               type="button"
               disabled={savingGlobal}
               onClick={onSave}
-              className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
+              className="px-5 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98] disabled:opacity-50"
             >
               <Save className="w-3.5 h-3.5" />
               <span>{savingGlobal ? t('cfg.saving') : t('cfg.saveSettings')}</span>

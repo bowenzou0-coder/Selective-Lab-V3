@@ -39,7 +39,7 @@ export function EssayComparison<T extends ComparableEssay & { sessionId: string 
         {t('rev.bandWithLetter', { band: score.band })} ({score.marks}/{score.maxMarks})
       </span>
     ) : (
-      <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-[#78756E] font-medium">{t('prog.compareNotMarked')}</span>
+      <span className="px-2.5 py-0.5 rounded-full bg-[#F3EFE8] text-[#615E57] font-medium">{t('prog.compareNotMarked')}</span>
     );
 
   const column = (essay: T, heading: string, score: EssayScore | null, emphasis: boolean) => (
@@ -59,13 +59,17 @@ export function EssayComparison<T extends ComparableEssay & { sessionId: string 
           {scoreChip(score)}
         </div>
       </header>
-      <p className="font-serif-text text-[15px] leading-[1.7] text-[#113C36] whitespace-pre-line max-h-[22rem] overflow-y-auto pr-1">
+      <p
+        tabIndex={0}
+        aria-label={heading}
+        className="font-serif-text text-[15px] leading-[1.7] text-[#113C36] whitespace-pre-line break-words max-h-[16rem] sm:max-h-[22rem] overflow-y-auto overscroll-contain rounded-[6px] pr-1"
+      >
         {essay.responseText}
       </p>
       <button
         type="button"
         onClick={() => onOpenSession(essay.sessionId)}
-        className="px-3 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs text-[#113C36] font-sans-display font-semibold cursor-pointer transition-colors"
+        className="px-3 py-1 rounded-[8px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs text-[#113C36] font-sans-display font-semibold cursor-pointer transition-tactile"
       >
         {t('prog.openReview')}
       </button>
@@ -82,7 +86,7 @@ export function EssayComparison<T extends ComparableEssay & { sessionId: string 
           id={selectId}
           value={pair.current.submissionId}
           onChange={(e) => setCurrentId(e.target.value)}
-          className="max-w-full px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white text-[#113C36] cursor-pointer"
+          className="min-w-0 max-w-full px-2.5 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white text-[#113C36] cursor-pointer"
         >
           {ordered.slice(0, -1).map((essay) => (
             <option key={essay.submissionId} value={essay.submissionId}>
@@ -103,7 +107,7 @@ export function EssayComparison<T extends ComparableEssay & { sessionId: string 
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {column(pair.previous, t('prog.comparePrevious'), comparison.previousScore, false)}
         {column(pair.current, t('prog.compareThisEssay'), comparison.currentScore, true)}
       </div>
@@ -111,9 +115,9 @@ export function EssayComparison<T extends ComparableEssay & { sessionId: string 
       <div className="space-y-2">
         <h3 className="text-xs font-sans-display font-semibold text-[#4A5955]">{t('prog.compareRubricTitle')}</h3>
         {comparison.criteria.length === 0 ? (
-          <p className="text-xs text-[#78756E]">{t('prog.compareNoRubric')}</p>
+          <p className="text-xs text-[#615E57]">{t('prog.compareNoRubric')}</p>
         ) : (
-          <div className="overflow-x-auto border border-[#E5DFD5] rounded-[12px] bg-white">
+          <div className="scroll-x border border-[#E5DFD5] rounded-[12px] bg-white">
             <table className="w-full text-xs text-left tabular-nums">
               <thead className="bg-[#F3EFE8]/70 border-b border-[#E5DFD5] text-[#4A5955]">
                 <tr>

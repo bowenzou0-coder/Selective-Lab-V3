@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LanguageToggle, useI18n } from '../i18n';
+import { SegmentedControl } from './ui/SegmentedControl';
 import { CheckCircle2 } from 'lucide-react';
 import type { SessionDetailResponse } from '../api';
 import type { EvidenceCitationRef, MarkingResult, StudentQuestionView } from '../../shared/contracts';
@@ -260,7 +261,7 @@ export function PostSubmissionReview({
               <button
                 type="button"
                 onClick={onViewBenchmarks}
-                className="px-3.5 py-1.5 rounded-[10px] border border-[#1D6346]/40 bg-[#E5F0EA] hover:bg-[#d8e9df] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-colors whitespace-nowrap"
+                className="px-3.5 py-1.5 rounded-[10px] border border-[#1D6346]/40 bg-[#E5F0EA] hover:bg-[#d8e9df] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-tactile whitespace-nowrap"
               >
                 {t('rev.openBenchmarkReport')}
               </button>
@@ -268,14 +269,14 @@ export function PostSubmissionReview({
             <button
               type="button"
               onClick={onViewProgress}
-              className="px-3.5 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-colors whitespace-nowrap"
+              className="px-3.5 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer transition-tactile whitespace-nowrap"
             >
               {t('rev.viewProgress')}
             </button>
             <button
               type="button"
               onClick={onDoneHome}
-              className="px-4 py-1.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap"
+              className="px-4 py-1.5 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold cursor-pointer transition-tactile whitespace-nowrap"
             >
               {t('rev.backToStudio')}
             </button>
@@ -369,33 +370,18 @@ export function PostSubmissionReview({
                   </span>
                 )}
                 {isActiveWriting ? (
-                  <div
-                    role="group"
-                    aria-label={t('rev.writingMetricsTitle')}
-                    className="inline-flex flex-wrap items-center gap-1 p-0.5 bg-white rounded-[10px] border border-[#E5DFD5]"
-                  >
-                    {(
-                      [
-                        ['critique', t('rev.tabCritique')],
-                        ['exemplar', t('rev.tabExemplar')],
-                        ['prompt', t('rev.tabPrompt')],
-                      ] as [WritingViewMode, string][]
-                    ).map(([modeId, modeLabel]) => (
-                      <button
-                        key={modeId}
-                        type="button"
-                        aria-pressed={writingViewMode === modeId}
-                        onClick={() => setWritingViewMode(modeId)}
-                        className={`px-3 py-1 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer whitespace-nowrap transition-colors ${
-                          writingViewMode === modeId
-                            ? 'bg-[#113C36] text-white'
-                            : 'text-[#4A5955] hover:text-[#113C36]'
-                        }`}
-                      >
-                        {modeLabel}
-                      </button>
-                    ))}
-                  </div>
+                  <SegmentedControl<WritingViewMode>
+                    ariaLabel={t('rev.writingMetricsTitle')}
+                    className="bg-white border-[#E5DFD5]"
+                    segmentClassName="px-3 py-1"
+                    value={writingViewMode}
+                    onChange={setWritingViewMode}
+                    options={[
+                      { value: 'critique', label: t('rev.tabCritique') },
+                      { value: 'exemplar', label: t('rev.tabExemplar') },
+                      { value: 'prompt', label: t('rev.tabPrompt') },
+                    ]}
+                  />
                 ) : (
                   activeStatus && <ObjectiveStatusChip status={activeStatus} />
                 )}

@@ -33,7 +33,7 @@ export const QuestionNavigator = memo(function QuestionNavigator({
           <span className="font-medium tabular-nums">
             {t('session.slotsAnsweredSummary', { answered: answeredSlots, total: totalSlots, questions: questions.length })}
           </span>
-          <div className="flex items-center gap-3 text-[11px] text-[#78756E]">
+          <div className="flex items-center gap-3 text-[11px] text-[#615E57]">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-xs bg-[#113C36]" /> {t('session.legendCurrent')}
             </span>
@@ -61,7 +61,7 @@ export const QuestionNavigator = memo(function QuestionNavigator({
                   flagged.has(q.questionId) ? `, ${t('session.flagged')}` : ''
                 }`}
                 onClick={() => onGoIndex(idx)}
-                className={`relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[8px] border font-sans-display text-xs font-semibold tabular-nums transition-colors ${
+                className={`relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[8px] border font-sans-display text-xs font-semibold tabular-nums transition-tactile ${
                   isCurrent
                     ? 'border-[#113C36] bg-[#113C36] text-white'
                     : answered

@@ -28,6 +28,7 @@ import { buildBankQuestionHref, readAdminDeepLink, type StudioTab } from './admi
 import { QuestionBankStudio } from './admin/QuestionBankStudio';
 import { StatusBanner } from './ui/StatusBanner';
 import { Toast } from './ui/Toast';
+import { useSlidingIndicator } from './ui/useSlidingIndicator';
 
 // Secondary tabs load on first open; the bank (default tab) ships with the admin chunk.
 const LearnersPanel = lazy(() =>
@@ -178,7 +179,7 @@ function LearnerScopeBar({
                 type="button"
                 aria-pressed={isSelected}
                 onClick={() => onSelectLearner(l.uid)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-sans-display font-semibold cursor-pointer transition-tactile whitespace-nowrap ${
                   isSelected
                     ? 'bg-[#113C36] border-[#113C36] text-white'
                     : 'bg-white border-[#D8D1C6] text-[#113C36] hover:border-[#113C36]/50'
@@ -206,7 +207,7 @@ function LearnerScopeBar({
           {/* Inline Search Bar for All Other Learners & Catalog Mode */}
           <div ref={searchWrapRef} className="relative flex-1 min-w-[190px] max-w-[280px]">
             <Search
-              className="w-3.5 h-3.5 text-[#78756E] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              className="w-3.5 h-3.5 text-[#615E57] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
               aria-hidden="true"
             />
             <input
@@ -219,14 +220,14 @@ function LearnerScopeBar({
               }}
               placeholder={t('admin.searchLearnersPlaceholder', { count: learners.length })}
               aria-label={t('admin.searchLearnersPlaceholder', { count: learners.length })}
-              className="w-full rounded-full border border-[#D8D1C6] bg-white py-1.5 pl-8 pr-7 text-xs text-[#113C36] placeholder:text-[#78756E] focus:border-[#113C36] focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+              className="w-full rounded-full border border-[#D8D1C6] bg-white py-1.5 pl-8 pr-7 text-xs text-[#113C36] placeholder:text-[#615E57] focus:border-[#113C36] focus:outline-none [&::-webkit-search-cancel-button]:hidden"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
                 aria-label={t('learners.clearFiltersBtn')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#78756E] hover:text-[#113C36] cursor-pointer p-0.5"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#615E57] hover:text-[#113C36] cursor-pointer p-0.5"
               >
                 <X className="w-3 h-3" aria-hidden="true" />
               </button>
@@ -241,7 +242,7 @@ function LearnerScopeBar({
                     setSearchOpen(false);
                     setSearchQuery('');
                   }}
-                  className={`w-full px-3 py-2 rounded-[10px] text-left flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors ${
+                  className={`w-full px-3 py-2 rounded-[10px] text-left flex items-center justify-between gap-2 text-xs cursor-pointer transition-tactile ${
                     isCatalogMode ? 'bg-[#E5F0EA]/70 text-[#113C36] font-semibold' : 'hover:bg-[#FAF8F5] text-[#4A5955]'
                   }`}
                 >
@@ -254,7 +255,7 @@ function LearnerScopeBar({
 
                 <div className="max-h-60 overflow-y-auto divide-y divide-[#F2EDE4] rounded-[10px] border border-[#EFEAE0]">
                   {visibleSearchLearners.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-xs text-[#78756E]">
+                    <div className="px-3 py-4 text-center text-xs text-[#615E57]">
                       {t('admin.pickerNoMatches')}
                     </div>
                   ) : (
@@ -271,7 +272,7 @@ function LearnerScopeBar({
                             setSearchOpen(false);
                             setSearchQuery('');
                           }}
-                          className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2.5 cursor-pointer transition-colors ${
+                          className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2.5 cursor-pointer transition-tactile ${
                             isSelected ? 'bg-[#E5F0EA]/65' : 'hover:bg-[#FAF8F5]'
                           }`}
                         >
@@ -291,7 +292,7 @@ function LearnerScopeBar({
                                 )}
                               </div>
                               {l.email && (
-                                <div className="text-[11px] text-[#78756E] truncate">{l.email}</div>
+                                <div className="text-[11px] text-[#615E57] truncate">{l.email}</div>
                               )}
                             </div>
                           </div>
@@ -310,7 +311,7 @@ function LearnerScopeBar({
                 </div>
 
                 {filteredSearchLearners.length > LEARNER_PICKER_RESULT_LIMIT && (
-                  <p className="text-[11px] text-[#78756E] px-1">
+                  <p className="text-[11px] text-[#615E57] px-1">
                     {t('admin.pickerTruncatedHint', {
                       shown: LEARNER_PICKER_RESULT_LIMIT,
                       total: filteredSearchLearners.length,
@@ -332,7 +333,7 @@ function LearnerScopeBar({
         <button
           type="button"
           onClick={onOpenLearnersTab}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] border text-xs font-sans-display font-semibold cursor-pointer transition-tactile whitespace-nowrap shrink-0 ${
             activeTab === 'learners'
               ? 'border-[#113C36] bg-[#E5F0EA] text-[#113C36]'
               : 'border-[#CFC6B9] bg-white text-[#113C36] hover:bg-[#F3EFE8]'
@@ -367,7 +368,7 @@ function LearnerScopeBar({
             type="button"
             disabled={pinningPrimary}
             onClick={() => onSetPrimary(isPrimarySelected ? null : selectedLearner.uid)}
-            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-[8px] border text-[11px] font-sans-display font-semibold cursor-pointer transition-colors disabled:opacity-50 whitespace-nowrap ${
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-[8px] border text-[11px] font-sans-display font-semibold cursor-pointer transition-tactile disabled:opacity-50 whitespace-nowrap ${
               isPrimarySelected
                 ? 'border-[#113C36]/30 bg-[#E5F0EA] text-[#113C36]'
                 : 'border-[#D8D1C6] bg-white text-[#4A5955] hover:text-[#113C36]'
@@ -385,6 +386,8 @@ function LearnerScopeBar({
 export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
   const { t } = useI18n();
   const [tab, setTab] = useState<StudioTab>(parseInitialTab);
+  const tabsRef = useRef<HTMLElement>(null);
+  const tabIndicator = useSlidingIndicator(tabsRef, tab);
   const [status, setStatus] = useState<AdminStatusResponse | null>(null);
   const [learnersData, setLearnersData] = useState<AdminLearnersResponse | null>(null);
   const [learnersLoaded, setLearnersLoaded] = useState(false);
@@ -534,7 +537,7 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
   }, []);
 
   return (
-    <main className="px-6 sm:px-9 py-8 space-y-6 max-w-[1220px] mx-auto">
+    <main className="px-4 sm:px-7 lg:px-9 py-8 space-y-6 max-w-[1220px] mx-auto">
       {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div className="space-y-1 min-w-0">
@@ -604,11 +607,17 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
         </StatusBanner>
       )}
 
-      {/* 4 Clean Editorial Tabs */}
+      {/* Studio sections: one scrollable row with a sliding white pill */}
       <nav
-        aria-label="Admin studio sections"
-        className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-[14px] bg-[#F3EFE8] border border-[#E5DFD5] w-fit max-w-full"
+        ref={tabsRef}
+        aria-label={t('admin.sectionsAria')}
+        className="relative isolate flex w-fit max-w-full items-center gap-1.5 overflow-x-auto overscroll-x-contain rounded-[14px] border border-[#E5DFD5] bg-[#F3EFE8] p-1.5 [scrollbar-width:thin]"
       >
+        <span
+          aria-hidden="true"
+          className="sliding-indicator pointer-events-none absolute left-0 top-0 -z-10 rounded-[10px] bg-white shadow-[0_1px_2px_rgba(17,60,54,0.08)]"
+          style={tabIndicator.style}
+        />
         {STUDIO_TABS.map((tabItem) => {
           const Icon = tabItem.icon;
           const active = tab === tabItem.id;
@@ -616,15 +625,19 @@ export function AdminView({ onOpenSession, currentUserId }: AdminViewProps) {
             <button
               key={tabItem.id}
               type="button"
-              onClick={() => setTab(tabItem.id)}
+              onClick={(e) => {
+                setTab(tabItem.id);
+                e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+              }}
               aria-current={active ? 'page' : undefined}
-              className={`px-3.5 py-2 rounded-[10px] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+              data-indicator-active={active ? 'true' : undefined}
+              className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] px-3.5 py-2 font-sans-display text-xs font-semibold transition-[color,background-color,scale] duration-150 ${
                 active
-                  ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
+                  ? `text-[#113C36] ${tabIndicator.visible ? '' : 'bg-white shadow-[0_1px_2px_rgba(17,60,54,0.08)]'}`
                   : 'text-[#4A5955] hover:text-[#113C36]'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
+              <Icon className="h-3.5 w-3.5" />
               <span>{t(tabItem.labelKey)}</span>
             </button>
           );

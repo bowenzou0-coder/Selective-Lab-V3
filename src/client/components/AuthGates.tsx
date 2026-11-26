@@ -92,7 +92,7 @@ export function StudentPinGate({
 
         {localDevPinEnabled && (
           <>
-            <div className="my-5 flex items-center gap-3 text-xs text-[#78756E]">
+            <div className="my-5 flex items-center gap-3 text-xs text-[#615E57]">
               <div className="flex-1 h-px bg-[#E5DFD5]" />
               <span>{t('auth.orPin')}</span>
               <div className="flex-1 h-px bg-[#E5DFD5]" />
@@ -130,7 +130,7 @@ export function StudentPinGate({
               <button
                 type="submit"
                 disabled={loading || googleLoading}
-                className="w-full py-2.5 px-4 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-sm transition-tactile disabled:opacity-60 cursor-pointer"
               >
                 {loading ? t('auth.checkingPin') : t('auth.continuePin')}
               </button>
@@ -138,7 +138,7 @@ export function StudentPinGate({
           </>
         )}
 
-        <div className="mt-6 pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-2 text-xs text-[#78756E]">
+        <div className="mt-6 pt-4 border-t border-[#E5DFD5] flex items-center justify-between gap-2 text-xs text-[#615E57]">
           <span>{t('auth.savedAuto')}</span>
           {localDevPinEnabled && (
             <button
@@ -254,7 +254,7 @@ export function AdminPasswordGate({
 
         {localDevPinEnabled && (
           <>
-            <div className="my-5 flex items-center gap-3 text-xs text-[#78756E]">
+            <div className="my-5 flex items-center gap-3 text-xs text-[#615E57]">
               <div className="flex-1 h-px bg-[#E5DFD5]" />
               <span>{t('auth.orPassword')}</span>
               <div className="flex-1 h-px bg-[#E5DFD5]" />
@@ -291,7 +291,7 @@ export function AdminPasswordGate({
                 <button
                   type="submit"
                   disabled={loading || googleLoading}
-                  className="flex-1 py-2.5 px-4 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-sm transition-colors disabled:opacity-60 cursor-pointer"
+                  className="flex-1 py-2.5 px-4 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white font-sans-display font-semibold text-sm transition-tactile disabled:opacity-60 cursor-pointer"
                 >
                   {loading ? t('auth.signingIn') : t('auth.openAdminConsole')}
                 </button>

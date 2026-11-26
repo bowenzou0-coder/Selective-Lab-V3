@@ -141,7 +141,8 @@
   /* Botanical Pine & Quiet Ink Hierarchy */
   --text-primary: #113C36;
   --text-secondary: #4A5955;
-  --text-muted: #78756E;
+  /* Quiet metadata: warm charcoal-taupe, >= 4.5:1 on white, canvas, shell and hover stone */
+  --text-muted: #615E57;
 
   --border-hairline: #E5DFD5;
   --border-strong: #CFC6B9;
@@ -170,6 +171,15 @@
   /* Loading skeletons: warm stone base with a soft sheet-white sweep */
   --skeleton-base: #ECE6DC;
   --skeleton-highlight: rgba(255, 255, 255, 0.62);
+
+  /* Keyboard focus ring (pine on light surfaces; see :focus-visible below) */
+  --focus-ring: #113C36;
+  --focus-ring-on-dark: #F9CAA7;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-move: cubic-bezier(0.22, 1, 0.36, 1);
+  --press-scale: 0.98;
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -264,4 +274,128 @@ body {
     animation: none;
     background-image: none;
   }
+}
+
+/* --------------------------------------------------------------------------
+   Keyboard focus: crisp pine ring for keyboard users only. Mouse/touch focus
+   never paints a ring; components may still restyle borders on :focus.
+   -------------------------------------------------------------------------- */
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+:is(a[href], button, input, select, textarea, summary, [tabindex], [role='tab'], [role='button'], [role='radio'], [contenteditable='true']):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Text fields already turn their border pine on focus (and match :focus-visible on click),
+   so they get a soft halo hugging the field instead of a second hard ring. */
+:is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']), select, textarea):focus-visible {
+  outline: 3px solid rgba(17, 60, 54, 0.2);
+  outline-offset: 0;
+}
+
+/* Inside clipped groups (stepper fields, accordion rows): inset ring on buttons, the wrapper carries
+   the field halo. Attribute doubled so these beat the general ring's specificity. */
+[data-focus-ring='inset'][data-focus-ring]:focus-visible {
+  outline-offset: -2px;
+}
+
+[data-focus-ring='parent'][data-focus-ring]:focus-visible {
+  outline: none;
+}
+
+/* Containers focused programmatically (dialog panels, tab panels) only need the ring for keyboard reach. */
+:is([role='dialog'], [role='tabpanel'], dialog)[tabindex='-1']:focus-visible {
+  outline: none;
+}
+
+/* Controls sitting on pine surfaces swap to an apricot ring so it never disappears. */
+.on-dark.on-dark :focus-visible,
+.on-dark.on-dark:focus-visible {
+  outline-color: var(--focus-ring-on-dark);
+}
+
+/* --------------------------------------------------------------------------
+   Tactile press feedback: one subtle composited scale for every pressable,
+   never on disabled controls, and none under reduced motion. Unlayered so it
+   also normalises older per-component active:scale-* utilities.
+   -------------------------------------------------------------------------- */
+
+:is(button, [role='button'], [role='tab'], summary, .press):not(:disabled, [aria-disabled='true'], [data-press='off']):active {
+  scale: var(--press-scale);
+}
+
+:is(button, [role='button'], [role='tab'], summary, .press):is(:disabled, [aria-disabled='true']):active,
+[data-press='off']:active {
+  scale: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(button, [role='button'], [role='tab'], summary, a, .press):active {
+    scale: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Sliding selection pill (ui/useSlidingIndicator.ts: Tabs, SegmentedControl, Admin tabs)
+   -------------------------------------------------------------------------- */
+
+.sliding-indicator {
+  transition:
+    transform 240ms var(--ease-move),
+    width 240ms var(--ease-move),
+    height 240ms var(--ease-move),
+    opacity 150ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sliding-indicator {
+    transition: none !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Collapsible regions (ui/Collapsible.tsx): grid-row 0fr <-> 1fr + opacity
+   -------------------------------------------------------------------------- */
+
+.collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 260ms var(--ease-move),
+    opacity 180ms var(--ease-out);
+}
+
+.collapsible[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 280ms var(--ease-move),
+    opacity 220ms var(--ease-out) 40ms;
+}
+
+.collapsible-inner {
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapsible,
+  .collapsible[data-open='true'] {
+    transition: opacity 120ms ease;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Horizontal scrollers (school cutoff tables, learners table, tab rows)
+   -------------------------------------------------------------------------- */
+
+.scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }

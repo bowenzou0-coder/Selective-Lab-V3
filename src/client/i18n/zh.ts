@@ -232,6 +232,7 @@ export const MESSAGES_ZH: Record<MessageKey, string> = {
   // Question Workspace, Reading, Writing, Visuals
   'ws.passageAndVisual': '文章与图示',
   'ws.questionAndAnswer': '题目与作答',
+  'ws.paneSwitcherAria': '切换文章或题目',
   'ws.workedExplanation': '分步详解',
   'ws.partOfTotal': '（第 {current} / {total} 空）',
   'ws.correctWithKey': '回答正确（答案：{key}）',
@@ -454,6 +455,7 @@ export const MESSAGES_ZH: Record<MessageKey, string> = {
   'admin.tabBatches': '导入与批次',
   'admin.tabData': '数据与规范',
   'admin.dismissNotice': '关闭提示',
+  'admin.sectionsAria': '管理工作室分区',
   'admin.dismissError': '关闭错误',
 
   // Bank Pool Status & Completion Status

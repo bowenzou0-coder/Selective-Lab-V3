@@ -12,7 +12,7 @@ import { useI18n } from '../../../i18n';
 export function poolBadgeClasses(status: BankPoolStatus): string {
   if (status === 'live') return 'bg-[#E5F0EA] text-[#113C36] border-[#C5DDD1]';
   if (status === 'paused') return 'bg-[#FDF0E2] text-[#A35116] border-[#EED3B6]';
-  return 'bg-[#F3EFE8] text-[#78756E] border-[#E5DFD5]';
+  return 'bg-[#F3EFE8] text-[#615E57] border-[#E5DFD5]';
 }
 
 export function completionBadgeClasses(status: QuestionCompletionStatus): string {
@@ -86,7 +86,8 @@ const Row = memo(function Row({
         type="button"
         aria-current={selected ? 'true' : undefined}
         onClick={() => onSelect(q.questionId)}
-        className="min-w-0 flex-1 cursor-pointer space-y-1.5 text-left"
+        data-press="off"
+        className="min-w-0 flex-1 cursor-pointer space-y-1.5 rounded-[6px] text-left"
       >
         <div className="flex min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 flex-1 truncate font-mono-code text-[11px] font-semibold text-[#113C36]">{q.questionId}</span>
@@ -100,7 +101,7 @@ const Row = memo(function Row({
           </span>
         </div>
         <p className="line-clamp-2 break-words text-xs leading-relaxed text-[#4A5955]">{title}</p>
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#78756E]">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#615E57]">
           <span>{sectionLabel(q.section)}</span>
           <span>{formatLabel(q.formatType)}</span>
           {q.poolType === 'benchmark_holdout' && <span className="font-medium text-[#A35116]">{t('bank.holdoutTag')}</span>}
@@ -212,7 +213,7 @@ export const BankQuestionList = memo(function BankQuestionList({
                 type="button"
                 disabled={bulkBusy}
                 onClick={() => onBulkStatus(st)}
-                className="cursor-pointer whitespace-nowrap rounded-[8px] border border-[#CFC6B9] bg-white px-2.5 py-1 font-sans-display font-semibold text-[#113C36] transition-colors hover:bg-[#FAF8F5] disabled:opacity-50"
+                className="cursor-pointer whitespace-nowrap rounded-[8px] border border-[#CFC6B9] bg-white px-2.5 py-1 font-sans-display font-semibold text-[#113C36] transition-tactile hover:bg-[#FAF8F5] disabled:opacity-50"
               >
                 {st === 'live' ? t('bank.moveToPool') : st === 'paused' ? t('bank.pause') : t('bank.archive')}
               </button>
@@ -239,7 +240,7 @@ export const BankQuestionList = memo(function BankQuestionList({
                 type="button"
                 disabled={bulkBusy}
                 onClick={() => setConfirmDelete(true)}
-                className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-[8px] border border-[#B83A28]/30 bg-[#FDECEB] px-2.5 py-1 font-sans-display font-semibold text-[#B83A28] transition-colors hover:bg-[#B83A28] hover:text-white disabled:opacity-50"
+                className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-[8px] border border-[#B83A28]/30 bg-[#FDECEB] px-2.5 py-1 font-sans-display font-semibold text-[#B83A28] transition-tactile hover:bg-[#B83A28] hover:text-white disabled:opacity-50"
               >
                 <Trash2 className="h-3.5 w-3.5 shrink-0" />
                 <span>{t('bank.delete')}</span>
@@ -248,7 +249,7 @@ export const BankQuestionList = memo(function BankQuestionList({
             <button
               type="button"
               onClick={onSimulateSelected}
-              className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[8px] bg-[#113C36] px-3 py-1 font-sans-display font-semibold text-white transition-colors hover:bg-[#0B2B26]"
+              className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[8px] bg-[#113C36] px-3 py-1 font-sans-display font-semibold text-white transition-tactile hover:bg-[#0B2B26]"
             >
               <Play className="h-3 w-3 shrink-0 fill-current" />
               <span>{t('bank.practiceSelected', { count: checkedQids.length })}</span>

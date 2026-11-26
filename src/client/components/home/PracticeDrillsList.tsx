@@ -127,7 +127,7 @@ export function PracticeDrillsList({ data, drillCounts, launching, onChangeCount
                         key={n}
                         type="button"
                         onClick={() => onChangeCount(drill.code as DrillCountSection, n)}
-                        className={`px-2 py-0.5 rounded-full font-medium tabular-nums cursor-pointer transition-colors ${
+                        className={`px-2 py-0.5 rounded-full font-medium tabular-nums cursor-pointer transition-tactile ${
                           qCount === n
                             ? 'bg-white text-[#113C36] shadow-[0_1px_2px_rgba(17,60,54,0.08)]'
                             : 'text-[#4A5955] hover:text-[#113C36]'
@@ -149,7 +149,7 @@ export function PracticeDrillsList({ data, drillCounts, launching, onChangeCount
                   type="button"
                   disabled={launching !== null}
                   onClick={() => onRequestDrill(drill)}
-                  className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-xs font-sans-display font-semibold text-[#113C36] transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
+                  className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#113C36] hover:text-white hover:border-[#113C36] text-xs font-sans-display font-semibold text-[#113C36] transition-tactile cursor-pointer whitespace-nowrap disabled:opacity-50"
                 >
                   {t('home.startDrill')}
                 </button>

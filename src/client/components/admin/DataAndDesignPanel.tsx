@@ -185,25 +185,25 @@ export function DataAndDesignPanel({
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-              <div className="text-xs text-[#78756E]">{t('data.testSessions')}</div>
+              <div className="text-xs text-[#615E57]">{t('data.testSessions')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
                 {loadingCounts ? '—' : counts?.sessionsCount ?? 0}
               </div>
             </div>
             <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-              <div className="text-xs text-[#78756E]">{t('data.questionAttempts')}</div>
+              <div className="text-xs text-[#615E57]">{t('data.questionAttempts')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
                 {loadingCounts ? '—' : counts?.attemptsCount ?? 0}
               </div>
             </div>
             <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-              <div className="text-xs text-[#78756E]">{t('data.masteryRecords')}</div>
+              <div className="text-xs text-[#615E57]">{t('data.masteryRecords')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
                 {loadingCounts ? '—' : counts?.evidenceCount ?? 0}
               </div>
             </div>
             <div className="rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3 min-w-0">
-              <div className="text-xs text-[#78756E]">{t('data.writingSubmissions')}</div>
+              <div className="text-xs text-[#615E57]">{t('data.writingSubmissions')}</div>
               <div className="mt-0.5 font-serif-display font-extrabold text-[26px] text-[#113C36] tabular-nums">
                 {loadingCounts ? '—' : counts?.writingCount ?? 0}
               </div>
@@ -228,7 +228,7 @@ export function DataAndDesignPanel({
                   {t('data.scopedToLearner', { name: learnerName })}
                 </p>
               ) : monitoredStudentId === null ? (
-                <p className="text-xs text-[#78756E]">
+                <p className="text-xs text-[#615E57]">
                   {t('data.selectLearnerToReset')}
                 </p>
               ) : null}
@@ -236,7 +236,7 @@ export function DataAndDesignPanel({
                 type="button"
                 disabled={monitoredStudentId === null}
                 onClick={() => setConfirmOpen(true)}
-                className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-45 disabled:pointer-events-none"
+                className="px-4 py-2 rounded-[10px] border border-[#B83A28]/35 bg-[#FDECEB] hover:bg-[#B83A28] hover:text-white text-[#B83A28] text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 transition-tactile cursor-pointer disabled:opacity-45 disabled:pointer-events-none"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{learnerName ? t('data.resetForLearner', { name: learnerName }) : t('data.resetProgressBtn')}</span>
@@ -347,9 +347,9 @@ export function DataAndDesignPanel({
               {t('data.expandSpec')}
             </button>
           ) : loadingSpec ? (
-            <div className="text-xs text-[#78756E]">{t('data.loadingSpec')}</div>
+            <div className="text-xs text-[#615E57]">{t('data.loadingSpec')}</div>
           ) : !specText ? (
-            <div className="text-xs text-[#78756E]">{t('data.specUnavailable')}</div>
+            <div className="text-xs text-[#615E57]">{t('data.specUnavailable')}</div>
           ) : (
             <>
               <pre
@@ -383,7 +383,7 @@ export function DataAndDesignPanel({
         </div>
 
         {openFlags.length === 0 ? (
-          <p className="text-xs text-[#78756E]">{t('data.noFlags')}</p>
+          <p className="text-xs text-[#615E57]">{t('data.noFlags')}</p>
         ) : (
           <div className="divide-y divide-[#E5DFD5] border-t border-b border-[#E5DFD5]">
             {openFlags.map((flag) => (
@@ -427,7 +427,7 @@ export function DataAndDesignPanel({
             <h3 className="font-sans-display font-semibold text-sm text-[#113C36]">
               {t('data.diagTitle')}
             </h3>
-            <p className="text-xs text-[#78756E]">
+            <p className="text-xs text-[#615E57]">
               {t('data.diagDesc')}
             </p>
           </div>
@@ -445,15 +445,15 @@ export function DataAndDesignPanel({
         {diagnostics && (
           <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 text-xs">
             <div className="min-w-0">
-              <dt className="text-[#78756E]">{t('data.diagBackend')}</dt>
+              <dt className="text-[#615E57]">{t('data.diagBackend')}</dt>
               <dd className="font-mono-code text-[#113C36] mt-0.5 truncate">{diagnostics.runtimeBackend}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-[#78756E]">{t('data.diagGoogle')}</dt>
+              <dt className="text-[#615E57]">{t('data.diagGoogle')}</dt>
               <dd className="font-mono-code text-[#113C36] mt-0.5">{diagnostics.googleConfigured ? t('data.configured') : t('data.notConfigured')}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-[#78756E]">{t('data.diagDbProbe')}</dt>
+              <dt className="text-[#615E57]">{t('data.diagDbProbe')}</dt>
               <dd className="font-mono-code text-[#113C36] mt-0.5">
                 {diagnostics.databaseProbe.ok
                   ? `OK (${diagnostics.databaseProbe.latencyMs}ms)`
@@ -461,7 +461,7 @@ export function DataAndDesignPanel({
               </dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-[#78756E]">{t('data.diagGemini')}</dt>
+              <dt className="text-[#615E57]">{t('data.diagGemini')}</dt>
               <dd className="font-mono-code text-[#113C36] mt-0.5">
                 {diagnostics.geminiConfigured ? t('data.configured') : t('data.notConfigured')}
               </dd>

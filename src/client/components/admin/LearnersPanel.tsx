@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Library, Search, Star, Trash2, UserRound, X } from 'lucide-react';
 import type { AdminLearnerSummary, AdminLearnersResponse } from '../../api';
 import { useI18n } from '../../i18n';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import {
   LEARNERS_PAGE_SIZE,
@@ -10,6 +11,13 @@ import {
   type LearnerRoleFilter,
   type LearnerSortKey,
 } from './learnerScopeUtils';
+
+/**
+ * Sticky first column for the horizontally scrolling learners table: solid surface inherited
+ * from the row (normal / hover / selected all opaque), a hairline edge and a soft shadow cue.
+ */
+const STICKY_COL =
+  'sticky left-0 z-[1] min-w-[9.5rem] max-w-[52vw] sm:max-w-none shadow-[inset_-1px_0_0_#E5DFD5,8px_0_10px_-8px_rgba(17,60,54,0.14)]';
 
 interface LearnersPanelProps {
   learnersData: AdminLearnersResponse;
@@ -124,7 +132,7 @@ export function LearnersPanel({
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
               <Search
-                className="w-3.5 h-3.5 text-[#78756E] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                className="w-3.5 h-3.5 text-[#615E57] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                 aria-hidden="true"
               />
               <input
@@ -133,14 +141,14 @@ export function LearnersPanel({
                 onChange={(e) => handleQueryChange(e.target.value)}
                 placeholder={t('learners.searchPlaceholder')}
                 aria-label={t('learners.searchPlaceholder')}
-                className="w-full rounded-[10px] border border-[#D8D1C6] bg-[#FAF8F5] py-2 pl-9 pr-8 text-xs text-[#113C36] placeholder:text-[#78756E] focus:border-[#113C36] focus:bg-white focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+                className="w-full rounded-[10px] border border-[#D8D1C6] bg-[#FAF8F5] py-2 pl-9 pr-8 text-xs text-[#113C36] placeholder:text-[#615E57] focus:border-[#113C36] focus:bg-white focus:outline-none [&::-webkit-search-cancel-button]:hidden"
               />
               {query && (
                 <button
                   type="button"
                   onClick={() => handleQueryChange('')}
                   aria-label={t('learners.clearFiltersBtn')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#78756E] hover:text-[#113C36] cursor-pointer p-0.5"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#615E57] hover:text-[#113C36] cursor-pointer p-0.5"
                 >
                   <X className="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
@@ -148,36 +156,18 @@ export function LearnersPanel({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div
-                role="group"
-                aria-label={t('learners.colRole')}
-                className="inline-flex rounded-[10px] border border-[#D8D1C6] bg-[#FAF8F5] p-0.5"
-              >
-                {(
-                  [
-                    { id: 'all', label: t('learners.filterAll', { count: learners.length }) },
-                    { id: 'student', label: t('learners.filterStudents', { count: studentCount }) },
-                    { id: 'admin', label: t('learners.filterAdmins', { count: adminCount }) },
-                  ] as const
-                ).map((item) => {
-                  const active = roleFilter === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => handleRoleChange(item.id)}
-                      className={`px-2.5 py-1 rounded-[8px] text-xs font-sans-display font-semibold cursor-pointer transition-colors whitespace-nowrap ${
-                        active
-                          ? 'bg-[#113C36] text-white'
-                          : 'text-[#4A5955] hover:text-[#113C36]'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
+              <SegmentedControl
+                ariaLabel={t('learners.colRole')}
+                className="bg-[#FAF8F5] border-[#D8D1C6]"
+                segmentClassName="px-2.5 py-1"
+                value={roleFilter}
+                onChange={handleRoleChange}
+                options={[
+                  { value: 'all', label: t('learners.filterAll', { count: learners.length }) },
+                  { value: 'student', label: t('learners.filterStudents', { count: studentCount }) },
+                  { value: 'admin', label: t('learners.filterAdmins', { count: adminCount }) },
+                ]}
+              />
 
               <select
                 value={sortBy}
@@ -195,11 +185,11 @@ export function LearnersPanel({
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-[14px] border border-[#E5DFD5] bg-white">
-          <table className="w-full border-collapse text-left text-xs tabular-nums">
+        <div className="scroll-x rounded-[14px] border border-[#E5DFD5] bg-white">
+          <table className="w-full border-separate border-spacing-0 text-left text-xs tabular-nums">
             <thead>
-              <tr className="border-b border-[#EFEAE0] bg-[#FAF8F5] text-[#78756E]">
-                <th className="px-3.5 py-2.5 font-sans-display font-semibold">{t('learners.colAccount')}</th>
+              <tr className="bg-[#FAF8F5] text-[#615E57] [&>th]:border-b [&>th]:border-[#EFEAE0]">
+                <th className={`${STICKY_COL} bg-[#FAF8F5] px-3.5 py-2.5 font-sans-display font-semibold`}>{t('learners.colAccount')}</th>
                 <th className="px-2.5 py-2.5 text-right font-sans-display font-semibold">{t('learners.colUnseen')}</th>
                 <th className="px-2.5 py-2.5 text-right font-sans-display font-semibold">{t('learners.colDone')}</th>
                 <th className="px-2.5 py-2.5 text-right font-sans-display font-semibold whitespace-nowrap">{t('learners.colInReview')}</th>
@@ -211,17 +201,17 @@ export function LearnersPanel({
                 <th className="px-3.5 py-2.5 text-right font-sans-display font-semibold">{t('learners.colAction')}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#F2EDE4]">
+            <tbody>
               {visibleLearners.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-10 text-center">
                     <div className="space-y-3">
-                      <p className="text-xs text-[#78756E]">{t('learners.noFilterMatches')}</p>
+                      <p className="text-xs text-[#615E57]">{t('learners.noFilterMatches')}</p>
                       {hasActiveFilters && (
                         <button
                           type="button"
                           onClick={handleClearFilters}
-                          className="inline-flex items-center px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white text-xs font-sans-display font-semibold text-[#113C36] hover:bg-[#F3EFE8] cursor-pointer transition-colors"
+                          className="inline-flex items-center px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white text-xs font-sans-display font-semibold text-[#113C36] hover:bg-[#F3EFE8] cursor-pointer transition-tactile"
                         >
                           {t('learners.clearFiltersBtn')}
                         </button>
@@ -237,9 +227,11 @@ export function LearnersPanel({
                   return (
                     <tr
                       key={l.uid}
-                      className={isViewing ? 'bg-[#E5F0EA]/45' : 'hover:bg-[#FAF8F5]/75'}
+                      className={`transition-colors duration-150 [&>td]:border-b [&>td]:border-[#F2EDE4] last:[&>td]:border-b-0 ${
+                        isViewing ? 'bg-[#F3F8F5]' : 'bg-white hover:bg-[#FBFAF7]'
+                      }`}
                     >
-                      <td className="px-3.5 py-3">
+                      <td className={`${STICKY_COL} bg-inherit px-3.5 py-3`}>
                         <div className="flex flex-wrap items-center gap-1.5 font-sans-display font-semibold text-[#113C36]">
                           <UserRound className="w-3.5 h-3.5 text-[#4A5955] shrink-0" />
                           <span>{getLearnerDisplayName(l)}</span>
@@ -267,7 +259,7 @@ export function LearnersPanel({
                           )}
                         </div>
                         {l.email && (
-                          <div className="text-[11px] text-[#78756E] mt-0.5 pl-5 truncate max-w-[210px]">{l.email}</div>
+                          <div className="text-[11px] text-[#615E57] mt-0.5 pl-5 truncate max-w-[38vw] sm:max-w-[210px]">{l.email}</div>
                         )}
                       </td>
                       <td className="px-2.5 py-3 text-right whitespace-nowrap font-medium text-[#113C36]">
@@ -291,7 +283,7 @@ export function LearnersPanel({
                       <td className="px-2.5 py-3 text-right whitespace-nowrap text-[#4A5955]">
                         {l.attemptsCount}
                       </td>
-                      <td className="px-2.5 py-3 whitespace-nowrap text-[#78756E]">
+                      <td className="px-2.5 py-3 whitespace-nowrap text-[#615E57]">
                         {l.lastActiveAtIso ? formatDate(l.lastActiveAtIso) : t('learners.neverActive')}
                       </td>
                       <td className="px-3.5 py-3 text-right whitespace-nowrap">
@@ -300,7 +292,7 @@ export function LearnersPanel({
                             type="button"
                             disabled={isViewing}
                             onClick={() => onSelectLearner(l.uid)}
-                            className={`px-2.5 py-1.5 rounded-[8px] border text-[11px] font-sans-display font-semibold cursor-pointer transition-colors disabled:cursor-default ${
+                            className={`px-2.5 py-1.5 rounded-[8px] border text-[11px] font-sans-display font-semibold cursor-pointer transition-tactile disabled:cursor-default ${
                               isViewing
                                 ? 'border-[#113C36] bg-[#113C36] text-white'
                                 : 'border-[#CFC6B9] bg-white text-[#113C36] hover:bg-[#F3EFE8]'
@@ -315,10 +307,10 @@ export function LearnersPanel({
                             title={isPrimary ? t('learners.unpinnedPrimaryBtn') : t('learners.setPrimaryBtn')}
                             aria-label={isPrimary ? t('learners.unpinnedPrimaryBtn') : t('learners.setPrimaryBtn')}
                             aria-pressed={isPrimary}
-                            className={`w-7 h-7 inline-flex items-center justify-center rounded-[8px] border cursor-pointer transition-colors disabled:opacity-50 ${
+                            className={`w-7 h-7 inline-flex items-center justify-center rounded-[8px] border cursor-pointer transition-tactile disabled:opacity-50 ${
                               isPrimary
                                 ? 'border-[#113C36]/35 bg-[#E5F0EA] text-[#113C36] hover:bg-[#D5E7DD]'
-                                : 'border-[#D8D1C6] bg-white text-[#78756E] hover:text-[#113C36] hover:bg-[#F3EFE8]'
+                                : 'border-[#D8D1C6] bg-white text-[#615E57] hover:text-[#113C36] hover:bg-[#F3EFE8]'
                             }`}
                           >
                             <Star
@@ -335,7 +327,7 @@ export function LearnersPanel({
                               }}
                               title={`${t('learners.deleteBtn')} ${getLearnerDisplayName(l)}`}
                               aria-label={`${t('learners.deleteBtn')} ${getLearnerDisplayName(l)}`}
-                              className="w-7 h-7 inline-flex items-center justify-center rounded-[8px] border border-[#B83A28]/25 bg-white hover:bg-[#FDECEB] text-[#B83A28] cursor-pointer transition-colors"
+                              className="w-7 h-7 inline-flex items-center justify-center rounded-[8px] border border-[#B83A28]/25 bg-white hover:bg-[#FDECEB] text-[#B83A28] cursor-pointer transition-tactile"
                             >
                               <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                             </button>
@@ -364,7 +356,7 @@ export function LearnersPanel({
                 type="button"
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white font-sans-display font-semibold text-[#113C36] hover:bg-[#F3EFE8] cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-default"
+                className="px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white font-sans-display font-semibold text-[#113C36] hover:bg-[#F3EFE8] cursor-pointer transition-tactile disabled:opacity-45 disabled:cursor-default"
               >
                 {t('learners.paginationPrev')}
               </button>
@@ -375,7 +367,7 @@ export function LearnersPanel({
                 type="button"
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white font-sans-display font-semibold text-[#113C36] hover:bg-[#F3EFE8] cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-default"
+                className="px-3 py-1.5 rounded-[8px] border border-[#CFC6B9] bg-white font-sans-display font-semibold text-[#113C36] hover:bg-[#F3EFE8] cursor-pointer transition-tactile disabled:opacity-45 disabled:cursor-default"
               >
                 {t('learners.paginationNext')}
               </button>
@@ -406,7 +398,7 @@ export function LearnersPanel({
             type="button"
             disabled={isCatalogMode}
             onClick={() => onSelectLearner('none')}
-            className={`px-3.5 py-2 rounded-[10px] border text-xs font-sans-display font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-colors disabled:cursor-default ${
+            className={`px-3.5 py-2 rounded-[10px] border text-xs font-sans-display font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-tactile disabled:cursor-default ${
               isCatalogMode
                 ? 'border-[#113C36] bg-[#113C36] text-white'
                 : 'border-[#CFC6B9] bg-white text-[#113C36] hover:bg-[#F3EFE8]'

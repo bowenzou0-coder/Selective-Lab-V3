@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { restoreFocusTo } from './focusTrap';
 
 interface SheetProps {
   open: boolean;
@@ -45,20 +46,32 @@ export function Sheet({
   const [closing, setClosing] = useState(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const openerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (open) {
+      if (!openerRef.current && typeof document !== 'undefined') {
+        openerRef.current = document.activeElement as HTMLElement | null;
+      }
       setMounted(true);
       setClosing(false);
       return;
     }
     if (!mounted) return;
     setClosing(true);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     const timer = window.setTimeout(() => {
-      ref.current?.close();
+      const dialog = ref.current;
+      const focusInside = !document.activeElement || document.activeElement === document.body || dialog?.contains(document.activeElement);
+      dialog?.close();
       setMounted(false);
       setClosing(false);
-    }, EXIT_MS);
+      // Native close() restores focus for modal dialogs; do it explicitly so non-modal sheets
+      // and openers that re-rendered still get focus back.
+      const opener = openerRef.current;
+      openerRef.current = null;
+      if (focusInside) restoreFocusTo(opener);
+    }, reduce ? 0 : EXIT_MS);
     return () => window.clearTimeout(timer);
   }, [open, mounted]);
 
@@ -90,6 +103,7 @@ export function Sheet({
   return createPortal(
     <dialog
       ref={ref}
+      aria-modal={modal ? 'true' : undefined}
       aria-labelledby={titleId}
       aria-describedby={description ? descId : undefined}
       onCancel={(e) => {
@@ -105,7 +119,7 @@ export function Sheet({
       } ${modal ? '' : 'z-50'}`}
     >
       <div
-        className={`flex h-full flex-col bg-[#FAF8F5] shadow-[0_24px_48px_-16px_rgba(17,60,54,0.35)] transition-[opacity,transform] duration-[220ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        className={`flex h-full flex-col bg-[#FAF8F5] shadow-[0_24px_48px_-16px_rgba(17,60,54,0.35)] transition-[opacity,transform,translate,scale] duration-[220ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
           isRight ? 'border-l border-[#E5DFD5]' : 'max-h-[calc(100dvh-2rem)] rounded-[18px] border border-[#E5DFD5]'
         } ${motion}`}
       >
@@ -124,7 +138,7 @@ export function Sheet({
             type="button"
             onClick={() => onCloseRef.current()}
             aria-label={closeLabel}
-            className="-mr-1 shrink-0 cursor-pointer rounded-[8px] p-1.5 text-[#4A5955] transition-[background-color,transform] duration-150 hover:bg-[#ECE8E1] hover:text-[#113C36] active:scale-[0.96]"
+            className="-mr-1 shrink-0 cursor-pointer rounded-[8px] p-1.5 text-[#4A5955] transition-[background-color,transform,translate,scale] duration-150 hover:bg-[#ECE8E1] hover:text-[#113C36] active:scale-[0.96]"
           >
             <X className="h-4 w-4" />
           </button>

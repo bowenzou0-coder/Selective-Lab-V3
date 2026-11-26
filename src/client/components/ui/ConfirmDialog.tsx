@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { focusableWithin, handleTrapTab, restoreFocusTo } from './focusTrap';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -26,15 +27,6 @@ export interface ConfirmDialogProps {
 }
 
 const EXIT_MS = 160;
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-function focusableWithin(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (el) => el.getClientRects().length > 0 || el === document.activeElement
-  );
-}
-
 /**
  * Shared modal confirmation: portaled to <body>, `aria-modal`, Tab/Shift+Tab trapped inside,
  * Escape and backdrop close it, focus returns to the opener. Enters with a short scale/fade and
@@ -77,7 +69,8 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       setClosing(false);
       const target = restoreFocusRef.current;
       restoreFocusRef.current = null;
-      if (target && target.isConnected) target.focus({ preventScroll: true });
+      const current = document.activeElement;
+      if (!current || current === document.body || panelRef.current?.contains(current)) restoreFocusTo(target);
     }, reduce ? 0 : EXIT_MS);
     return () => window.clearTimeout(timer);
   }, [open, mounted]);
@@ -111,24 +104,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         if (!latestRef.current.busy) latestRef.current.onClose();
         return;
       }
-      if (e.key !== 'Tab') return;
-      const items = focusableWithin(panel);
-      if (items.length === 0) {
-        e.preventDefault();
-        panel.focus();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      const inside = active ? panel.contains(active) : false;
-      if (e.shiftKey && (active === first || !inside)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (active === last || !inside)) {
-        e.preventDefault();
-        first.focus();
-      }
+      handleTrapTab(e, panel);
     };
     // Capture so the dialog wins over page-level shortcuts and other Escape handlers.
     document.addEventListener('keydown', onKeyDown, true);
@@ -172,7 +148,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         aria-labelledby={titleId}
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
-        className={`w-full ${widthClassName} space-y-5 rounded-[18px] border border-[#E5DFD5] bg-white p-6 text-[#113C36] shadow-[0_18px_40px_rgba(17,60,54,0.16)] outline-none transition-[opacity,transform] duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${motion}`}
+        className={`w-full ${widthClassName} space-y-5 rounded-[18px] border border-[#E5DFD5] bg-white p-6 text-[#113C36] shadow-[0_18px_40px_rgba(17,60,54,0.16)] outline-none transition-[opacity,transform,translate,scale] duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${motion}`}
       >
         <div className={icon ? 'flex items-start gap-3' : undefined}>
           {icon && (
@@ -186,7 +162,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             </div>
           )}
           <div className="min-w-0 space-y-1">
-            {eyebrow && <p className="font-sans-display text-xs font-medium text-[#78756E]">{eyebrow}</p>}
+            {eyebrow && <p className="font-sans-display text-xs font-medium text-[#615E57]">{eyebrow}</p>}
             <h2
               id={titleId}
               className="font-sans-display text-xl font-semibold tracking-[-0.015em] text-[#113C36]"
@@ -209,7 +185,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             type="button"
             disabled={busy}
             onClick={() => latestRef.current.onClose()}
-            className="cursor-pointer rounded-[10px] border border-[#CFC6B9] bg-white px-4 py-2 font-sans-display text-xs font-semibold text-[#4A5955] transition-[background-color,transform] duration-150 ease-out hover:bg-[#FAF8F5] active:scale-[0.97] disabled:opacity-50"
+            className="cursor-pointer rounded-[10px] border border-[#CFC6B9] bg-white px-4 py-2 font-sans-display text-xs font-semibold text-[#4A5955] transition-[background-color,transform,translate,scale] duration-150 ease-out hover:bg-[#FAF8F5] active:scale-[0.97] disabled:opacity-50"
           >
             {cancelLabel}
           </button>
@@ -218,7 +194,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             type="button"
             disabled={busy || confirmDisabled}
             onClick={() => latestRef.current.onConfirm()}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] px-5 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] ${
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] px-5 py-2 font-sans-display text-xs font-semibold text-white transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.97] ${
               isDanger
                 ? 'bg-[#B83A28] hover:bg-[#962D1E] disabled:opacity-40'
                 : 'bg-[#113C36] hover:bg-[#0B2B26] disabled:opacity-60'

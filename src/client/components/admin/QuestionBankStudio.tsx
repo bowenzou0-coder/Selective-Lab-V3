@@ -152,7 +152,7 @@ export function QuestionBankStudio({
     setSelectedQid(qid);
     setPinnedQid('');
     // On stacked (mobile) layouts the inspector sits below the list; bring it into view.
-    if (!window.matchMedia('(min-width: 1024px)').matches) {
+    if (!window.matchMedia('(min-width: 1280px)').matches) {
       requestAnimationFrame(() => inspectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     }
   }, []);
@@ -340,8 +340,8 @@ export function QuestionBankStudio({
         batchSummaries={bank.batchSummaries}
       />
 
-      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
-        <div className="min-w-0 lg:col-span-5">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-12">
+        <div className="min-w-0 xl:col-span-5">
           <BankQuestionList
             questions={questions}
             stimuliById={bank.stimuliById}
@@ -367,7 +367,7 @@ export function QuestionBankStudio({
             onSimulateSelected={() => setSimOpen(true)}
           />
         </div>
-        <div className="min-w-0 lg:col-span-7 space-y-2">
+        <div className="min-w-0 xl:col-span-7 space-y-2">
           {pinnedStatus === 'ready' && selectedQuestion && (
             <p className="rounded-[10px] border border-[#E5DFD5] bg-[#FAF8F5] px-3 py-2 text-xs text-[#4A5955]">
               {t('bank.deepLinkNote')}
@@ -376,7 +376,7 @@ export function QuestionBankStudio({
           {pinnedStatus === 'loading' || pinnedStatus === 'missing' ? (
             <div
               role={pinnedStatus === 'missing' ? 'alert' : 'status'}
-              className="rounded-[16px] border border-[#E5DFD5] bg-white py-16 px-6 text-center text-sm text-[#78756E] break-all"
+              className="rounded-[16px] border border-[#E5DFD5] bg-white py-16 px-6 text-center text-sm text-[#615E57] break-all"
             >
               {pinnedStatus === 'missing'
                 ? t('bank.deepLinkMissing', { id: pinnedQid })
@@ -397,7 +397,7 @@ export function QuestionBankStudio({
               onUploadVisual={(e) => void handleVisualUpload(e, selectedQuestion.questionId)}
             />
           ) : (
-            <div className="rounded-[16px] border border-[#E5DFD5] bg-white py-16 text-center text-sm text-[#78756E]">
+            <div className="rounded-[16px] border border-[#E5DFD5] bg-white py-16 text-center text-sm text-[#615E57]">
               {bank.loading ? t('bank.loading') : t('bank.selectOnePrompt')}
             </div>
           )}
