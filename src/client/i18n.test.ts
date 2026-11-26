@@ -1,3 +1,7 @@
+import { globSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseSync, Visitor } from 'vite';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SKILLS_TAXONOMY } from '../shared/skills.ts';
@@ -44,4 +48,53 @@ test('translateMessage interpolates placeholders cleanly in both locales', async
     translateMessage('zh-CN', 'home.todayPlanLine', { total: 13, mix: '阅读 4、数学 7' }),
     '今日共规划 13 题：阅读 4、数学 7。'
   );
+});
+
+test('Every dictionary key has a reference in application source', () => {
+  // Expand only templates actually present, using the domain unions behind the label helpers.
+  const domains = new Map([
+    ['section.', 'SectionCode'], ['sectionShort.', 'SectionCode'], ['format.', 'QuestionFormatType'],
+    ['poolStatus.', 'BankPoolStatus'], ['completion.', 'QuestionCompletionStatus'],
+  ]);
+  const unions = new Map<string, string[]>();
+  const prefixes = new Set<string>();
+  const literals = new Set<string>();
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  for (const file of globSync('**/*.{ts,tsx,js,jsx}', { cwd: root, exclude: [
+    '**/*.{test,spec}.*', '**/__fixtures__/**', 'client/i18n/en.ts', 'client/i18n/zh.ts',
+  ] })) {
+    const source = readFileSync(join(root, file), 'utf8');
+    const { program, errors } = parseSync(file, source);
+    assert.equal(errors.length, 0, file);
+    const typeLiterals = new WeakSet<object>();
+    new Visitor({
+      TSLiteralType(node) { typeLiterals.add(node.literal); },
+      Literal(node) {
+        if (!typeLiterals.has(node) && typeof node.value === 'string') literals.add(node.value);
+      },
+      TemplateLiteral(node) {
+        const [head, tail] = node.quasis;
+        if (!node.expressions.length) literals.add(head.value.raw);
+        if (node.expressions.length === 1 && tail.value.raw === '' && domains.has(head.value.raw)) {
+          prefixes.add(head.value.raw);
+        }
+      },
+      TSTypeAliasDeclaration(node) {
+        if (![...domains.values()].includes(node.id.name)) return;
+        const type = node.typeAnnotation;
+        assert.equal(type.type, 'TSUnionType');
+        if (type.type === 'TSUnionType') unions.set(node.id.name, type.types.map(member => {
+          assert.ok(member.type === 'TSLiteralType' && member.literal.type === 'Literal');
+          return String(member.literal.value);
+        }));
+      },
+    }).visit(program);
+  }
+  for (const prefix of prefixes) {
+    const values = unions.get(domains.get(prefix)!);
+    assert.ok(values?.length, `Missing source domain for ${prefix}`);
+    for (const value of values!) literals.add(prefix + value);
+  }
+  const allKeys = new Set([...Object.keys(MESSAGES_EN), ...Object.keys(MESSAGES_ZH)]);
+  assert.deepEqual([...allKeys].filter(key => !literals.has(key)).sort(), [], 'Unused translations');
 });

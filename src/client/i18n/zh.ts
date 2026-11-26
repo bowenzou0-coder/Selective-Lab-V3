@@ -714,7 +714,6 @@ export const MESSAGES_ZH: Record<MessageKey, string> = {
   'bank.catalogInventoryBadge': '在库 {count} 题',
   'data.scopedToLearner': '当前范围：{name}',
   'data.selectLearnerToReset': '请先在上方选择具体账号，再执行进度重置。',
-  'cfg.selectLearnerBeforeRecalibrate': '请先在上方选择一位学生，再重新生成该学生的每日计划。',
 
   // Admin studio v2 (metrics strip, filters popover, simulator, inspector tabs, learner pill)
   'common.close': '关闭',

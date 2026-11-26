@@ -37,7 +37,8 @@ Vite + React 19 client, Express API (one Vercel function), Neon Postgres. Find t
 | Design system | `FRONTEND_DESIGN.md`, `src/client/styles/tokens.css`, `src/client/styles/contrast.ts` | Copy to `public/docs/frontend-design.md` after edits. `contrast.ts`: WCAG ratio helpers; the token AA test reads `tokens.css` directly. |
 | Question skill | `docs/selective-lab-question-skill/` | `SKILL.md`, references, `scripts/{validate_manifest,merge_manifests,preview_manifest}.mjs`. |
 | Bank CLI | `scripts/push-manifest.ts` | `npm run db:push -- <file> [--dry-run]`. |
-| Tests | `src/**/*.test.ts` | API tests seed `src/server/__fixtures__/official-sample.json`. Postgres tests need `TEST_POSTGRES_URL`. |
+| Tests | `src/**/*.test.ts` | API tests seed `src/server/__fixtures__/official-sample.json`. Postgres integration tests use isolated schemas. Set `TEST_POSTGRES_URL` to a disposable local DB or a dedicated `pack6_qa_<32 lowercase hex digits>` database on a freshly created Neon branch. The i18n and design-doc tests check unused keys and byte-for-byte doc parity. |
+| Browser smoke tests | `e2e/*.spec.ts`, `playwright.config.ts` | `npm run test:e2e` runs Chromium against a fresh in-memory demo on port 3111. Covers onboarding and calibration, settings and account deletion, and admin learner management and plan locks. Install the browser once with `npx playwright install chromium`. |
 | Deploy config | `vercel.json`, `vite.config.ts` | Cache headers, chunk groups. |
 
 Commands: `npm run dev` · `npm run dev:demo` (memory DB, PIN sign-in) · `npm run lint` · `npm test` · `npm run build` · `npm run deploy`.

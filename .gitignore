@@ -14,3 +14,5 @@ batches/
 selective-lab-backup*.json
 google-legacy-student-ids*.json
 firestore.json
+test-results/
+playwright-report/

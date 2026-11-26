@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { Client, Pool } from 'pg';
 import {
   DEFAULT_LEARNING_CONFIG,
@@ -167,29 +167,43 @@ test('PostgresRepository.listSessionSummaries projects slim columns instead of f
   ]);
 });
 
-const localTestUrl = process.env.TEST_POSTGRES_URL;
+const testUrl = process.env.TEST_POSTGRES_URL;
+const postgresOnly = { skip: !testUrl && 'Set TEST_POSTGRES_URL to a disposable Postgres database' };
 
-test('Postgres concurrent initialization, manifest retries, rollback, and account isolation', {
-  skip: !localTestUrl && 'Set TEST_POSTGRES_URL to a disposable local Postgres database',
-}, async (t) => {
-  const url = new URL(localTestUrl!);
-  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !url.searchParams.has('host'),
-    'TEST_POSTGRES_URL must point to a local database');
-  const schema = `selective_test_${randomUUID().replaceAll('-', '')}`;
+/** Local Postgres, or a dedicated test database created inside a disposable Neon branch. */
+async function isolatedSchema(t: TestContext) {
+  const url = new URL(testUrl!);
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  const neonTestDb = url.hostname.endsWith('.neon.tech') && /^\/pack6_qa_[a-f0-9]{32}$/.test(url.pathname);
+  assert.ok(local || neonTestDb, 'Remote tests require a dedicated pack6_qa_<uuid hex> Neon database');
+  assert.ok([...url.searchParams.keys()].every(key => ['sslmode', 'channel_binding'].includes(key)),
+    'Test URL cannot override connection parameters or search_path');
   const baseConfig = getPostgresPoolConfig({ DATABASE_URL: url.href });
-  const adminPool = new Pool(baseConfig);
-  await adminPool.query(`CREATE SCHEMA ${schema}`);
-  const pool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
-  const peerPool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
+  // Allow a newly provisioned Neon compute to finish starting up.
+  if (neonTestDb) baseConfig.connectionTimeoutMillis = 90_000;
+  const admin = new Pool(baseConfig);
+  const schema = `selective_test_${randomUUID().replaceAll('-', '')}`;
+  const pools: Pool[] = [];
   t.after(async () => {
-    await Promise.all([pool.end(), peerPool.end()]);
     try {
-      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
+      await Promise.all(pools.map(pool => pool.end()));
+      await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     } finally {
-      await adminPool.end();
+      await admin.end();
     }
   });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  return () => {
+    const pool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
+    pools.push(pool);
+    return pool;
+  };
+}
 
+test('Postgres concurrent initialization, manifest retries, rollback, and account isolation', postgresOnly, async (t) => {
+  const newPool = await isolatedSchema(t);
+  const pool = newPool();
+  const peerPool = newPool();
   const repo = new PostgresRepository(pool);
   const peer = new PostgresRepository(peerPool);
   const manifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE);
@@ -320,6 +334,31 @@ test('Postgres concurrent initialization, manifest retries, rollback, and accoun
   assert.deepEqual(recoveredReceipt.result?.batch, externalCommit.result?.batch);
 });
 
+function sampleReport(): BenchmarkReportRecord {
+  const benchSection = (code: 'READ' | 'MATH' | 'THINK' | 'WRIT') => ({
+    section: code, correct: 18, total: 30, unanswered: 2, accuracyPct: 60, band: 'next_25' as const, estimatedPercentile: 64,
+  });
+  return {
+    reportId: 'bench_sess_report_only',
+    sessionId: 'sess_report_only',
+    studentId: 'learner_report_only',
+    batchLabel: '2026-11-20_b01',
+    title: 'Official sample A',
+    completedAtIso: '2026-11-22T09:30:00.000Z',
+    elapsedSec: 7000,
+    timeLimitSec: 9000,
+    difficulty: 'official_sample',
+    scaledScore120: 84,
+    uncertaintyHalfWidth120: 7,
+    estimatedPercentile: 70,
+    estimatedStateRank: 4500,
+    estimatedApplicantPool: 15000,
+    writingStatus: 'missing',
+    sections: { READ: benchSection('READ'), MATH: benchSection('MATH'), THINK: benchSection('THINK'), WRIT: benchSection('WRIT') },
+    weakSkillStats: [],
+  };
+}
+
 const BACKUP_TABLES = [
   'users',
   'stimuli',
@@ -350,36 +389,12 @@ async function snapshotTableCounts(pool: Pool): Promise<Record<string, number>> 
   return counts;
 }
 
-test('Postgres canonical backup exports consistent snapshot including daily plans, restores atomically, and accepts legacy bundles', {
-  skip: !localTestUrl && 'Set TEST_POSTGRES_URL to a disposable local Postgres database',
-}, async (t) => {
-  const url = new URL(localTestUrl!);
-  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !url.searchParams.has('host'),
-    'TEST_POSTGRES_URL must point to a local database');
-  const baseConfig = getPostgresPoolConfig({ DATABASE_URL: url.href });
-  const adminPool = new Pool(baseConfig);
-  const schemas = [
-    `selective_src_${randomUUID().replaceAll('-', '')}`,
-    `selective_dst_${randomUUID().replaceAll('-', '')}`,
-    `selective_legacy_${randomUUID().replaceAll('-', '')}`,
-  ];
-  for (const s of schemas) {
-    await adminPool.query(`CREATE SCHEMA ${s}`);
-  }
-  const srcPool = new Pool({ ...baseConfig, options: `-c search_path=${schemas[0]}` });
-  const srcPeerPool = new Pool({ ...baseConfig, options: `-c search_path=${schemas[0]}` });
-  const dstPool = new Pool({ ...baseConfig, options: `-c search_path=${schemas[1]}` });
-  const legacyPool = new Pool({ ...baseConfig, options: `-c search_path=${schemas[2]}` });
-  t.after(async () => {
-    await Promise.all([srcPool.end(), srcPeerPool.end(), dstPool.end(), legacyPool.end()]);
-    try {
-      for (const s of schemas) {
-        await adminPool.query(`DROP SCHEMA IF EXISTS ${s} CASCADE`);
-      }
-    } finally {
-      await adminPool.end();
-    }
-  });
+test('Postgres canonical backup exports consistent snapshot including daily plans, restores atomically, and accepts legacy bundles', postgresOnly, async (t) => {
+  const newSourcePool = await isolatedSchema(t);
+  const srcPool = newSourcePool();
+  const srcPeerPool = newSourcePool();
+  const dstPool = (await isolatedSchema(t))();
+  const legacyPool = (await isolatedSchema(t))();
 
   const srcRepo = new PostgresRepository(srcPool);
   const srcPeer = new PostgresRepository(srcPeerPool);
@@ -387,7 +402,10 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   const legacyRepo = new PostgresRepository(legacyPool);
   await Promise.all([srcRepo.ensureSchema(), dstRepo.ensureSchema(), legacyRepo.ensureSchema()]);
 
-  // Populate ALL 16 tables in source schema
+  const tables = await srcPool.query<{ tablename: string }>(
+    'SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename'
+  );
+  assert.deepEqual(tables.rows.map(row => row.tablename), [...BACKUP_TABLES].sort());
   const manifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
   manifest.batchLabel = 'Backup Source Batch 1';
   const imported = await srcRepo.importManifest(manifest, 'cli_db_push');
@@ -569,28 +587,7 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   await srcRepo.saveDailyFocusPlan('learner_plan_only', planOnlyPlan);
 
   // Learner who ONLY has a benchmark_reports row, and one who ONLY has learner_preferences
-  const benchSection = (code: 'READ' | 'MATH' | 'THINK' | 'WRIT') => ({
-    section: code, correct: 18, total: 30, unanswered: 2, accuracyPct: 60, band: 'next_25' as const, estimatedPercentile: 64,
-  });
-  const benchReport: BenchmarkReportRecord = {
-    reportId: 'bench_sess_report_only',
-    sessionId: 'sess_report_only',
-    studentId: 'learner_report_only',
-    batchLabel: '2026-11-20_b01',
-    title: 'Official sample A',
-    completedAtIso: '2026-11-22T09:30:00.000Z',
-    elapsedSec: 7000,
-    timeLimitSec: 9000,
-    difficulty: 'official_sample',
-    scaledScore120: 84,
-    uncertaintyHalfWidth120: 7,
-    estimatedPercentile: 70,
-    estimatedStateRank: 4500,
-    estimatedApplicantPool: 15000,
-    writingStatus: 'missing',
-    sections: { READ: benchSection('READ'), MATH: benchSection('MATH'), THINK: benchSection('THINK'), WRIT: benchSection('WRIT') },
-    weakSkillStats: [],
-  };
+  const benchReport = sampleReport();
   await srcRepo.saveBenchmarkReport(benchReport);
   const savedPrefs = await srcRepo.saveLearnerPreferences('learner_prefs_only', {
     dailyGoalMinutes: 40,
@@ -631,6 +628,7 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
 
   // Clean export after concurrent writes settled
   const backup = await srcRepo.exportFullBackup();
+  assert.equal(backup.schemaVersion, 'v3_canonical_1.0');
   assert.equal(backup.counts.dailyFocusPlans, 3);
   assert.ok(backup.users.some((u) => u.uid === 'learner_plan_only' && u.dailyFocusPlans?.length === 1));
   assert.ok(backup.users.some((u) => u.uid === 'learner_ev_only' && u.questionEvidence.length === 1));
@@ -741,28 +739,40 @@ test('Postgres canonical backup exports consistent snapshot including daily plan
   assert.equal(legacyApplied.applied.learnerPreferences, 0);
   assert.equal(await legacyRepo.getBenchmarkReport('sess_report_only'), null);
   assert.equal(await legacyRepo.getDailyFocusPlan('learner_full', '2026-11-20'), null);
+
+  await t.test('deleteUserAccount removes every owned row and preserves the other learners and bank', async () => {
+    const owner = session.studentId!;
+    await dstRepo.saveBenchmarkReport({ ...benchReport, studentId: owner, sessionId: session.sessionId });
+    await dstRepo.saveLearnerPreferences(owner, savedPrefs);
+    const before = await snapshotTableCounts(dstPool);
+    const result = await dstRepo.deleteUserAccount(owner);
+    assert.deepEqual(result, {
+      ok: true, deletedUser: true, clearedSessions: 1, clearedAttempts: 1, clearedSkillStates: 1,
+      clearedMemory: 1, clearedEvidence: 1, clearedWriting: 1, clearedDailyPlans: 1, clearedFlags: 1,
+      preservedQuestionsCount: backup.questions.length,
+    });
+    const after = await snapshotTableCounts(dstPool);
+    const shared = new Set(['stimuli', 'questions', 'import_batches', 'admin_config_versions', 'media_assets']);
+    for (const table of BACKUP_TABLES) {
+      assert.equal(after[table], before[table] - (shared.has(table) ? 0 : 1), table);
+    }
+    const survivors = await dstRepo.exportFullBackup();
+    assert.deepEqual(survivors.users, dstExport.users.filter(user => user.uid !== owner));
+    assert.deepEqual(survivors.questionFlags, []);
+    const missing = await dstRepo.deleteUserAccount('never-registered');
+    assert.deepEqual(missing, {
+      ok: true, deletedUser: false, clearedSessions: 0, clearedAttempts: 0, clearedSkillStates: 0,
+      clearedMemory: 0, clearedEvidence: 0, clearedWriting: 0, clearedDailyPlans: 0, clearedFlags: 0,
+      preservedQuestionsCount: result.preservedQuestionsCount,
+    });
+    assert.deepEqual(await snapshotTableCounts(dstPool), after);
+  });
 });
 
-test('Postgres bank cache revalidates on out-of-band writes and slim queries match full reads', {
-  skip: !localTestUrl && 'Set TEST_POSTGRES_URL to a disposable local Postgres database',
-}, async (t) => {
-  const url = new URL(localTestUrl!);
-  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !url.searchParams.has('host'),
-    'TEST_POSTGRES_URL must point to a local database');
-  const schema = `selective_cache_${randomUUID().replaceAll('-', '')}`;
-  const baseConfig = getPostgresPoolConfig({ DATABASE_URL: url.href });
-  const adminPool = new Pool(baseConfig);
-  await adminPool.query(`CREATE SCHEMA ${schema}`);
-  const pool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
-  const writerPool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
-  t.after(async () => {
-    await Promise.all([pool.end(), writerPool.end()]);
-    try {
-      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
-    } finally {
-      await adminPool.end();
-    }
-  });
+test('Postgres bank cache revalidates on out-of-band writes and slim queries match full reads', postgresOnly, async (t) => {
+  const newPool = await isolatedSchema(t);
+  const pool = newPool();
+  const writerPool = newPool();
 
   const repo = new PostgresRepository(pool);
   const manifest = structuredClone(V3_STARTER_MANIFEST_EXAMPLE) as unknown as BankImportManifest;
@@ -780,8 +790,7 @@ test('Postgres bank cache revalidates on out-of-band writes and slim queries mat
   assert.deepEqual(meta.map((q) => q.questionId).sort(), full.map((q) => q.questionId).sort());
 
   // A cold repository (no bank in memory) answers from the SQL projection with identical rows.
-  const coldPool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
-  t.after(() => coldPool.end());
+  const coldPool = newPool();
   const coldMeta = await new PostgresRepository(coldPool).listQuestionMeta();
   const byId = (rows: typeof meta) => Object.fromEntries(rows.map((r) => [r.questionId, r]));
   assert.deepEqual(byId(coldMeta), byId(meta));
@@ -824,25 +833,8 @@ test('Postgres bank cache revalidates on out-of-band writes and slim queries mat
   assert.equal(await repo.countHoldoutLeaks([]), 0);
 });
 
-test('Postgres SQL-first pagination, search, status aggregates, progress stats, and bulk status match MemoryRepository', {
-  skip: !localTestUrl && 'Set TEST_POSTGRES_URL to a disposable local Postgres database',
-}, async (t) => {
-  const url = new URL(localTestUrl!);
-  assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !url.searchParams.has('host'),
-    'TEST_POSTGRES_URL must point to a local database');
-  const schema = `selective_sql_parity_${randomUUID().replaceAll('-', '')}`;
-  const baseConfig = getPostgresPoolConfig({ DATABASE_URL: url.href });
-  const adminPool = new Pool(baseConfig);
-  await adminPool.query(`CREATE SCHEMA ${schema}`);
-  const pool = new Pool({ ...baseConfig, options: `-c search_path=${schema}` });
-  t.after(async () => {
-    await pool.end();
-    try {
-      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
-    } finally {
-      await adminPool.end();
-    }
-  });
+test('Postgres SQL-first pagination, search, status aggregates, progress stats, and bulk status match MemoryRepository', postgresOnly, async (t) => {
+  const pool = (await isolatedSchema(t))();
 
   const pgRepo = new PostgresRepository(pool);
   const memRepo = new MemoryRepository();
@@ -970,7 +962,7 @@ test('Postgres SQL-first pagination, search, status aggregates, progress stats, 
   // Seed learner state: exact retained evidence, family-fallback needs_repair evidence, memory-only in_review, open flag, attempts, writing
   const studentId = 'parity_student';
   const latestNat2 = (await pgRepo.getQuestionWithStimulus('q_nat_2_v2'))!.question;
-  const mathSvg = (await pgRepo.getQuestionWithStimulus('q_ai_math_svg_01_v1'))!.question;
+  const mathSvg = (await pgRepo.getQuestionWithStimulus(mathTemplate.questionId))!.question;
   const readVis = (await pgRepo.getQuestionWithStimulus('q_read_vis_v1'))!.question;
 
   const evEntries: QuestionMasteryEvidence[] = [
@@ -1226,4 +1218,54 @@ test('withdrawQuestionFlagRow deletes only the caller\'s open flag and explains 
   assert.equal(flags.has('f_done'), true, 'resolved flags are never deleted');
   // A successful withdrawal is a single statement (no read-then-delete race).
   assert.equal(statements.filter((s) => s.startsWith('DELETE')).length, 4);
+});
+
+test('Postgres learner preferences persist student settings and administrator overrides', postgresOnly, async t => {
+  const newPool = await isolatedSchema(t);
+  const repo = new PostgresRepository(newPool());
+  const reader = new PostgresRepository(newPool());
+  assert.equal(await repo.getLearnerPreferences('alice'), null);
+  const initial = await repo.saveLearnerPreferences('alice', { dailyGoalMinutes: 25, updatedBy: 'student' });
+  assert.equal(initial.dailyGoalMinutes, 25);
+  assert.ok(Number.isFinite(Date.parse(initial.updatedAtIso!)));
+  assert.deepEqual(await reader.getLearnerPreferences('alice'), initial);
+  const override = { dailyGoalMinutes: 45, updatedBy: 'admin', adminOverrideLocked: true } as const;
+  const saved = await repo.saveLearnerPreferences('alice', override);
+  assert.deepEqual(await reader.getLearnerPreferences('alice'), { ...override, updatedAtIso: saved.updatedAtIso });
+  assert.equal(await reader.getLearnerPreferences('bob'), null);
+});
+
+test('Postgres student flag lists and withdrawals enforce ownership and open status', postgresOnly, async t => {
+  const repo = new PostgresRepository((await isolatedSchema(t))());
+  const flag: QuestionFlagRecord = { flagId: 'open', questionId: 'q', sessionId: 's', studentId: 'alice',
+    reason: 'unclear', status: 'open', createdAt: '2026-11-20T00:00:00Z' };
+  const reviewed = { ...flag, flagId: 'reviewed', createdAt: '2026-11-21T00:00:00Z' };
+  const other = { ...flag, flagId: 'other', studentId: 'bob' };
+  for (const item of [flag, reviewed, other]) await repo.saveQuestionFlag(item);
+  await repo.resolveQuestionFlag(reviewed.flagId);
+  assert.deepEqual(await repo.listQuestionFlags('alice'), [{ ...reviewed, status: 'resolved' }, flag]);
+  assert.equal(await repo.withdrawQuestionFlag('open', 'bob'), 'not_found');
+  assert.equal(await repo.withdrawQuestionFlag('reviewed', 'alice'), 'not_open');
+  assert.equal(await repo.withdrawQuestionFlag('open', 'alice'), 'withdrawn');
+  assert.equal(await repo.withdrawQuestionFlag('open', 'alice'), 'not_found');
+  assert.deepEqual(await repo.listQuestionFlags('alice'), [{ ...reviewed, status: 'resolved' }]);
+  assert.deepEqual(await repo.listQuestionFlags('bob'), [other]);
+});
+
+test('Postgres benchmark reports are scoped, ordered and upsert AI coaching by session', postgresOnly, async t => {
+  const repo = new PostgresRepository((await isolatedSchema(t))());
+  const report = sampleReport();
+  const older = { ...report, sessionId: 'older', completedAtIso: '2026-11-01T00:00:00Z' };
+  const other = { ...report, sessionId: 'other', studentId: 'other' };
+  for (const item of [report, older, other]) await repo.saveBenchmarkReport(item);
+  assert.deepEqual(await repo.getBenchmarkReport(report.sessionId, report.studentId), report);
+  assert.equal(await repo.getBenchmarkReport(report.sessionId, other.studentId), null);
+  const coached: BenchmarkReportRecord = { ...report, aiCoaching: {
+    generatedAtIso: report.completedAtIso, source: 'hybrid_gemini', rankedPriorities: [],
+    parentSummaryEn: 'Focus on reading.', parentSummaryZh: '重点练习阅读。', actionPlanEn: [], actionPlanZh: [],
+  } };
+  await repo.saveBenchmarkReport(coached);
+  assert.deepEqual(await repo.getBenchmarkReport(report.sessionId), coached);
+  assert.deepEqual(await repo.listBenchmarkReports(report.studentId), [coached, older]);
+  assert.deepEqual(await repo.listBenchmarkReports(report.studentId, 1), [coached]);
 });

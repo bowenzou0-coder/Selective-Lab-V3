@@ -710,7 +710,6 @@ export const MESSAGES_EN = {
   'bank.catalogInventoryBadge': '{count} in active pool',
   'data.scopedToLearner': 'Scoped to: {name}',
   'data.selectLearnerToReset': 'Select a specific learner above before resetting progress.',
-  'cfg.selectLearnerBeforeRecalibrate': 'Select a learner above before recalibrating their daily plan.',
 
   // Admin studio v2 (metrics strip, filters popover, simulator, inspector tabs, learner pill)
   'common.close': 'Close',

@@ -13,7 +13,8 @@
     "lint": "tsc --noEmit",
     "test": "tsx --test src/shared/*.test.ts src/client/*.test.ts src/server/*.test.ts src/server/storage/*.test.ts",
     "deploy": "vercel --prod",
-    "db:push": "tsx scripts/push-manifest.ts"
+    "db:push": "tsx scripts/push-manifest.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@google/genai": "^3.3.0",
@@ -31,6 +32,7 @@
     "vite": "^8.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
