@@ -5,6 +5,7 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Collapsible, DisclosureChevron } from '../ui/Collapsible';
 import {
   DEFAULT_AUTO_CALIBRATE,
+  DEFAULT_BENCHMARK_POLICY,
   DEFAULT_POOL_POLICY,
   type LearningConfig,
   type SectionCode,
@@ -49,6 +50,7 @@ export function PlatformDefaultsSection({
 
   const autoCal = config.autoCalibrate ?? DEFAULT_AUTO_CALIBRATE;
   const poolPolicy = config.poolPolicy ?? DEFAULT_POOL_POLICY;
+  const benchmarkPolicy = config.benchmarkPolicy ?? DEFAULT_BENCHMARK_POLICY;
 
   const updateGlobalAuto = (patch: Partial<typeof autoCal>) => {
     setConfig((prev) => {
@@ -294,6 +296,33 @@ export function PlatformDefaultsSection({
             </div>
             <p className="text-xs text-[#4A5955]">{t('cfg.retireMasteredDesc')}</p>
           </button>
+        </div>
+
+        <div className="pt-4 border-t border-[#E5DFD5] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5 max-w-xl">
+            <label htmlFor="cfg-bm-threshold" className="block font-sans-display font-semibold text-sm text-[#113C36]">
+              {t('cfg.benchmarkLockThresholdTitle')}
+            </label>
+            <p className="text-xs text-[#4A5955]">{t('cfg.benchmarkLockThresholdDesc')}</p>
+          </div>
+          <div className="w-full sm:w-44 shrink-0">
+            <NumericInput
+              id="cfg-bm-threshold"
+              showRange
+              stepper
+              label={t('cfg.benchmarkLockThresholdTitle')}
+              value={benchmarkPolicy.requiredCorrectPracticeAnswers}
+              min={0}
+              max={500}
+              step={10}
+              onCommit={(v) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  benchmarkPolicy: { requiredCorrectPracticeAnswers: v },
+                }))
+              }
+            />
+          </div>
         </div>
       </section>
 

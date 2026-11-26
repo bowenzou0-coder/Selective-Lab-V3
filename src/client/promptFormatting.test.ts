@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  normalizeUnitPowers,
   parseFormattedBlocks,
   parseInlineSpans,
+  parseMathSpans,
   splitSpeakerPrefix,
 } from './promptFormatting.ts';
 
@@ -116,4 +118,31 @@ test('parseInlineSpans renders bold and italic safely without breaking arithmeti
       { type: 'text', text: ' with 3 * 4 = 12 and 2*x.' },
     ]
   );
+});
+
+test('normalizeUnitPowers typesets plain unit powers only after a number or bracket', () => {
+  assert.equal(normalizeUnitPowers('The area is 36 cm2.'), 'The area is 36 cm².');
+  assert.equal(normalizeUnitPowers('164 km2, 8m3 and Area (m2)'), '164 km², 8m³ and Area (m²)');
+  assert.equal(normalizeUnitPowers('Room m2 and cm25 stay as written'), 'Room m2 and cm25 stay as written');
+});
+
+test('parseMathSpans turns caret exponents into superscript spans', () => {
+  assert.deepEqual(parseMathSpans('5^2 + x^{n+1} = 10^-3'), [
+    { type: 'text', text: '5' },
+    { type: 'sup', text: '2' },
+    { type: 'text', text: ' + x' },
+    { type: 'sup', text: 'n+1' },
+    { type: 'text', text: ' = 10' },
+    { type: 'sup', text: '−3' },
+  ]);
+  assert.deepEqual(parseMathSpans('Press ^ to start'), [{ type: 'text', text: 'Press ^ to start' }]);
+});
+
+test('parseInlineSpans keeps emphasis and adds superscripts inside plain text', () => {
+  assert.deepEqual(parseInlineSpans('**Area** is 3^2 cm2'), [
+    { type: 'bold', text: 'Area' },
+    { type: 'text', text: ' is 3' },
+    { type: 'sup', text: '2' },
+    { type: 'text', text: ' cm²' },
+  ]);
 });

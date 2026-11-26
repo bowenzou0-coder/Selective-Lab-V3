@@ -213,14 +213,50 @@ export function DataAndDesignPanel({
 
         {!confirmOpen ? (
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <button
-              type="button"
-              onClick={() => api.downloadFile('/api/admin/export/full', 'selective-lab-backup.json')}
-              className="px-4 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t('data.exportBackup')}</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={monitoredStudentId === null}
+                onClick={() => {
+                  const qs = monitoredStudentId
+                    ? `&studentId=${encodeURIComponent(monitoredStudentId)}`
+                    : '';
+                  api.downloadFile(
+                    `/api/admin/export/progress?format=csv${qs}`,
+                    'selective-lab-progress.csv'
+                  );
+                }}
+                className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:pointer-events-none transition-tactile"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{t('data.exportProgressCsv')}</span>
+              </button>
+              <button
+                type="button"
+                disabled={monitoredStudentId === null}
+                onClick={() => {
+                  const qs = monitoredStudentId
+                    ? `&studentId=${encodeURIComponent(monitoredStudentId)}`
+                    : '';
+                  api.downloadFile(
+                    `/api/admin/export/progress?format=json${qs}`,
+                    'selective-lab-progress.json'
+                  );
+                }}
+                className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:pointer-events-none transition-tactile"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{t('data.exportProgressJson')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => api.downloadFile('/api/admin/export/full', 'selective-lab-backup.json')}
+                className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-tactile"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{t('data.exportBackup')}</span>
+              </button>
+            </div>
 
             <div className="space-y-1.5">
               {learnerName ? (

@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_LEARNING_CONFIG, type QuestionItem, type StimulusGroup } from './contracts';
 import {
+  allocateFullPoolMockCaps,
   clampAlgorithmAdjustments,
+  computePoolMockBaseMinutes,
   computeWritingMetrics,
   detectPlateauStatus,
   gradeSubmission,
   selectAdminCalibrationQuestions,
+  selectBenchmarkHoldoutQuestions,
   selectMockTestQuestions,
+  selectPoolMockQuestions,
   selectPracticeCandidates,
   selectPracticeSession,
   toStudentQuestionView,
@@ -92,7 +96,7 @@ test('gradeSubmission enforces reuseAllowed: false and computes distractor ratio
   assert.equal(graded.results[1].isCorrect, true);
 });
 
-test('selectPracticeSession never leaks benchmark_holdout into non-benchmark modes', () => {
+test('selectPracticeSession isolates benchmark_holdout and official_calibration from everyday practice', () => {
   const holdoutQ: QuestionItem = {
     ...SAMPLE_Q,
     questionId: 'q_off_pt3_read_q01_v1',
@@ -100,35 +104,137 @@ test('selectPracticeSession never leaks benchmark_holdout into non-benchmark mod
     poolType: 'benchmark_holdout',
     provenance: { sourceType: 'official_doe', sourceReference: 'NSW DoE Reading PT3 Q1', verifierAgreed: true, auditorReviewed: true },
   };
-  const practiceQ: QuestionItem = {
+  const officialQ: QuestionItem = {
     ...SAMPLE_Q,
     questionId: 'q_off_pt1_read_q01_v1',
     questionFamilyId: 'q_off_pt1_read_q01',
     poolType: 'official_calibration',
     provenance: { sourceType: 'official_doe', sourceReference: 'NSW DoE Reading PT1 Q1', verifierAgreed: true, auditorReviewed: true },
   };
+  const practiceQ: QuestionItem = {
+    ...SAMPLE_Q,
+    questionId: '2026-11-26_b01_read_01_v1',
+    questionFamilyId: '2026-11-26_b01_read_01',
+    poolType: 'practice',
+  };
 
   const daily = selectPracticeSession({
     mode: 'daily_adaptive',
-    questions: [holdoutQ, practiceQ],
+    questions: [holdoutQ, officialQ, practiceQ],
     skillStates: {},
     questionMemory: {},
     config: DEFAULT_LEARNING_CONFIG,
     nowIso: '2026-11-14T12:00:00Z',
     seed: 42,
   });
-  assert.deepEqual(daily.map((q) => q.questionId), ['q_off_pt1_read_q01_v1']);
+  assert.deepEqual(daily.map((q) => q.questionId), ['2026-11-26_b01_read_01_v1']);
+
+  const diagnostic = selectPracticeSession({
+    mode: 'diagnostic',
+    questions: [holdoutQ, officialQ, practiceQ],
+    skillStates: {},
+    questionMemory: {},
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-14T12:00:00Z',
+    seed: 42,
+  });
+  assert.deepEqual(diagnostic.map((q) => q.questionId), ['q_off_pt1_read_q01_v1']);
+
+  const poolMock = selectPoolMockQuestions({
+    questions: [holdoutQ, officialQ, practiceQ],
+    sectionFilter: 'READ',
+    questionCount: 5,
+    seed: 42,
+  });
+  assert.deepEqual(poolMock.map((q) => q.questionId), ['2026-11-26_b01_read_01_v1']);
 
   const bench = selectPracticeSession({
     mode: 'benchmark_exam',
-    questions: [holdoutQ, practiceQ],
+    questions: [holdoutQ, officialQ, practiceQ],
     skillStates: {},
     questionMemory: {},
     config: DEFAULT_LEARNING_CONFIG,
     nowIso: '2026-11-14T12:00:00Z',
     seed: 42,
   });
-  assert.deepEqual(bench.map((q) => q.questionId), ['q_off_pt3_read_q01_v1']);
+  assert.deepEqual(
+    bench.map((q) => q.questionId).sort(),
+    ['q_off_pt1_read_q01_v1', 'q_off_pt3_read_q01_v1']
+  );
+});
+
+test('blended difficulty selection hits 80/20, 50/50, 20/80 quotas with fallback, unseen-first, and shuffled order', () => {
+  const makeMath = (idx: number, diff: number): QuestionItem => ({
+    ...SAMPLE_Q,
+    questionId: `2026-11-26_b01_math_${String(idx).padStart(2, '0')}_v1`,
+    questionFamilyId: `2026-11-26_b01_math_${String(idx).padStart(2, '0')}`,
+    section: 'MATH',
+    formatType: 'MATH_MCQ_5',
+    poolType: 'practice',
+    stimulusId: undefined,
+    parts: [
+      {
+        ...SAMPLE_Q.parts[0],
+        partId: `p_m_${idx}`,
+        partIndex: 0,
+        skillId: `MATH.SKILL.${idx % 6}`,
+        difficultyInitial: diff,
+      },
+    ],
+  });
+
+  const lowPool = Array.from({ length: 15 }, (_, i) => makeMath(i + 1, 4.1 + (i % 3) * 0.1));
+  const highPool = Array.from({ length: 15 }, (_, i) => makeMath(i + 16, 4.5 + (i % 4) * 0.1));
+  const mixed = [...lowPool, ...highPool];
+
+  const countLow = (items: QuestionItem[]) =>
+    items.filter((q) => q.parts[0].difficultyInitial <= 4.35).length;
+
+  const easyMock = selectPoolMockQuestions({ questions: mixed, sectionFilter: 'MATH', questionCount: 10, difficulty: 'easy', seed: 101 });
+  const medMock = selectPoolMockQuestions({ questions: mixed, sectionFilter: 'MATH', questionCount: 10, difficulty: 'medium', seed: 101 });
+  const hardMock = selectPoolMockQuestions({ questions: mixed, sectionFilter: 'MATH', questionCount: 10, difficulty: 'hard', seed: 101 });
+
+  assert.equal(easyMock.length, 10);
+  assert.equal(countLow(easyMock), 8);
+  assert.equal(medMock.length, 10);
+  assert.equal(countLow(medMock), 5);
+  assert.equal(hardMock.length, 10);
+  assert.equal(countLow(hardMock), 2);
+
+  // Shuffled order: not strictly non-decreasing by difficulty
+  const medDiffs = medMock.map((q) => q.parts[0].difficultyInitial);
+  const isSortedAsc = medDiffs.every((d, i) => i === 0 || d >= medDiffs[i - 1]);
+  assert.equal(isSortedAsc, false, 'Selected mock questions should be shuffled, not strictly sorted easy -> hard');
+
+  // Soft fallback: if low band only has 2 items, Easy (quota 8 low) fills remaining 8 from high band (never hard-filters)
+  const scarceLow = [...lowPool.slice(0, 2), ...highPool];
+  const fallback = selectPracticeSession({
+    mode: 'section_drill',
+    sectionFilter: 'MATH',
+    difficulty: 'easy',
+    questionCountOverride: 10,
+    questions: scarceLow,
+    skillStates: {},
+    questionMemory: {},
+    config: DEFAULT_LEARNING_CONFIG,
+    nowIso: '2026-11-26T10:00:00Z',
+    seed: 77,
+  });
+  assert.equal(fallback.length, 10);
+  assert.equal(countLow(fallback), 2);
+
+  // Official benchmark Reading order places Cloze (Part 2) between Fiction (Part 1) and Poetry (Part 3)
+  const officialRead: QuestionItem[] = [
+    { ...SAMPLE_Q, questionId: 'official_pt1_read_01_v1', questionFamilyId: 'f_r1', section: 'READ', formatType: 'READ_FICTION_MCQ', poolType: 'official_calibration', batchId: 'b_off1' },
+    { ...SAMPLE_Q, questionId: 'official_pt1_read_09_v1', questionFamilyId: 'f_r9', section: 'READ', formatType: 'READ_POETRY_MCQ', poolType: 'official_calibration', batchId: 'b_off1' },
+    { ...SAMPLE_Q, questionId: 'official_pt1_read_15_v1', questionFamilyId: 'f_r15', section: 'READ', formatType: 'READ_GAPPED_TEXT', poolType: 'official_calibration', batchId: 'b_off1' },
+    { ...SAMPLE_Q, questionId: 'official_pt1_read_17_v1', questionFamilyId: 'f_r17', section: 'READ', formatType: 'READ_VOCAB_CLOZE', poolType: 'official_calibration', batchId: 'b_off1' },
+  ];
+  const orderedOff = selectBenchmarkHoldoutQuestions({ batchId: 'b_off1', questions: officialRead });
+  assert.deepEqual(
+    orderedOff.map((q) => q.formatType),
+    ['READ_FICTION_MCQ', 'READ_VOCAB_CLOZE', 'READ_POETRY_MCQ', 'READ_GAPPED_TEXT']
+  );
 });
 
 test('selectMockTestQuestions returns fixed canonical order for PT1 and unified or holdout PT3', () => {
@@ -533,4 +639,24 @@ test('selectPracticeSession groups Reading questions cohesively by passage (1 te
   // First 5 belong to one passage, next 5 belong to the second passage
   assert.equal(new Set(tenQs.slice(0, 5).map((q) => q.stimulusId)).size, 1);
   assert.equal(new Set(tenQs.slice(5, 10).map((q) => q.stimulusId)).size, 1);
+});
+
+test('allocateFullPoolMockCaps and computePoolMockBaseMinutes scale proportionally to official NSW counts and minutes', () => {
+  const fullCaps = allocateFullPoolMockCaps(93);
+  assert.deepEqual(fullCaps, { READ: 17, MATH: 35, THINK: 40, WRIT: 1 });
+  assert.equal(computePoolMockBaseMinutes('ALL', 93), 155);
+
+  const quickCaps = allocateFullPoolMockCaps(30);
+  assert.equal(quickCaps.READ + quickCaps.MATH + quickCaps.THINK + quickCaps.WRIT, 30);
+  assert.equal(quickCaps.WRIT, 1);
+  assert.ok(quickCaps.THINK >= quickCaps.MATH && quickCaps.MATH >= quickCaps.READ);
+  const quickMins = computePoolMockBaseMinutes('ALL', 30);
+  assert.ok(quickMins > 45 && quickMins < 90, `Expected 30q full mock minutes to scale cleanly (got ${quickMins})`);
+
+  assert.equal(computePoolMockBaseMinutes('READ', 17), 45);
+  assert.equal(computePoolMockBaseMinutes('MATH', 35), 40);
+  assert.equal(computePoolMockBaseMinutes('THINK', 40), 40);
+  assert.equal(computePoolMockBaseMinutes('WRIT', 1), 30);
+  assert.equal(computePoolMockBaseMinutes('THINK', 20), 20);
+  assert.equal(computePoolMockBaseMinutes('MATH', 20), 23);
 });

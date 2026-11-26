@@ -719,19 +719,26 @@ export class MemoryRepository implements AppRepository {
     >();
     const benchmarkBatchMap = new Map<
       string,
-      { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
+      {
+        batchId: string;
+        batchLabel: string;
+        poolType: 'benchmark_holdout' | 'official_calibration';
+        counts: Record<SectionCode, number>;
+        total: number;
+      }
     >();
     for (const q of questions) {
       const tag = getQuestionBatchTag(q);
       if (tag === 'PT1' || tag === 'PT2' || tag === 'PT3') {
         batchCounts[tag][q.section] += 1;
       }
-      if (q.poolType === 'benchmark_holdout') {
+      if (q.poolType === 'benchmark_holdout' || q.poolType === 'official_calibration') {
         if (q.batchId) {
           const batchMeta = batchById.get(q.batchId);
           const entry = benchmarkBatchMap.get(q.batchId) || {
             batchId: q.batchId,
             batchLabel: batchMeta?.batchLabel || q.batchLabel || q.batchId,
+            poolType: q.poolType,
             counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
             total: 0,
           };
@@ -739,6 +746,9 @@ export class MemoryRepository implements AppRepository {
           entry.total += 1;
           benchmarkBatchMap.set(q.batchId, entry);
         }
+        continue;
+      }
+      if (q.poolType !== 'practice') {
         continue;
       }
       const prog = deriveQuestionProgressMeta(q, evidenceMap, questionMemory);
@@ -767,7 +777,11 @@ export class MemoryRepository implements AppRepository {
       batchCounts,
       poolCounts,
       customBatches: Array.from(customBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
-      benchmarkBatches: Array.from(benchmarkBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
+      benchmarkBatches: Array.from(benchmarkBatchMap.values()).sort((a, b) => {
+        if (a.poolType !== b.poolType) return a.poolType === 'official_calibration' ? -1 : 1;
+        if (a.poolType === 'official_calibration') return a.batchLabel.localeCompare(b.batchLabel);
+        return b.batchLabel.localeCompare(a.batchLabel);
+      }),
     };
   }
 
@@ -779,6 +793,25 @@ export class MemoryRepository implements AppRepository {
       attempted: rows.length,
       correct: rows.filter((a) => a.isCorrect).length,
     };
+  }
+
+  async getBenchmarkUnlockProgress(
+    studentId: string,
+    sinceIso: string
+  ): Promise<{ correctPracticeAnswers: number }> {
+    const sinceMs = Date.parse(sinceIso);
+    const count = this.attempts.filter((a) => {
+      if ((a.studentId || DEFAULT_STUDENT_ID) !== studentId) return false;
+      if (a.isSandbox || !a.isCorrect) return false;
+      const attMs = Date.parse(a.createdAt);
+      if (!Number.isFinite(attMs) || (Number.isFinite(sinceMs) && attMs <= sinceMs)) return false;
+      const sess = this.sessions.get(a.sessionId);
+      if (sess && (sess.isSandbox || sess.mode === 'benchmark_exam' || sess.mode === 'admin_calibration')) {
+        return false;
+      }
+      return true;
+    }).length;
+    return { correctPracticeAnswers: count };
   }
 
   async getStudentProgressStats(input: {

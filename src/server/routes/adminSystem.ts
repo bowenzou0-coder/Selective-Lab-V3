@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import { requireAdmin, type AuthenticatedRequest } from '../auth.ts';
 import type { SyncHydratePayload } from '../storage/repository.ts';
-import { DEFAULT_LEARNING_CONFIG, type LearningConfig } from '../../shared/contracts.ts';
+import { DEFAULT_BENCHMARK_POLICY, DEFAULT_LEARNING_CONFIG, type LearningConfig } from '../../shared/contracts.ts';
 import { V3_MANIFEST_JSON_SCHEMA, V3_STARTER_MANIFEST_EXAMPLE } from '../../shared/v3Schema.ts';
 import type { AppContext } from '../context.ts';
 import { UPLOADS_DIR } from '../paths.ts';
@@ -52,6 +52,20 @@ export function registerAdminSystemRoutes(app: Express, ctx: AppContext): void {
           sectionDrillTimeMinutes: Math.max(
             1,
             Number(rawConfig.sessionDefaults.sectionDrillTimeMinutes ?? 8)
+          ),
+        },
+        benchmarkPolicy: {
+          requiredCorrectPracticeAnswers: Math.min(
+            500,
+            Math.max(
+              0,
+              Math.round(
+                Number(
+                  rawConfig.benchmarkPolicy?.requiredCorrectPracticeAnswers ??
+                    DEFAULT_BENCHMARK_POLICY.requiredCorrectPracticeAnswers
+                )
+              )
+            )
           ),
         },
       };

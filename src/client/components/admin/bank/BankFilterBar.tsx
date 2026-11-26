@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, Play, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
+import { Play, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import type { BatchDirectorySummary } from '../../../api';
 import type { BankPoolStatus, QuestionCompletionStatus } from '../../../../shared/bankStatus';
 import type { SectionCode } from '../../../../shared/contracts';
@@ -35,17 +35,14 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function Select({ value, onChange, children, ariaLabel }: { value: string; onChange: (v: string) => void; children: ReactNode; ariaLabel?: string }) {
   return (
-    <div className="relative min-w-0">
-      <select
-        value={value}
-        aria-label={ariaLabel}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full cursor-pointer appearance-none truncate rounded-[10px] border border-[#E5DFD5] bg-white py-1.5 pl-3 pr-8 text-[12px] font-medium text-[#113C36] transition-tactile hover:border-[#CBC2B3] focus:border-[#113C36] focus:outline-none"
-      >
-        {children}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#615E57]" />
-    </div>
+    <select
+      value={value}
+      aria-label={ariaLabel}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full min-w-0 cursor-pointer truncate rounded-[10px] border border-[#E5DFD5] bg-white py-1.5 pl-3 text-[12px] font-medium text-[#113C36] transition-tactile hover:border-[#CBC2B3] focus:border-[#113C36] focus:outline-none"
+    >
+      {children}
+    </select>
   );
 }
 

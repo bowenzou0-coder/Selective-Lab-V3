@@ -64,7 +64,7 @@ export function registerStudentRoutes(app: Express, ctx: AppContext): void {
           evidenceMap: () => repo.getQuestionEvidence(studentId),
           questionMemory: () => repo.getQuestionMemory(studentId),
           // Slim selection rows + learner maps load only when today's plan is not cached yet.
-          questions: () => repo.listSelectionQuestions({ qcStatus: 'active' }),
+          questions: () => repo.listSelectionQuestions({ qcStatus: 'active', poolType: 'practice' }),
           config: effectiveConfig,
         }),
       ]);

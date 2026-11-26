@@ -3,8 +3,10 @@ import type {
   AutoCalibrateConfig,
   BankImportManifest,
   BankMasterySummary,
+  BenchmarkLockStatus,
   BenchmarkReportRecord,
   DailyFocusPlan,
+  DifficultyPreset,
   ImportBatchRecord,
   LearnerPreferences,
   LearningConfig,
@@ -64,6 +66,7 @@ export interface HealthResponse {
 export interface CustomBatchOption {
   batchId: string;
   batchLabel: string;
+  poolType?: 'benchmark_holdout' | 'official_calibration';
   counts: Record<SectionCode, number>;
   total: number;
 }
@@ -111,6 +114,7 @@ export interface SessionDetailResponse {
 export interface BenchmarkHubResponse {
   benchmarkBatches: CustomBatchOption[];
   reports: BenchmarkReportRecord[];
+  benchmarkLock?: BenchmarkLockStatus;
 }
 
 export interface ProgressResponse {
@@ -245,6 +249,7 @@ export interface AdminLearnerPreferencesResponse {
   effectiveConfig: LearnerDailySettingsView;
   globalDefaults: LearnerDailySettingsView;
   adminOverrideLocked: boolean;
+  benchmarkLock?: BenchmarkLockStatus;
 }
 
 export interface RestoreReport {
@@ -629,6 +634,7 @@ export const api = {
     mockBatch?: MockTestBatch;
     mockSource?: 'pool' | 'batch';
     batchId?: string;
+    difficulty?: DifficultyPreset;
     questionCount?: number;
     timeMultiplier?: number;
     customTimeLimitSec?: number;
@@ -886,6 +892,17 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }), SETTINGS_KEYS),
+  setAdminBenchmarkUnlock: (studentId?: string, unlock = true) =>
+    invalidating(
+      request<{ ok: boolean; studentId: string; benchmarkLock: BenchmarkLockStatus }>(
+        '/api/admin/benchmarks/unlock',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...(studentId ? { studentId } : {}), unlock }),
+        }
+      ),
+      ['benchmarks']
+    ),
   getQuestionVersions: (questionId: string) =>
     request<{
       questionFamilyId: string;

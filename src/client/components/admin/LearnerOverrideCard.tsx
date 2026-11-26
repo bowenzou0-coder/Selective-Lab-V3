@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Lock, RefreshCw, RotateCcw, Save, UserCog } from 'lucide-react';
+import { Lock, RefreshCw, RotateCcw, Save, Unlock, UserCog } from 'lucide-react';
 import { api, type AdminLearnerSummary, type LearnerDailySettingsView } from '../../api';
 import { useI18n } from '../../i18n';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_LEARNING_CONFIG,
+  type BenchmarkLockStatus,
   type DailyFocusPlan,
   type LearnerPreferences,
   type LearningConfig,
@@ -38,6 +39,8 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
   const [learnerPrefs, setLearnerPrefs] = useState<LearnerPreferences | null>(null);
   const [learnerLocked, setLearnerLocked] = useState(false);
   const [savedLearnerLocked, setSavedLearnerLocked] = useState(false);
+  const [benchmarkLock, setBenchmarkLock] = useState<BenchmarkLockStatus | null>(null);
+  const [togglingBmUnlock, setTogglingBmUnlock] = useState(false);
   const [todayPlan, setTodayPlan] = useState<DailyFocusPlan | null>(null);
   const [loadingLearner, setLoadingLearner] = useState(true);
   const [savingLearner, setSavingLearner] = useState(false);
@@ -57,6 +60,7 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
         setLearnerPrefs(prefRes.preferences);
         setLearnerLocked(prefRes.adminOverrideLocked);
         setSavedLearnerLocked(prefRes.adminOverrideLocked);
+        setBenchmarkLock(prefRes.benchmarkLock ?? null);
         setTodayPlan(planRes.plan);
       })
       .catch((err) => {
@@ -153,6 +157,23 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
       onError(err instanceof Error ? err.message : 'Unable to recalibrate daily plan.');
     } finally {
       setRecalibrating(false);
+    }
+  };
+
+  const handleToggleBenchmarkUnlock = async (unlock: boolean) => {
+    setTogglingBmUnlock(true);
+    try {
+      const res = await api.setAdminBenchmarkUnlock(learner.uid, unlock);
+      setBenchmarkLock(res.benchmarkLock);
+      onNotice(
+        unlock
+          ? t('admin.benchmarkUnlockedNotice', { name: learnerName || learner.uid })
+          : t('admin.benchmarkRelockedNotice', { name: learnerName || learner.uid })
+      );
+    } catch (err) {
+      onError(err instanceof Error ? err.message : t('bm.unlockError'));
+    } finally {
+      setTogglingBmUnlock(false);
     }
   };
 
@@ -441,6 +462,50 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
                 </button>
               )}
             </div>
+
+            {benchmarkLock && benchmarkLock.lastBenchmarkCompletedAtIso && benchmarkLock.requiredCorrect > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] bg-[#FAF8F5] border border-[#E5DFD5] px-4 py-3">
+                <div className="space-y-0.5 min-w-0">
+                  <div className="text-xs font-sans-display font-semibold text-[#113C36] tabular-nums">
+                    {benchmarkLock.isLocked
+                      ? t('bm.lockProgressTitle', {
+                          earned: benchmarkLock.earnedCorrect,
+                          required: benchmarkLock.requiredCorrect,
+                        })
+                      : benchmarkLock.adminUnlocked
+                        ? t('bm.lockAdminUnlockedTitle')
+                        : t('bm.lockUnlockedTitle', {
+                            earned: benchmarkLock.earnedCorrect,
+                            required: benchmarkLock.requiredCorrect,
+                          })}
+                  </div>
+                  <p className="text-[11px] text-[#615E57]">
+                    {t('admin.benchmarkOverrideHint')}
+                  </p>
+                </div>
+                {benchmarkLock.isLocked ? (
+                  <button
+                    type="button"
+                    disabled={togglingBmUnlock}
+                    onClick={() => handleToggleBenchmarkUnlock(true)}
+                    className="px-3 py-1.5 rounded-[10px] border border-[#113C36] bg-white hover:bg-[#E5F0EA] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-tactile disabled:opacity-50 shrink-0"
+                  >
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>{togglingBmUnlock ? t('cfg.saving') : t('bm.adminUnlockBtn')}</span>
+                  </button>
+                ) : benchmarkLock.adminUnlocked && benchmarkLock.remainingCorrect > 0 ? (
+                  <button
+                    type="button"
+                    disabled={togglingBmUnlock}
+                    onClick={() => handleToggleBenchmarkUnlock(false)}
+                    className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#F3EFE8] text-xs font-sans-display font-semibold text-[#4A5955] inline-flex items-center gap-1.5 cursor-pointer transition-tactile disabled:opacity-50 shrink-0"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>{togglingBmUnlock ? t('cfg.saving') : t('bm.adminRelockBtn')}</span>
+                  </button>
+                ) : null}
+              </div>
+            )}
 
             {learnerDirty && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] bg-white border border-[#113C36]/25 px-4 py-3 shadow-[0_2px_10px_rgba(17,60,54,0.06)]">

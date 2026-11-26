@@ -34,6 +34,27 @@ async function startServer() {
     qcStatus: 'active',
     parts: mathTemplate.parts.map((p, idx) => ({ ...p, partId: `q_fixture_holdout_math_p${idx + 1}` })),
   });
+  // Add practice-pool Reading items (since official_calibration is strictly isolated from drills)
+  const practiceReadStim = officialSample.pt12.stimuli.find((s) => s.section === 'READ');
+  if (practiceReadStim) {
+    starter.stimuli.push({
+      ...structuredClone(practiceReadStim),
+      stimulusId: 'stim_prac_read_v1',
+      stimulusFamilyId: 'stim_prac_read',
+    });
+  }
+  const readTemplates = officialSample.pt12.questions.filter((q) => q.section === 'READ').slice(0, 4);
+  readTemplates.forEach((rt, idx) => {
+    starter.questions.push({
+      ...structuredClone(rt),
+      questionId: `q_prac_read_${idx + 1}_v1`,
+      questionFamilyId: `q_prac_read_${idx + 1}`,
+      poolType: 'practice',
+      qcStatus: 'active',
+      stimulusId: practiceReadStim ? 'stim_prac_read_v1' : rt.stimulusId,
+      parts: rt.parts.map((p, pIdx) => ({ ...p, partId: `q_prac_read_${idx + 1}_p${pIdx + 1}` })),
+    });
+  });
   await repo.initAndSeedIfEmpty(starter);
   await repo.importManifest(officialSample.pt12, 'system_seed');
   await repo.importManifest(officialSample.pt3, 'system_seed');

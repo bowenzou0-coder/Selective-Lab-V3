@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Play, RotateCcw } from 'lucide-react';
 import { api, peekCachedResource, type DashboardResponse } from '../api';
 import { getLocalizedSectionMixParts, useI18n } from '../i18n';
-import type { SectionCode } from '../../shared/contracts';
+import type { DifficultyPreset, SectionCode } from '../../shared/contracts';
 import {
   IsometricBookStarIllustration,
   IsometricCompassTimerIllustration,
@@ -63,8 +63,9 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
   const [pendingLaunch, setPendingLaunch] = useState<PendingLaunchSpec | null>(null);
   const [error, setError] = useState('');
 
-  // Flexible Practice Drill counts per section (default 10)
+  // Flexible Practice Drill counts per section (default 10) and blended difficulty preset
   const [drillCounts, setDrillCounts] = useState<DrillCounts>(() => drillCountsFrom(initialDashboard));
+  const [drillDifficulty, setDrillDifficulty] = useState<DifficultyPreset>('medium');
 
   const drillDefaultRef = useRef(initialDashboard?.sectionDrillQuestionCount);
 
@@ -152,7 +153,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
 
 
   const requestDrillLaunch = (drill: SectionDrill) => {
-    setPendingLaunch(buildDrillLaunchSpec(drill, drillCounts, data, t, isZh));
+    setPendingLaunch(buildDrillLaunchSpec(drill, drillCounts, data, t, isZh, drillDifficulty));
   };
 
 
@@ -416,8 +417,10 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
       <PracticeDrillsList
         data={data}
         drillCounts={drillCounts}
+        difficulty={drillDifficulty}
         launching={launching}
         onChangeCount={(section, count) => setDrillCounts((prev) => ({ ...prev, [section]: count }))}
+        onChangeDifficulty={setDrillDifficulty}
         onRequestDrill={requestDrillLaunch}
       />
 

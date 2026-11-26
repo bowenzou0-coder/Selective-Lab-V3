@@ -42,6 +42,27 @@ async function startTestServer() {
       workedExplanation: 'Holdout math fixture explanation.',
     })),
   });
+  // Seed practice-pool items across READ/MATH/THINK (official_calibration stays isolated from everyday practice)
+  const practiceExtras: QuestionItem[] = [];
+  for (const sec of ['READ', 'MATH', 'THINK'] as const) {
+    const secTemplates = officialSample.pt12.questions.filter((q) => q.section === sec).slice(0, 4);
+    secTemplates.forEach((tpl, idx) => {
+      practiceExtras.push({
+        ...structuredClone(tpl),
+        questionId: `q_seed_prac_${sec.toLowerCase()}_${idx + 1}_v1`,
+        questionFamilyId: `q_seed_prac_${sec.toLowerCase()}_${idx + 1}`,
+        poolType: 'practice',
+        qcStatus: 'active',
+        stimulusId: undefined,
+        parts: tpl.parts.map((p, pIdx) => ({
+          ...p,
+          partId: `q_seed_prac_${sec.toLowerCase()}_${idx + 1}_p${pIdx + 1}`,
+          difficultyInitial: idx < 2 ? 4.1 : 4.7,
+        })),
+      });
+    });
+  }
+  starter.questions.push(...practiceExtras);
   await repo.initAndSeedIfEmpty(starter);
   await repo.importManifest(officialSample.pt12, 'system_seed');
   await repo.importManifest(officialSample.pt3, 'system_seed');
@@ -868,21 +889,22 @@ test('Dashboard returns pool counts excluding holdouts, custom batches that laun
     };
 
     const activeQuestions = await srv.repo.listQuestions({ qcStatus: 'active' });
-    const nonHoldoutMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType !== 'benchmark_holdout');
+    const practiceMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType === 'practice');
     const holdoutMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType === 'benchmark_holdout');
+    const officialMath = activeQuestions.filter((q) => q.section === 'MATH' && q.poolType === 'official_calibration');
     const pt3Math = activeQuestions.filter((q) => q.section === 'MATH' && getQuestionBatchTag(q) === 'PT3');
     assert.ok(
-      pt3Math.length > 0 && pt3Math.every((q) => q.poolType !== 'benchmark_holdout') && holdoutMath.length > 0,
-      'Expected unified PT3 maths items in active pool and smoke holdout item excluded'
+      pt3Math.length > 0 && officialMath.length > 0 && holdoutMath.length > 0,
+      'Expected official_calibration PT1–PT3 items and holdout item isolated from practice pool'
     );
-    assert.equal(d1.poolCounts.MATH.live, nonHoldoutMath.length);
-    assert.equal(d1.poolCounts.MATH.unseen, nonHoldoutMath.length);
+    assert.equal(d1.poolCounts.MATH.live, practiceMath.length);
+    assert.equal(d1.poolCounts.MATH.unseen, practiceMath.length);
     assert.equal(d1.batchCounts.PT3.MATH, pt3Math.length);
     assert.ok(d1.poolCounts.READ.live > 0 && d1.poolCounts.THINK.live > 0 && d1.poolCounts.WRIT.live > 0);
     assert.deepEqual(d1.customBatches, []);
 
     // Verify autoRetireMastered reduces poolCounts when a question is certified retained
-    const sampleMath = nonHoldoutMath[0];
+    const sampleMath = practiceMath[0];
     await srv.repo.upsertQuestionEvidence(
       [
         {
@@ -912,8 +934,8 @@ test('Dashboard returns pool counts excluding holdouts, custom batches that laun
     assert.equal(dashAfterRetain.status, 200);
     const dRetain = (await dashAfterRetain.json()) as typeof d1;
     // Default poolPolicy.autoRetireMastered is false: item stays live, but no longer unseen
-    assert.equal(dRetain.poolCounts.MATH.live, nonHoldoutMath.length);
-    assert.equal(dRetain.poolCounts.MATH.unseen, nonHoldoutMath.length - 1);
+    assert.equal(dRetain.poolCounts.MATH.live, practiceMath.length);
+    assert.equal(dRetain.poolCounts.MATH.unseen, practiceMath.length - 1);
 
     // Enable autoRetireMastered and confirm mastered item is excluded from live poolCounts
     const cfg0Res = await fetch(`${srv.baseUrl}/api/admin/config`, { headers: { Cookie: adminCookie } });
@@ -930,8 +952,8 @@ test('Dashboard returns pool counts excluding holdouts, custom batches that laun
     });
     assert.equal(dashAutoRetire.status, 200);
     const dAutoRetire = (await dashAutoRetire.json()) as typeof d1;
-    assert.equal(dAutoRetire.poolCounts.MATH.live, nonHoldoutMath.length - 1);
-    assert.equal(dAutoRetire.poolCounts.MATH.unseen, nonHoldoutMath.length - 1);
+    assert.equal(dAutoRetire.poolCounts.MATH.live, practiceMath.length - 1);
+    assert.equal(dAutoRetire.poolCounts.MATH.unseen, practiceMath.length - 1);
 
     // 2. Auto-calibrated daily limits & goal minutes come from dailyFocusPlan (not raw sessionDefaults) and match daily_adaptive session creation
     assert.equal(d1.autoCalibrateEnabled, true);
@@ -1152,11 +1174,11 @@ test('Multi-account student isolation, admin learner monitoring switcher, primar
     assert.equal(sisterDash1.status, 200);
 
     const activeQuestions = await srv.repo.listQuestions({ qcStatus: 'active' });
-    const nonHoldoutMath = activeQuestions.filter(
-      (q) => q.section === 'MATH' && q.poolType !== 'benchmark_holdout',
+    const practiceMath = activeQuestions.filter(
+      (q) => q.section === 'MATH' && q.poolType === 'practice',
     );
-    const sampleQ1 = nonHoldoutMath[0];
-    const sampleQ2 = nonHoldoutMath[1];
+    const sampleQ1 = practiceMath[0];
+    const sampleQ2 = practiceMath[1];
 
     // Record completion evidence on sampleQ1 for sister, and sampleQ2 for admin
     await srv.repo.upsertQuestionEvidence(
@@ -1231,8 +1253,8 @@ test('Multi-account student isolation, admin learner monitoring switcher, primar
     const fd = (await friendDash.json()) as {
       poolCounts: Record<SectionCode, { live: number; unseen: number }>;
     };
-    assert.equal(sd.poolCounts.MATH.unseen, nonHoldoutMath.length - 1);
-    assert.equal(fd.poolCounts.MATH.unseen, nonHoldoutMath.length);
+    assert.equal(sd.poolCounts.MATH.unseen, practiceMath.length - 1);
+    assert.equal(fd.poolCounts.MATH.unseen, practiceMath.length);
 
     // 2. Students cannot call multi-learner admin endpoints
     const forbiddenLearners = await fetch(`${srv.baseUrl}/api/admin/learners`, {
@@ -2395,6 +2417,358 @@ test('deleteUserAccount revokes active in-progress sessions/tokens immediately a
     } else {
       delete process.env.ALLOW_LOCAL_DEV_PIN;
     }
+    await srv.close();
+  }
+});
+
+test('Official pool isolation, blended difficulty presets, benchmark 100-correct lockout, threshold config, and admin unlock override', async () => {
+  const srv = await startTestServer();
+  const studentId = 'google_lockout_student';
+  const studentCookie = signedCookie('lockout_student', 'student');
+  const adminCookie = signedCookie('lockout_admin', 'admin');
+
+  const completeBenchmarkExam = async (sid: string) => {
+    for (let guard = 0; guard < 10; guard += 1) {
+      const getRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}`, {
+        headers: { Cookie: studentCookie },
+      });
+      assert.equal(getRes.status, 200);
+      const { session } = (await getRes.json()) as {
+        session: {
+          status: string;
+          checkpointRevision?: number;
+          sectionState?: {
+            currentSectionIndex: number;
+            phase: 'active' | 'on_break';
+            sections: { startIndex: number }[];
+          };
+        };
+      };
+      if (session.status === 'submitted') return;
+      if (session.sectionState?.phase === 'on_break') {
+        const startRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+          body: JSON.stringify({ expectedRevision: session.checkpointRevision }),
+        });
+        assert.equal(startRes.status, 200);
+        continue;
+      }
+      const curIdx = session.sectionState
+        ? session.sectionState.sections[session.sectionState.currentSectionIndex]?.startIndex ?? 0
+        : 0;
+      const compRes = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/section/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+        body: JSON.stringify({
+          expectedRevision: session.checkpointRevision,
+          checkpoint: {
+            currentIndex: curIdx,
+            elapsedSec: 15,
+            answersByPartId: {},
+            flaggedQuestionIds: [],
+          },
+        }),
+      });
+      assert.equal(compRes.status, 200);
+      const compBody = (await compRes.json()) as { finishedExam: boolean };
+      if (compBody.finishedExam) return;
+    }
+    throw new Error('Benchmark exam did not finish within guard iterations');
+  };
+
+  try {
+    // Seed a dedicated benchmark_holdout batch with 1 question per section alongside seeded official_calibration
+    const active = await srv.repo.listQuestions({ qcStatus: 'active' });
+    const pick = (sec: SectionCode) =>
+      structuredClone(active.find((q) => q.section === sec && q.poolType === 'practice')!);
+    const holdoutImport = await srv.repo.importManifest(
+      {
+        manifestVersion: '1.0',
+        batchLabel: '2026-11-26_holdout_lock',
+        defaultPoolType: 'benchmark_holdout',
+        defaultQcStatus: 'active',
+        stimuli: [],
+        questions: (['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[]).map((sec) => {
+          const base = pick(sec);
+          return {
+            ...base,
+            questionId: `bh_lock_${sec.toLowerCase()}_v1`,
+            questionFamilyId: `bh_lock_${sec.toLowerCase()}`,
+            version: 1,
+            poolType: 'benchmark_holdout' as const,
+            qcStatus: 'active' as const,
+            batchId: undefined,
+            batchLabel: '2026-11-26_holdout_lock',
+            parts: base.parts.map((p, idx) => ({ ...p, partId: `bh_lock_${sec.toLowerCase()}_p${idx + 1}` })),
+          };
+        }),
+      },
+      'test_seed'
+    );
+    const holdoutBatchId = holdoutImport.batch.batchId;
+
+    const submitEmpty = async (sid: string) => {
+      const res = await fetch(`${srv.baseUrl}/api/student/sessions/${sid}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+        body: JSON.stringify({
+          checkpoint: { currentIndex: 0, elapsedSec: 5, answersByPartId: {}, flaggedQuestionIds: [] },
+        }),
+      });
+      assert.equal(res.status, 200);
+    };
+
+    // 1. Diagnostic pulls official_calibration; practice drill + fresh-pool mock pull ONLY practice
+    const diagRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'diagnostic' }),
+    });
+    assert.equal(diagRes.status, 201);
+    const diag = (await diagRes.json()) as { sessionId: string; session: { plannedQuestionIds: string[] } };
+    const metaById = new Map((await srv.repo.listQuestionMeta()).map((q) => [q.questionId, q]));
+    assert.ok(diag.session.plannedQuestionIds.length > 0);
+    assert.ok(
+      diag.session.plannedQuestionIds.every((id) => metaById.get(id)?.poolType === 'official_calibration'),
+      'Starter diagnostic must pull from official_calibration'
+    );
+    await submitEmpty(diag.sessionId);
+
+    const drillRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH', difficulty: 'hard' }),
+    });
+    assert.equal(drillRes.status, 201);
+    const drill = (await drillRes.json()) as {
+      sessionId: string;
+      session: { plannedQuestionIds: string[]; difficultyPreset?: string };
+    };
+    assert.equal(drill.session.difficultyPreset, 'hard');
+    assert.ok(
+      drill.session.plannedQuestionIds.every((id) => metaById.get(id)?.poolType === 'practice'),
+      'Practice drill must never pull official_calibration or benchmark_holdout'
+    );
+    await submitEmpty(drill.sessionId);
+
+    const poolMockRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        mode: 'section_drill',
+        mockSource: 'pool',
+        sectionFilter: 'MATH',
+        difficulty: 'easy',
+        timeMultiplier: 1,
+      }),
+    });
+    assert.equal(poolMockRes.status, 201);
+    const poolMock = (await poolMockRes.json()) as {
+      sessionId: string;
+      session: { plannedQuestionIds: string[]; difficultyPreset?: string };
+    };
+    assert.equal(poolMock.session.difficultyPreset, 'easy');
+    assert.ok(
+      poolMock.session.plannedQuestionIds.every((id) => metaById.get(id)?.poolType === 'practice'),
+      'Fresh-pool mock must pull strictly from practice pool'
+    );
+    await submitEmpty(poolMock.sessionId);
+
+    // 2. Benchmarks endpoint exposes both official_calibration & benchmark_holdout and starts unlocked
+    const benchPreRes = await fetch(`${srv.baseUrl}/api/student/benchmarks`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(benchPreRes.status, 200);
+    const benchPre = (await benchPreRes.json()) as {
+      benchmarkBatches: { batchId: string; poolType: string }[];
+      benchmarkLock: {
+        isLocked: boolean;
+        earnedCorrect: number;
+        requiredCorrect: number;
+        adminUnlocked: boolean;
+      };
+    };
+    const officialBatch = benchPre.benchmarkBatches.find((b) => b.poolType === 'official_calibration');
+    const holdoutBatch = benchPre.benchmarkBatches.find((b) => b.batchId === holdoutBatchId);
+    assert.ok(officialBatch, 'official_calibration paper must be listed on /api/student/benchmarks');
+    assert.ok(holdoutBatch, 'benchmark_holdout paper must be listed on /api/student/benchmarks');
+    assert.equal(benchPre.benchmarkLock.isLocked, false);
+    assert.equal(benchPre.benchmarkLock.requiredCorrect, 100);
+
+    // 3. Complete 1st benchmark (holdout) -> lockout engages (0 / 100) and blocks 2nd benchmark
+    const b1Res = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'benchmark_exam', batchId: holdoutBatchId }),
+    });
+    assert.equal(b1Res.status, 201);
+    const b1 = (await b1Res.json()) as { sessionId: string };
+    await completeBenchmarkExam(b1.sessionId);
+
+    const benchLockedRes = await fetch(`${srv.baseUrl}/api/student/benchmarks`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(benchLockedRes.status, 200);
+    const benchLocked = (await benchLockedRes.json()) as {
+      reports: { batchId?: string }[];
+      benchmarkLock: {
+        isLocked: boolean;
+        earnedCorrect: number;
+        requiredCorrect: number;
+        remainingCorrect: number;
+        adminUnlocked: boolean;
+      };
+    };
+    assert.equal(benchLocked.reports.length, 1);
+    assert.equal(benchLocked.reports[0].batchId, holdoutBatchId);
+    assert.equal(benchLocked.benchmarkLock.isLocked, true);
+    assert.equal(benchLocked.benchmarkLock.earnedCorrect, 0);
+    assert.equal(benchLocked.benchmarkLock.requiredCorrect, 100);
+    assert.equal(benchLocked.benchmarkLock.remainingCorrect, 100);
+
+    const blockedRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'benchmark_exam', batchId: officialBatch.batchId }),
+    });
+    assert.equal(blockedRes.status, 403);
+    const blockedBody = (await blockedRes.json()) as { code?: string };
+    assert.equal(blockedBody.code, 'benchmark_locked');
+
+    // 4. Lower benchmark threshold to 2 via /api/admin/config, earn >= 2 live correct practice answers -> unlocks
+    const cfgRes = await fetch(`${srv.baseUrl}/api/admin/config`, {
+      headers: { Cookie: adminCookie },
+    });
+    const cfgData = (await cfgRes.json()) as { active: { config: LearningConfig } };
+    const updCfgRes = await fetch(`${srv.baseUrl}/api/admin/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        config: {
+          ...cfgData.active.config,
+          benchmarkPolicy: { requiredCorrectPracticeAnswers: 2 },
+        },
+        notes: 'lower benchmark lockout threshold for test',
+      }),
+    });
+    assert.equal(updCfgRes.status, 201);
+
+    const earnDrillRes = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'section_drill', sectionFilter: 'MATH' }),
+    });
+    assert.equal(earnDrillRes.status, 201);
+    const earnDrill = (await earnDrillRes.json()) as {
+      sessionId: string;
+      session: { plannedQuestionIds: string[] };
+    };
+    const allQs = await srv.repo.listQuestions({ qcStatus: 'active' });
+    const qById = new Map(allQs.map((q) => [q.questionId, q]));
+    const correctAnswers: Record<string, string> = {};
+    for (const qid of earnDrill.session.plannedQuestionIds.slice(0, 3)) {
+      const q = qById.get(qid);
+      if (!q) continue;
+      for (const p of q.parts) {
+        if (p.correctAnswerKey) correctAnswers[p.partId] = p.correctAnswerKey;
+      }
+    }
+    const submitEarnRes = await fetch(`${srv.baseUrl}/api/student/sessions/${earnDrill.sessionId}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({
+        checkpoint: {
+          currentIndex: 0,
+          elapsedSec: 30,
+          answersByPartId: correctAnswers,
+          flaggedQuestionIds: [],
+        },
+      }),
+    });
+    assert.equal(submitEarnRes.status, 200);
+
+    const benchUnlockedRes = await fetch(`${srv.baseUrl}/api/student/benchmarks`, {
+      headers: { Cookie: studentCookie },
+    });
+    const benchUnlocked = (await benchUnlockedRes.json()) as {
+      benchmarkLock: { isLocked: boolean; earnedCorrect: number; requiredCorrect: number };
+    };
+    assert.equal(benchUnlocked.benchmarkLock.isLocked, false);
+    assert.equal(benchUnlocked.benchmarkLock.requiredCorrect, 2);
+    assert.ok(benchUnlocked.benchmarkLock.earnedCorrect >= 2);
+
+    // 5. Complete 2nd benchmark (official_calibration) -> lock re-arms immediately
+    const b2Res = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'benchmark_exam', batchId: officialBatch.batchId }),
+    });
+    assert.equal(b2Res.status, 201);
+    const b2 = (await b2Res.json()) as { sessionId: string };
+    await completeBenchmarkExam(b2.sessionId);
+
+    const benchRelocked = (await (
+      await fetch(`${srv.baseUrl}/api/student/benchmarks`, { headers: { Cookie: studentCookie } })
+    ).json()) as { benchmarkLock: { isLocked: boolean; earnedCorrect: number } };
+    assert.equal(benchRelocked.benchmarkLock.isLocked, true);
+    assert.equal(benchRelocked.benchmarkLock.earnedCorrect, 0);
+
+    // 6. Non-admin cannot unlock; Admin unlock override allows 3rd benchmark immediately
+    const studentUnlockRes = await fetch(`${srv.baseUrl}/api/admin/benchmarks/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ studentId, unlock: true }),
+    });
+    assert.equal(studentUnlockRes.status, 403);
+
+    const adminUnlockRes = await fetch(`${srv.baseUrl}/api/admin/benchmarks/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ studentId, unlock: true }),
+    });
+    assert.equal(adminUnlockRes.status, 200);
+    const adminUnlockBody = (await adminUnlockRes.json()) as {
+      ok: boolean;
+      benchmarkLock: { isLocked: boolean; adminUnlocked: boolean };
+    };
+    assert.equal(adminUnlockBody.ok, true);
+    assert.equal(adminUnlockBody.benchmarkLock.isLocked, false);
+    assert.equal(adminUnlockBody.benchmarkLock.adminUnlocked, true);
+
+    const b3Res = await fetch(`${srv.baseUrl}/api/student/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: studentCookie },
+      body: JSON.stringify({ mode: 'benchmark_exam', batchId: holdoutBatchId }),
+    });
+    assert.equal(b3Res.status, 201);
+
+    // 7. Progress CSV/JSON export is strictly admin-only (prevents student question scraping)
+    const studentExportJson = await fetch(`${srv.baseUrl}/api/student/export?format=json`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert.equal(studentExportJson.status, 403);
+    const studentExportAdminRoute = await fetch(
+      `${srv.baseUrl}/api/admin/export/progress?format=csv&studentId=${encodeURIComponent(studentId)}`,
+      { headers: { Cookie: studentCookie } }
+    );
+    assert.equal(studentExportAdminRoute.status, 403);
+
+    const adminExportCsv = await fetch(
+      `${srv.baseUrl}/api/admin/export/progress?format=csv&studentId=${encodeURIComponent(studentId)}`,
+      { headers: { Cookie: adminCookie } }
+    );
+    assert.equal(adminExportCsv.status, 200);
+    assert.match(adminExportCsv.headers.get('content-type') || '', /text\/csv/);
+    const adminExportJson = await fetch(
+      `${srv.baseUrl}/api/admin/export/progress?format=json&studentId=${encodeURIComponent(studentId)}`,
+      { headers: { Cookie: adminCookie } }
+    );
+    assert.equal(adminExportJson.status, 200);
+    const exportedPayload = (await adminExportJson.json()) as { studentId: string; sessions: unknown[] };
+    assert.equal(exportedPayload.studentId, studentId);
+    assert.ok(exportedPayload.sessions.length >= 2);
+  } finally {
     await srv.close();
   }
 });

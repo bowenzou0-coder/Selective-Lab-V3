@@ -7,12 +7,14 @@ import {
   FileText,
   Info,
   Loader2,
+  Lock,
   Play,
   RefreshCw,
   ShieldCheck,
   Sparkles,
   TrendingDown,
   TrendingUp,
+  Unlock,
 } from 'lucide-react';
 import { api, type CustomBatchOption } from '../api';
 import { useCachedResource } from '../useCachedResource';
@@ -31,6 +33,7 @@ import {
 
 interface BenchmarksViewProps {
   onOpenSession: (sessionId: string, isLocked?: boolean) => void;
+  isAdmin?: boolean;
 }
 
 const BAND_ORDER: NswPerformanceBand[] = ['lowest_50', 'next_25', 'next_15', 'top_10'];
@@ -59,7 +62,7 @@ function verdictHeroClass(tier: ReturnType<typeof buildParentVerdict>['tier']): 
   return 'bg-[#FAF8F5] border-[#E5DFD5]';
 }
 
-export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
+export function BenchmarksView({ onOpenSession, isAdmin = false }: BenchmarksViewProps) {
   const { t, isZh, sectionLabel, formatDate } = useI18n();
   const {
     data: hub,
@@ -81,11 +84,58 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
   const [showAllAboveCutoff, setShowAllAboveCutoff] = useState(false);
   const [pendingBatch, setPendingBatch] = useState<CustomBatchOption | null>(null);
   const [launching, setLaunching] = useState(false);
+  const [unlockBusy, setUnlockBusy] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [analyzeError, setAnalyzeError] = useState('');
 
   const reports = hub?.reports ?? [];
   const batches = hub?.benchmarkBatches ?? [];
+  const benchmarkLock = hub?.benchmarkLock;
+  const isBenchmarkLocked = Boolean(benchmarkLock?.isLocked);
+
+  const displayBatchTitle = useCallback(
+    (batchLabel: string): string => {
+      if (batchLabel === 'official_pt1') return t('home.paperPT1');
+      if (batchLabel === 'official_pt2') return t('home.paperPT2');
+      if (batchLabel === 'official_pt3') return t('home.paperPT3');
+      return batchLabel;
+    },
+    [t]
+  );
+
+  const reportsForBatch = useCallback(
+    (b: CustomBatchOption): BenchmarkReportRecord[] =>
+      reports.filter(
+        (r) =>
+          (r.batchId && r.batchId === b.batchId) ||
+          r.batchLabel === b.batchLabel ||
+          r.batchLabel === displayBatchTitle(b.batchLabel)
+      ),
+    [reports, displayBatchTitle]
+  );
+
+  const unseenBatches = useMemo(
+    () => batches.filter((b) => reportsForBatch(b).length === 0),
+    [batches, reportsForBatch]
+  );
+
+  const completedBatches = useMemo(
+    () => batches.filter((b) => reportsForBatch(b).length > 0),
+    [batches, reportsForBatch]
+  );
+
+  const handleToggleAdminUnlock = async (unlock: boolean) => {
+    setUnlockBusy(true);
+    setLaunchError('');
+    try {
+      const res = await api.setAdminBenchmarkUnlock(undefined, unlock);
+      setHub((prev) => (prev ? { ...prev, benchmarkLock: res.benchmarkLock } : prev));
+    } catch (err) {
+      setLaunchError(err instanceof Error ? err.message : t('bm.unlockError'));
+    } finally {
+      setUnlockBusy(false);
+    }
+  };
 
   const activeReport: BenchmarkReportRecord | null = useMemo(() => {
     if (reports.length === 0) return null;
@@ -281,7 +331,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
       <ConfirmDialog
         open={pendingBatch !== null}
         eyebrow={t('bm.modalEyebrow')}
-        title={pendingBatch?.batchLabel}
+        title={pendingBatch ? displayBatchTitle(pendingBatch.batchLabel) : undefined}
         busy={launching}
         confirmIcon={<Play className="w-3.5 h-3.5 fill-current" />}
         confirmLabel={launching ? t('home.modalStarting') : t('bm.confirmStart')}
@@ -318,8 +368,109 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
 
       {error && <StatusBanner size="md">{error}</StatusBanner>}
 
-      {/* Section 1: Reserved Official Benchmark Holdout Papers */}
-      <section className="space-y-3">
+      {/* Benchmark Unlock Progress Bar (active after completing at least one benchmark) */}
+      {benchmarkLock && benchmarkLock.lastBenchmarkCompletedAtIso && benchmarkLock.requiredCorrect > 0 && (
+        <section
+          aria-label={t('bm.lockSectionAria')}
+          className={`rounded-[16px] border p-5 space-y-3.5 ${
+            benchmarkLock.isLocked
+              ? 'bg-[#FAF8F5] border-[#E5DFD5]'
+              : 'bg-[#E5F0EA]/70 border-[#C5DDD1]'
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5 min-w-0">
+              {benchmarkLock.isLocked ? (
+                <Lock className="w-4 h-4 text-[#A35116] shrink-0 mt-0.5" />
+              ) : (
+                <Unlock className="w-4 h-4 text-[#1D6346] shrink-0 mt-0.5" />
+              )}
+              <div className="space-y-0.5 min-w-0">
+                <div className="font-sans-display font-semibold text-sm text-[#113C36] tabular-nums">
+                  {benchmarkLock.isLocked
+                    ? t('bm.lockProgressTitle', {
+                        earned: benchmarkLock.earnedCorrect,
+                        required: benchmarkLock.requiredCorrect,
+                      })
+                    : benchmarkLock.adminUnlocked
+                      ? t('bm.lockAdminUnlockedTitle')
+                      : t('bm.lockUnlockedTitle', {
+                          earned: benchmarkLock.earnedCorrect,
+                          required: benchmarkLock.requiredCorrect,
+                        })}
+                </div>
+                <p className="text-xs text-[#4A5955] leading-relaxed">
+                  {benchmarkLock.isLocked
+                    ? t('bm.lockProgressDesc', { remaining: benchmarkLock.remainingCorrect })
+                    : benchmarkLock.adminUnlocked
+                      ? t('bm.lockAdminUnlockedDesc')
+                      : t('bm.lockUnlockedDesc')}
+                </p>
+              </div>
+            </div>
+
+            {isAdmin && (
+              <div className="shrink-0">
+                {benchmarkLock.isLocked ? (
+                  <button
+                    type="button"
+                    disabled={unlockBusy}
+                    onClick={() => handleToggleAdminUnlock(true)}
+                    className="px-3.5 py-1.5 rounded-[10px] border border-[#113C36] bg-white hover:bg-[#E5F0EA] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-tactile disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>{unlockBusy ? t('cfg.saving') : t('bm.adminUnlockBtn')}</span>
+                  </button>
+                ) : benchmarkLock.adminUnlocked && benchmarkLock.remainingCorrect > 0 ? (
+                  <button
+                    type="button"
+                    disabled={unlockBusy}
+                    onClick={() => handleToggleAdminUnlock(false)}
+                    className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#4A5955] inline-flex items-center gap-1.5 cursor-pointer transition-tactile disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>{unlockBusy ? t('cfg.saving') : t('bm.adminRelockBtn')}</span>
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <div
+              role="progressbar"
+              aria-label={t('bm.lockSectionAria')}
+              aria-valuemin={0}
+              aria-valuemax={benchmarkLock.requiredCorrect}
+              aria-valuenow={Math.min(benchmarkLock.earnedCorrect, benchmarkLock.requiredCorrect)}
+              className="h-2.5 w-full rounded-full bg-[#E5DFD5] overflow-hidden"
+            >
+              <div
+                className={`h-full rounded-full transition-[width] duration-300 ease-out ${
+                  benchmarkLock.isLocked ? 'bg-[#113C36]' : 'bg-[#1D6346]'
+                }`}
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.round((benchmarkLock.earnedCorrect / Math.max(1, benchmarkLock.requiredCorrect)) * 100)
+                  )}%`,
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#615E57] tabular-nums">
+              <span>
+                {t('bm.lockSinceDate', { date: formatDate(benchmarkLock.lastBenchmarkCompletedAtIso) })}
+              </span>
+              <span>
+                {Math.min(benchmarkLock.earnedCorrect, benchmarkLock.requiredCorrect)} / {benchmarkLock.requiredCorrect}
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Section 1: Available Unseen Official & Holdout Benchmark Papers */}
+      <section className="space-y-3.5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
             {t('bm.sitExamTitle')}
@@ -331,30 +482,38 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
           <div className="p-5 rounded-[14px] bg-[#FAF8F5] border border-[#E5DFD5] text-sm text-[#4A5955]">
             {t('bm.noHoldoutBatches')}
           </div>
+        ) : unseenBatches.length === 0 ? (
+          <div className="p-5 rounded-[14px] bg-[#E5F0EA]/55 border border-[#C5DDD1] text-sm text-[#113C36]">
+            {t('bm.allPapersCompleted')}
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {batches.map((b, idx) => {
+            {unseenBatches.map((b, idx) => {
+              const isOfficial = b.poolType === 'official_calibration';
               const isHard =
-                b.batchLabel.includes('2026-11-23') ||
-                b.batchLabel.includes('b11') ||
-                b.batchLabel.includes('b12');
-              const completedCount = reports.filter((r) => r.batchLabel === b.batchLabel).length;
+                !isOfficial &&
+                (b.batchLabel.includes('2026-11-23') ||
+                  b.batchLabel.includes('b11') ||
+                  b.batchLabel.includes('b12'));
+              const tierLabel = isOfficial
+                ? t('bm.tierOfficial')
+                : isHard
+                  ? t('bm.tierHard')
+                  : t('bm.tierTimed');
               return (
                 <div
                   key={b.batchId}
                   className="p-5 rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] flex flex-col justify-between gap-4"
                 >
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="px-2.5 py-0.5 rounded-full bg-white border border-[#E5DFD5] text-[11px] font-sans-display font-semibold text-[#113C36]">
-                        {t('bm.paperBadge', { num: idx + 1 })}
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#615E57]">
+                      <span className="font-medium text-[#1D6346]">
+                        {isOfficial ? t('bm.officialPaperTag') : t('bm.paperBadge', { num: idx + 1 })}
                       </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#E5F0EA] text-[#1D6346] text-[11px] font-sans-display font-semibold">
-                        {isHard ? t('bm.tierHard') : t('bm.tierTimed')}
-                      </span>
+                      <span className="font-medium text-[#4A5955]">{tierLabel}</span>
                     </div>
                     <h3 className="font-sans-display font-semibold text-[17px] text-[#113C36]">
-                      {b.batchLabel}
+                      {displayBatchTitle(b.batchLabel)}
                     </h3>
                     <p className="text-xs text-[#4A5955] leading-relaxed">
                       {t('bm.paperBreakdown', {
@@ -366,23 +525,23 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#E5DFD5]">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#E5DFD5]">
                     <div className="flex items-center gap-2 text-xs text-[#4A5955] tabular-nums">
                       <Clock className="w-3.5 h-3.5 text-[#615E57]" />
                       <span>{t('bm.lockedTimeShort')}</span>
-                      {completedCount > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-[#E5F3EC] text-[#1D6346] font-medium">
-                          {t('bm.completedTimes', { count: completedCount })}
-                        </span>
-                      )}
                     </div>
                     <button
                       type="button"
+                      disabled={isBenchmarkLocked}
                       onClick={() => setPendingBatch(b)}
-                      className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
+                      className="px-4 py-2 rounded-[10px] bg-[#113C36] hover:bg-[#0B2B26] text-white text-xs font-sans-display font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-tactile disabled:opacity-45 disabled:cursor-not-allowed"
                     >
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>{t('bm.startBenchmark')}</span>
+                      {isBenchmarkLocked ? (
+                        <Lock className="w-3.5 h-3.5" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                      )}
+                      <span>{isBenchmarkLocked ? t('bm.lockedCta') : t('bm.startBenchmark')}</span>
                     </button>
                   </div>
                 </div>
@@ -392,8 +551,83 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
         )}
       </section>
 
+      {/* Section 1b: Completed Benchmark Papers */}
+      {completedBatches.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
+              {t('bm.completedPapersTitle')}
+            </h2>
+            <span className="text-xs text-[#615E57] tabular-nums">
+              {t('bm.completedPapersCount', { count: completedBatches.length })}
+            </span>
+          </div>
+
+          <div className="border-t border-b border-[#E5DFD5] divide-y divide-[#E5DFD5]">
+            {completedBatches.map((b) => {
+              const matchingReports = reportsForBatch(b);
+              const latestReport = matchingReports[0];
+              const isOfficial = b.poolType === 'official_calibration';
+              return (
+                <div
+                  key={b.batchId}
+                  className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#1D6346] shrink-0" />
+                      <span className="font-sans-display font-semibold text-sm text-[#113C36]">
+                        {displayBatchTitle(b.batchLabel)}
+                      </span>
+                      <span className="text-xs text-[#615E57] tabular-nums">
+                        {t('bm.completedTimes', { count: matchingReports.length })}
+                      </span>
+                    </div>
+                    <div className="pl-6 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[#4A5955] tabular-nums">
+                      <span>{isOfficial ? t('bm.tierOfficial') : t('bm.tierTimed')}</span>
+                      {latestReport && (
+                        <>
+                          <span>{formatDate(latestReport.completedAtIso)}</span>
+                          <span className="font-sans-display font-semibold text-[#113C36]">
+                            {latestReport.scaledScore120.toFixed(1)} / 120
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pl-6 sm:pl-0 shrink-0">
+                    {latestReport && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedSessionId(latestReport.sessionId);
+                          document.getElementById('saved-benchmark-reports')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] cursor-pointer whitespace-nowrap transition-tactile"
+                      >
+                        {t('bm.viewReportBtn')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={isBenchmarkLocked}
+                      onClick={() => setPendingBatch(b)}
+                      className="px-3 py-1.5 rounded-[10px] border border-[#CFC6B9] bg-[#FAF8F5] hover:bg-[#F3EFE8] text-xs font-sans-display font-semibold text-[#4A5955] hover:text-[#113C36] inline-flex items-center gap-1 cursor-pointer whitespace-nowrap transition-tactile disabled:opacity-45 disabled:cursor-not-allowed"
+                    >
+                      {isBenchmarkLocked && <Lock className="w-3 h-3" />}
+                      <span>{t('bm.resitPaperBtn')}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Section 2 & 3: Saved Reports Archive + Official NSW Selective Report Card */}
-      <section className="space-y-5">
+      <section id="saved-benchmark-reports" className="space-y-5 scroll-mt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
             {t('bm.savedReportsTitle')}
@@ -431,7 +665,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                     }`}
                   >
                     <div className="flex items-center gap-2 text-xs font-sans-display font-semibold tabular-nums">
-                      <span>{rep.batchLabel}</span>
+                      <span>{displayBatchTitle(rep.batchLabel)}</span>
                       <span
                         className={`px-1.5 py-0.5 rounded text-[11px] ${
                           isSelected ? 'bg-white/15 text-white' : 'bg-[#E5F0EA] text-[#1D6346]'
@@ -476,7 +710,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
                         <span className="px-2.5 py-0.5 rounded-full bg-white/85 border border-[#C5DDD1] font-sans-display font-semibold text-[#1D6346] text-[11px]">
                           {t('bm.officialReportBadge')}
                         </span>
-                        <span className="font-medium text-[#113C36]">{activeReport.batchLabel}</span>
+                        <span className="font-medium text-[#113C36]">{displayBatchTitle(activeReport.batchLabel)}</span>
                         <span className="text-[#615E57]">{formatDate(activeReport.completedAtIso, true)}</span>
                         {activeReport.writingStatus === 'pending' && (
                           <span className="px-2.5 py-0.5 rounded-full bg-[#FDF0E2] border border-[#A35116]/25 text-[#A35116] font-sans-display font-semibold text-[11px]">

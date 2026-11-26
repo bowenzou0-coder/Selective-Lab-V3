@@ -1,5 +1,5 @@
 export type InlineSpan = {
-  type: 'text' | 'bold' | 'italic';
+  type: 'text' | 'bold' | 'italic' | 'sup';
   text: string;
 };
 
@@ -119,8 +119,40 @@ export function splitSpeakerPrefix(line: string): { speaker: string; rest: strin
 const INLINE_TOKEN_RE =
   /\*\*(\S(?:[^\n]*?\S)?)\*\*|(?:^|(?<=[\s([{"'“‘—–-]))\*(\S[^\n*]*?\S|\S)\*(?=$|[\s.,;:!?)\]}"'”’—–-])/g;
 
+// `36 cm2` / `Area (m2)` → `36 cm²` / `Area (m²)`: unit powers only right after a number or "(".
+const UNIT_POWER_RE = /(?<=(?:\d|\()\s?)(mm|cm|m|km)([23])(?![0-9A-Za-z])/g;
+// `x^2`, `2^10`, `10^-3`, `a^{n+1}` → superscript (base must touch the caret).
+const CARET_EXPONENT_RE = /(?<=[A-Za-z0-9)\]])\^(?:\{([^{}\n]{1,12})\}|([-−]?\d{1,3}|[a-z])(?![A-Za-z0-9]))/g;
+
+/** Rewrites plain-text unit powers (`cm2`, `km3`) to Unicode `cm²` / `km³`. */
+export function normalizeUnitPowers(text: string): string {
+  return text.replace(UNIT_POWER_RE, (_, unit: string, power: string) => `${unit}${power === '2' ? '²' : '³'}`);
+}
+
+/** Splits plain text into text/superscript spans (caret exponents), after unit-power normalisation. */
+export function parseMathSpans(text: string): InlineSpan[] {
+  const normalized = normalizeUnitPowers(text);
+  const spans: InlineSpan[] = [];
+  let lastIndex = 0;
+  CARET_EXPONENT_RE.lastIndex = 0;
+  for (const match of normalized.matchAll(CARET_EXPONENT_RE)) {
+    const at = match.index ?? 0;
+    if (at > lastIndex) spans.push({ type: 'text', text: normalized.slice(lastIndex, at) });
+    spans.push({ type: 'sup', text: (match[1] ?? match[2]).replace(/^-/, '−') });
+    lastIndex = at + match[0].length;
+  }
+  if (lastIndex < normalized.length) spans.push({ type: 'text', text: normalized.slice(lastIndex) });
+  return spans;
+}
+
 export function parseInlineSpans(text: string): InlineSpan[] {
   if (!text) return [];
+  return parseEmphasisSpans(text).flatMap((span) =>
+    span.type === 'text' ? parseMathSpans(span.text) : [{ ...span, text: normalizeUnitPowers(span.text) }]
+  );
+}
+
+function parseEmphasisSpans(text: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let lastIndex = 0;
 

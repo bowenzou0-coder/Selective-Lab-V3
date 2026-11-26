@@ -9,6 +9,7 @@ import {
   type LearningConfig,
 } from '../../shared/contracts.ts';
 import type { AppContext } from '../context.ts';
+import { computeBenchmarkLockStatus } from '../sessionLifecycle.ts';
 import { extractLearnerDailyView, sanitizeDailyPlanPatch } from './studentSettings.ts';
 
 
@@ -198,12 +199,19 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         repo.getLearnerPreferences(targetStudentId),
       ]);
       const effectiveConfig = resolveEffectiveLearningConfig(configData.config, prefs);
+      const benchmarkLock = await computeBenchmarkLockStatus({
+        repo,
+        studentId: targetStudentId,
+        config: configData.config,
+        learnerPrefs: prefs,
+      });
       res.json({
         studentId: targetStudentId,
         preferences: prefs,
         effectiveConfig: extractLearnerDailyView(effectiveConfig),
         globalDefaults: extractLearnerDailyView(configData.config),
         adminOverrideLocked: Boolean(prefs?.adminOverrideLocked),
+        benchmarkLock,
       });
     } catch (err) {
       console.error('GET /api/admin/learners/:studentId/preferences error:', err);
@@ -290,7 +298,7 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
         skillStates: () => repo.getSkillStates(targetStudentId),
         evidenceMap: () => repo.getQuestionEvidence(targetStudentId),
         questionMemory: () => repo.getQuestionMemory(targetStudentId),
-        questions: () => repo.listSelectionQuestions({ qcStatus: 'active' }),
+        questions: () => repo.listSelectionQuestions({ qcStatus: 'active', poolType: 'practice' }),
         config: effectiveConfig,
       });
       res.json({ studentId: targetStudentId, plan });
@@ -308,7 +316,7 @@ export function registerAdminLearnerRoutes(app: Express, ctx: AppContext): void 
       const [configData, learnerPrefs, questions, skillStates, evidenceMap, questionMemory] = await Promise.all([
         repo.getActiveConfig(),
         repo.getLearnerPreferences(studentId),
-        repo.listSelectionQuestions({ qcStatus: 'active' }),
+        repo.listSelectionQuestions({ qcStatus: 'active', poolType: 'practice' }),
         repo.getSkillStates(studentId),
         repo.getQuestionEvidence(studentId),
         repo.getQuestionMemory(studentId),

@@ -114,7 +114,7 @@ export function formatMasteryPercent(numerator: number, denominator: number): st
 export function isQuestionEligibleForMastery(q: QuestionItem): boolean {
   return (
     q.qcStatus === 'active' &&
-    q.poolType !== 'benchmark_holdout' &&
+    q.poolType === 'practice' &&
     q.formatType !== 'WRIT_TYPED_TASK'
   );
 }
@@ -298,7 +298,7 @@ export function computeBankMasterySummary(input: {
       excludedInactiveCount++;
       continue;
     }
-    if (q.poolType === 'benchmark_holdout') {
+    if (q.poolType === 'benchmark_holdout' || q.poolType === 'official_calibration') {
       excludedHoldoutCount++;
       continue;
     }

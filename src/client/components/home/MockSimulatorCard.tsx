@@ -2,14 +2,54 @@ import { useState } from 'react';
 import { Award, Clock } from 'lucide-react';
 import type { api, DashboardResponse } from '../../api';
 import { useI18n } from '../../i18n';
-import type { MockTestBatch, SectionCode } from '../../../shared/contracts';
+import type { DifficultyPreset, SectionCode } from '../../../shared/contracts';
+import {
+  allocateFullPoolMockCaps,
+  CANONICAL_POOL_MOCK_COUNTS,
+  computeOfficialPaceMinutesFromCounts,
+  computePoolMockBaseMinutes,
+  MAX_POOL_MOCK_COUNTS,
+} from '../../../shared/engine';
+import { NumericInput } from '../ui/NumericInput';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import type { PendingLaunchSpec } from './launchSpec';
 
-function getOfficialSectionMinutes(scope: 'ALL' | SectionCode): number {
-  if (scope === 'WRIT') return 30;
-  if (scope === 'READ') return 45;
-  if (scope === 'ALL') return 155;
-  return 40;
+function defaultCountForScope(scope: 'ALL' | SectionCode): number {
+  if (scope === 'WRIT') return 1;
+  if (scope === 'READ') return CANONICAL_POOL_MOCK_COUNTS.READ;
+  if (scope === 'ALL') return 30;
+  return 20;
+}
+
+function quickPresetsForScope(scope: 'ALL' | SectionCode): { value: number; isFull?: boolean }[] {
+  if (scope === 'READ') {
+    return [
+      { value: 8 },
+      { value: CANONICAL_POOL_MOCK_COUNTS.READ, isFull: true },
+    ];
+  }
+  if (scope === 'MATH') {
+    return [
+      { value: 15 },
+      { value: 20 },
+      { value: CANONICAL_POOL_MOCK_COUNTS.MATH, isFull: true },
+    ];
+  }
+  if (scope === 'THINK') {
+    return [
+      { value: 15 },
+      { value: 20 },
+      { value: CANONICAL_POOL_MOCK_COUNTS.THINK, isFull: true },
+    ];
+  }
+  if (scope === 'ALL') {
+    return [
+      { value: 30 },
+      { value: 60 },
+      { value: MAX_POOL_MOCK_COUNTS.ALL, isFull: true },
+    ];
+  }
+  return [];
 }
 
 interface MockSimulatorCardProps {
@@ -19,27 +59,31 @@ interface MockSimulatorCardProps {
   onNavigate: (path: string) => void;
 }
 
-/** Mock test simulator: fresh pool mock (default) or a fixed paper/batch, with scope and timer presets. */
+/** Mock test simulator: fresh pool mock (default) or a fixed practice batch, with adjustable count and proportional timer. */
 export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate }: MockSimulatorCardProps) {
-  const { t, isZh, sectionLabel } = useI18n();
-  // Mock Test Simulator controls (Fresh Pool Mock is default; Official Benchmarks live on /benchmarks)
+  const { t, isZh, sectionLabel, sectionShortLabel } = useI18n();
+  // Mock Test Simulator controls (Fresh Pool Mock is default; Official & Holdout Benchmarks live on /benchmarks)
   const [mockMode, setMockMode] = useState<'pool' | 'batch'>('pool');
   const [mockScope, setMockScope] = useState<'ALL' | SectionCode>('MATH');
-  const [poolMockCount, setPoolMockCount] = useState<string>('20');
-  const [selectedPaperKey, setSelectedPaperKey] = useState<string>('PT1');
+  const [poolMockCount, setPoolMockCount] = useState<number>(20);
+  const [poolDifficulty, setPoolDifficulty] = useState<DifficultyPreset>('medium');
+  const [selectedPaperKey, setSelectedPaperKey] = useState<string>('');
   const [paperSearch, setPaperSearch] = useState('');
   const [timerPreset, setTimerPreset] = useState<'1.0' | '0.75' | '1.25' | '1.5' | 'custom'>('1.0');
-  const [customMinutes, setCustomMinutes] = useState('40');
+  const [customMinutes, setCustomMinutes] = useState<number>(40);
 
-  // Compute pool mock availability from live Question Bank counts
-  const poolLiveForScope = data?.poolCounts
-    ? mockScope === 'ALL'
-      ? data.poolCounts.READ.live +
-        data.poolCounts.MATH.live +
-        data.poolCounts.THINK.live +
-        data.poolCounts.WRIT.live
-      : data.poolCounts[mockScope].live
-    : 0;
+  const liveBySection: Record<SectionCode, number> = {
+    READ: data?.poolCounts?.READ.live ?? 0,
+    MATH: data?.poolCounts?.MATH.live ?? 0,
+    THINK: data?.poolCounts?.THINK.live ?? 0,
+    WRIT: data?.poolCounts?.WRIT.live ?? 0,
+  };
+
+  // Compute pool mock availability from live practice Question Bank counts
+  const poolLiveForScope =
+    mockScope === 'ALL'
+      ? liveBySection.READ + liveBySection.MATH + liveBySection.THINK + liveBySection.WRIT
+      : liveBySection[mockScope];
 
   const poolUnseenForScope = data?.poolCounts
     ? mockScope === 'ALL'
@@ -50,46 +94,20 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
       : data.poolCounts[mockScope].unseen
     : 0;
 
-  // Build unified list of official papers + custom imported batches (scales to 100+)
+  // Practice batches only — official_calibration and benchmark_holdout papers are isolated on /benchmarks
   const customBatches = data?.customBatches ?? [];
   const benchmarkBatches = data?.benchmarkBatches ?? [];
   const allPaperOptions: {
     key: string;
     label: string;
-    isOfficial: boolean;
-    officialBatch?: MockTestBatch;
-    batchId?: string;
+    batchId: string;
     counts: Record<SectionCode, number>;
-  }[] = [
-    {
-      key: 'PT1',
-      label: t('home.paperPT1'),
-      isOfficial: true,
-      officialBatch: 'PT1',
-      counts: data?.batchCounts.PT1 ?? { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
-    },
-    {
-      key: 'PT2',
-      label: t('home.paperPT2'),
-      isOfficial: true,
-      officialBatch: 'PT2',
-      counts: data?.batchCounts.PT2 ?? { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
-    },
-    {
-      key: 'PT3',
-      label: t('home.paperPT3'),
-      isOfficial: true,
-      officialBatch: 'PT3',
-      counts: data?.batchCounts.PT3 ?? { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
-    },
-    ...customBatches.map((cb) => ({
-      key: `batch:${cb.batchId}`,
-      label: cb.batchLabel,
-      isOfficial: false,
-      batchId: cb.batchId,
-      counts: cb.counts,
-    })),
-  ];
+  }[] = customBatches.map((cb) => ({
+    key: `batch:${cb.batchId}`,
+    label: cb.batchLabel,
+    batchId: cb.batchId,
+    counts: cb.counts,
+  }));
 
   const filteredPaperOptions = paperSearch.trim()
     ? allPaperOptions.filter((opt) =>
@@ -98,7 +116,7 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
     : allPaperOptions;
 
   const selectedPaper =
-    allPaperOptions.find((o) => o.key === selectedPaperKey) || allPaperOptions[0];
+    allPaperOptions.find((o) => o.key === selectedPaperKey) || allPaperOptions[0] || null;
 
   const batchQuestionCount = selectedPaper
     ? mockScope === 'ALL'
@@ -106,35 +124,95 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
       : selectedPaper.counts[mockScope]
     : 0;
 
-  const canonicalFullPoolCount = data?.poolCounts
-    ? Math.min(17, data.poolCounts.READ.live) +
-      Math.min(35, data.poolCounts.MATH.live) +
-      Math.min(40, data.poolCounts.THINK.live) +
-      Math.min(1, data.poolCounts.WRIT.live)
-    : 0;
+  const canonicalFullPoolCount =
+    Math.min(CANONICAL_POOL_MOCK_COUNTS.READ, liveBySection.READ) +
+    Math.min(CANONICAL_POOL_MOCK_COUNTS.MATH, liveBySection.MATH) +
+    Math.min(CANONICAL_POOL_MOCK_COUNTS.THINK, liveBySection.THINK) +
+    Math.min(CANONICAL_POOL_MOCK_COUNTS.WRIT, liveBySection.WRIT);
+
+  const maxPoolForScope =
+    mockScope === 'WRIT'
+      ? Math.min(1, liveBySection.WRIT)
+      : mockScope === 'ALL'
+        ? Math.min(MAX_POOL_MOCK_COUNTS.ALL, canonicalFullPoolCount)
+        : Math.min(MAX_POOL_MOCK_COUNTS[mockScope], poolLiveForScope);
+
+  const minPoolForScope = mockScope === 'ALL' ? Math.min(4, Math.max(1, maxPoolForScope)) : 1;
 
   const resolvedPoolCount =
-    mockScope === 'WRIT'
-      ? Math.min(1, poolLiveForScope)
-      : mockScope === 'ALL' && poolMockCount === 'OFFICIAL'
-        ? canonicalFullPoolCount
-        : poolMockCount === 'ALL'
-          ? poolLiveForScope
-          : Math.min(poolLiveForScope, Math.max(1, Number(poolMockCount) || 20));
+    maxPoolForScope <= 0
+      ? 0
+      : mockScope === 'WRIT'
+        ? 1
+        : Math.min(maxPoolForScope, Math.max(minPoolForScope, Math.round(poolMockCount || defaultCountForScope(mockScope))));
 
   const mockQuestionCount = mockMode === 'pool' ? resolvedPoolCount : batchQuestionCount;
 
+  const fullMockMix =
+    mockMode === 'pool' && mockScope === 'ALL' && resolvedPoolCount > 0
+      ? allocateFullPoolMockCaps(resolvedPoolCount, liveBySection)
+      : null;
+
+  const fullMockMixSummary = fullMockMix
+    ? (['READ', 'MATH', 'THINK', 'WRIT'] as SectionCode[])
+        .filter((sec) => fullMockMix[sec] > 0)
+        .map((sec) => `${fullMockMix[sec]} ${sectionShortLabel(sec)}`)
+        .join(isZh ? ' · ' : ' · ')
+    : '';
+
+  const baseOfficialMinutes =
+    mockMode === 'pool'
+      ? computePoolMockBaseMinutes(mockScope, resolvedPoolCount, liveBySection)
+      : selectedPaper
+        ? mockScope === 'ALL'
+          ? computeOfficialPaceMinutesFromCounts(selectedPaper.counts)
+          : computeOfficialPaceMinutesFromCounts({ [mockScope]: selectedPaper.counts[mockScope] })
+        : 0;
+
+  const scaledMinutesFor = (mult: number): number =>
+    baseOfficialMinutes > 0 ? Math.max(1, Math.round(baseOfficialMinutes * mult)) : 0;
+
+  const visiblePresets = quickPresetsForScope(mockScope).filter(
+    (p) => p.value >= minPoolForScope && p.value <= maxPoolForScope
+  );
+
+  const handleScopeChange = (next: 'ALL' | SectionCode) => {
+    setMockScope(next);
+    const nextMax =
+      next === 'WRIT'
+        ? Math.min(1, liveBySection.WRIT)
+        : next === 'ALL'
+          ? Math.min(MAX_POOL_MOCK_COUNTS.ALL, canonicalFullPoolCount)
+          : Math.min(MAX_POOL_MOCK_COUNTS[next], liveBySection[next]);
+    const nextDefault = defaultCountForScope(next);
+    setPoolMockCount(nextMax > 0 ? Math.min(nextMax, nextDefault) : nextDefault);
+  };
+
   const handleLaunchMock = () => {
+    if (mockMode === 'batch' && !selectedPaper) return;
+    if (mockQuestionCount <= 0) return;
     const sectionFilter = mockScope === 'ALL' ? undefined : mockScope;
     const scopeLabel =
       mockScope === 'ALL' ? t('home.modalFullExam') : sectionLabel(mockScope);
+    const diffLabel =
+      poolDifficulty === 'easy'
+        ? t('home.diffEasy')
+        : poolDifficulty === 'hard'
+          ? t('home.diffHard')
+          : t('home.diffMedium');
 
     const title =
       mockMode === 'pool'
-        ? t('home.modalMockTitle', {
+        ? `${t('home.modalMockTitle', {
             label: mockScope === 'ALL' ? t('home.modalFullExam') : t('home.modalSectionPractice', { section: scopeLabel }),
-          })
-        : `${selectedPaper.label} — ${scopeLabel}`;
+          })}${mockScope === 'WRIT' ? '' : ` (${diffLabel})`}`
+        : `${selectedPaper!.label} — ${scopeLabel}`;
+
+    const isOfficialFullAll =
+      mockScope === 'ALL' &&
+      canonicalFullPoolCount > 0 &&
+      resolvedPoolCount >= canonicalFullPoolCount &&
+      canonicalFullPoolCount === MAX_POOL_MOCK_COUNTS.ALL;
 
     const basePayload: Parameters<typeof api.createSession>[0] =
       mockMode === 'pool'
@@ -142,34 +220,31 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
             mode: 'section_drill',
             mockSource: 'pool',
             sectionFilter,
-            // Omit questionCount for Official Full so server uses canonical 17/35/40/1 section mix
-            ...(mockScope === 'ALL' && poolMockCount === 'OFFICIAL'
+            ...(mockScope === 'WRIT' ? {} : { difficulty: poolDifficulty }),
+            ...(isOfficialFullAll
               ? {}
               : { questionCount: mockScope === 'WRIT' ? 1 : resolvedPoolCount }),
           }
-        : selectedPaper.isOfficial && selectedPaper.officialBatch
-          ? {
-              mode: 'section_drill',
-              mockSource: 'batch',
-              mockBatch: selectedPaper.officialBatch,
-              sectionFilter,
-            }
-          : {
-              mode: 'section_drill',
-              mockSource: 'batch',
-              batchId: selectedPaper.batchId,
-              sectionFilter,
-            };
+        : {
+            mode: 'section_drill',
+            mockSource: 'batch',
+            batchId: selectedPaper!.batchId,
+            sectionFilter,
+          };
+
+    const questionCountLabel =
+      mockMode === 'pool' && mockScope === 'ALL' && fullMockMixSummary
+        ? `${t('home.modalDrillCount', { count: mockQuestionCount })} (${fullMockMixSummary})`
+        : mockQuestionCount === 1 && !isZh
+          ? '1 question'
+          : t('home.modalDrillCount', { count: mockQuestionCount });
 
     if (timerPreset === 'custom') {
-      const mins = Math.max(1, Number(customMinutes) || 40);
+      const mins = Math.max(1, Math.min(240, Math.round(customMinutes || 40)));
       onRequestLaunch({
         key: 'mock',
         title,
-        questionCountLabel:
-          mockQuestionCount === 1 && !isZh
-            ? '1 question'
-            : t('home.modalDrillCount', { count: mockQuestionCount }),
+        questionCountLabel,
         durationLabel: t('home.modalMinutesLabel', { min: mins }),
         payload: {
           ...basePayload,
@@ -180,18 +255,12 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
     }
 
     const mult = Number(timerPreset);
-    const baseMin = getOfficialSectionMinutes(mockScope);
-    const scaledMin = mult <= 0 ? 0 : Math.round(baseMin * mult);
+    const scaledMin = scaledMinutesFor(mult);
     onRequestLaunch({
       key: 'mock',
       title,
-      questionCountLabel:
-        mockQuestionCount === 1 && !isZh
-          ? '1 question'
-          : t('home.modalDrillCount', { count: mockQuestionCount }),
-      durationLabel:
-        mult <= 0 ? t('home.modalUntimedLabel') : t('home.modalMinutesLabel', { min: scaledMin }),
-      isUntimed: mult <= 0,
+      questionCountLabel,
+      durationLabel: t('home.modalMinutesLabel', { min: scaledMin }),
       payload: {
         ...basePayload,
         timeMultiplier: mult,
@@ -257,42 +326,80 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+        <div className="min-w-0">
+          <label
+            htmlFor="mock-scope-select"
+            className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
+          >
+            {t('home.testScope')}
+          </label>
+          <select
+            id="mock-scope-select"
+            value={mockScope}
+            onChange={(e) => handleScopeChange(e.target.value as 'ALL' | SectionCode)}
+            className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
+          >
+            <option value="READ">{t('home.scopeREAD')}</option>
+            <option value="MATH">{t('home.scopeMATH')}</option>
+            <option value="THINK">{t('home.scopeTHINK')}</option>
+            <option value="WRIT">{t('home.scopeWRIT')}</option>
+            <option value="ALL">{t('home.scopeALL')}</option>
+          </select>
+        </div>
+
         {mockMode === 'pool' ? (
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-2">
             <label
               htmlFor="pool-mock-count"
-              className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
+              className="block text-xs font-sans-display font-semibold text-[#4A5955]"
             >
               {t('home.questionsToPull')}
             </label>
-            <select
-              id="pool-mock-count"
-              disabled={mockScope === 'WRIT'}
-              value={mockScope === 'WRIT' ? '1' : poolMockCount}
-              onChange={(e) => setPoolMockCount(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36] disabled:bg-[#F3EFE8]"
-            >
-              {mockScope === 'WRIT' ? (
-                <option value="1">{t('home.writingPromptCount')}</option>
-              ) : mockScope === 'ALL' ? (
-                <>
-                  <option value="30">{t('home.quickFullMock')}</option>
-                  <option value="60">{t('home.halfMock')}</option>
-                  <option value="OFFICIAL">{t('home.officialFullMock')}</option>
-                  <option value="ALL">{t('home.allAvailable', { count: poolLiveForScope })}</option>
-                </>
-              ) : (
-                <>
-                  <option value="10">{t('home.nQuestions', { count: 10 })}</option>
-                  <option value="20">{t('home.nQuestions', { count: 20 })}</option>
-                  <option value="30">{t('home.nQuestions', { count: 30 })}</option>
-                  <option value="35">{t('home.nQuestions', { count: 35 })}</option>
-                  <option value="40">{t('home.nQuestions', { count: 40 })}</option>
-                  <option value="ALL">{t('home.allAvailable', { count: poolLiveForScope })}</option>
-                </>
-              )}
-            </select>
+            {mockScope === 'WRIT' ? (
+              <div className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-[#F3EFE8] text-sm text-[#615E57]">
+                {t('home.writingPromptCount')}
+              </div>
+            ) : (
+              <>
+                <NumericInput
+                  id="pool-mock-count"
+                  value={resolvedPoolCount}
+                  min={minPoolForScope}
+                  max={Math.max(minPoolForScope, maxPoolForScope)}
+                  disabled={maxPoolForScope <= 0}
+                  integer
+                  stepper
+                  showRange
+                  label={t('home.questionsToPull')}
+                  className="h-[42px]"
+                  onCommit={setPoolMockCount}
+                />
+                {visiblePresets.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {visiblePresets.map((preset) => {
+                      const active = resolvedPoolCount === preset.value;
+                      return (
+                        <button
+                          key={preset.value}
+                          type="button"
+                          onClick={() => setPoolMockCount(preset.value)}
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-sans-display font-semibold tabular-nums cursor-pointer transition-tactile border ${
+                            active
+                              ? 'bg-[#113C36] border-[#113C36] text-white'
+                              : 'bg-white border-[#CFC6B9] text-[#4A5955] hover:border-[#113C36] hover:text-[#113C36]'
+                          }`}
+                        >
+                          {preset.isFull
+                            ? t('home.presetFull', { count: preset.value })
+                            : `${preset.value}${t('home.questionsUnitShort')}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         ) : (
           <div className="min-w-0">
@@ -313,47 +420,23 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
             )}
             <select
               id="mock-batch-select"
-              value={selectedPaperKey}
+              disabled={filteredPaperOptions.length === 0}
+              value={selectedPaper?.key || ''}
               onChange={(e) => setSelectedPaperKey(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
+              className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36] disabled:bg-[#F3EFE8]"
             >
-              {filteredPaperOptions.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
+              {filteredPaperOptions.length === 0 ? (
+                <option value="">{t('home.noPracticeBatches')}</option>
+              ) : (
+                filteredPaperOptions.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </option>
+                ))
+              )}
             </select>
           </div>
         )}
-
-        <div className="min-w-0">
-          <label
-            htmlFor="mock-scope-select"
-            className="block text-xs font-sans-display font-semibold text-[#4A5955] mb-1.5"
-          >
-            {t('home.testScope')}
-          </label>
-          <select
-            id="mock-scope-select"
-            value={mockScope}
-            onChange={(e) => {
-              const next = e.target.value as 'ALL' | SectionCode;
-              setMockScope(next);
-              if (next === 'ALL' && ['10', '20', '35', '40'].includes(poolMockCount)) {
-                setPoolMockCount('30');
-              } else if (next !== 'ALL' && next !== 'WRIT' && ['60', 'OFFICIAL', '93', '105'].includes(poolMockCount)) {
-                setPoolMockCount('20');
-              }
-            }}
-            className="w-full px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
-          >
-            <option value="READ">{t('home.scopeREAD')}</option>
-            <option value="MATH">{t('home.scopeMATH')}</option>
-            <option value="THINK">{t('home.scopeTHINK')}</option>
-            <option value="WRIT">{t('home.scopeWRIT')}</option>
-            <option value="ALL">{t('home.scopeALL')}</option>
-          </select>
-        </div>
 
         <div className="min-w-0">
           <label
@@ -369,37 +452,90 @@ export function MockSimulatorCard({ data, launching, onRequestLaunch, onNavigate
               onChange={(e) => setTimerPreset(e.target.value as typeof timerPreset)}
               className="flex-1 min-w-0 px-3 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm text-[#113C36] focus:outline-none focus:border-[#113C36]"
             >
-              <option value="1.0">{t('home.timer10')}</option>
-              <option value="0.75">{t('home.timer075')}</option>
-              <option value="1.25">{t('home.timer125')}</option>
-              <option value="1.5">{t('home.timer15')}</option>
+              <option value="1.0">
+                {baseOfficialMinutes > 0
+                  ? t('home.timerWithMins', { label: t('home.timer10'), min: scaledMinutesFor(1.0) })
+                  : t('home.timer10')}
+              </option>
+              <option value="0.75">
+                {baseOfficialMinutes > 0
+                  ? t('home.timerWithMins', { label: t('home.timer075'), min: scaledMinutesFor(0.75) })
+                  : t('home.timer075')}
+              </option>
+              <option value="1.25">
+                {baseOfficialMinutes > 0
+                  ? t('home.timerWithMins', { label: t('home.timer125'), min: scaledMinutesFor(1.25) })
+                  : t('home.timer125')}
+              </option>
+              <option value="1.5">
+                {baseOfficialMinutes > 0
+                  ? t('home.timerWithMins', { label: t('home.timer15'), min: scaledMinutesFor(1.5) })
+                  : t('home.timer15')}
+              </option>
               <option value="custom">{t('home.timerCustom')}</option>
             </select>
             {timerPreset === 'custom' && (
-              <input
-                type="number"
+              <NumericInput
+                value={customMinutes}
                 min={1}
                 max={240}
-                aria-label={t('home.timerCustom')}
-                value={customMinutes}
-                onChange={(e) => setCustomMinutes(e.target.value)}
-                className="w-20 px-2.5 py-2.5 rounded-[10px] border border-[#CFC6B9] bg-white text-sm tabular-nums text-[#113C36]"
+                integer
+                suffix={t('home.minutesUnitShort')}
+                label={t('home.timerCustom')}
+                className="!w-[96px] h-[42px]"
+                onCommit={setCustomMinutes}
               />
             )}
           </div>
         </div>
       </div>
 
+      {mockMode === 'pool' && mockScope !== 'WRIT' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-[#E5DFD5]/80">
+          <div className="space-y-0.5">
+            <div className="text-xs font-sans-display font-semibold text-[#4A5955]">
+              {t('home.difficultyLabel')}
+            </div>
+            <p className="text-xs text-[#615E57]">
+              {poolDifficulty === 'easy'
+                ? t('home.diffEasyHint')
+                : poolDifficulty === 'hard'
+                  ? t('home.diffHardHint')
+                  : t('home.diffMediumHint')}
+            </p>
+          </div>
+          <SegmentedControl<DifficultyPreset>
+            ariaLabel={t('home.difficultyLabel')}
+            className="bg-[#F3EFE8] border-[#E5DFD5]"
+            segmentClassName="px-3.5 py-1.5"
+            value={poolDifficulty}
+            onChange={setPoolDifficulty}
+            options={[
+              { value: 'easy', label: t('home.diffEasy') },
+              { value: 'medium', label: t('home.diffMedium') },
+              { value: 'hard', label: t('home.diffHard') },
+            ]}
+          />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
-        <div className="flex items-center gap-2 text-xs text-[#4A5955] min-w-0 flex-1">
-          <Clock className="w-3.5 h-3.5 text-[#615E57] shrink-0" />
-          <span>
-            {mockMode === 'pool'
-              ? t('home.poolHint', { unseen: poolUnseenForScope, live: poolLiveForScope })
-              : batchQuestionCount === 1
-                ? t('home.batchCountHintOne')
-                : t('home.batchCountHintMany', { count: batchQuestionCount })}
-          </span>
+        <div className="flex items-start gap-2 text-xs text-[#4A5955] min-w-0 flex-1">
+          <Clock className="w-3.5 h-3.5 text-[#615E57] shrink-0 mt-0.5" />
+          <div className="space-y-0.5 min-w-0">
+            <div>
+              {mockMode === 'pool'
+                ? t('home.poolHint', { unseen: poolUnseenForScope, live: poolLiveForScope })
+                : batchQuestionCount === 1
+                  ? t('home.batchCountHintOne')
+                  : t('home.batchCountHintMany', { count: batchQuestionCount })}
+            </div>
+            {mockMode === 'pool' && mockScope === 'ALL' && fullMockMixSummary && (
+              <div className="text-[11px] text-[#615E57] tabular-nums">
+                {t('home.mockMixPreview', { mix: fullMockMixSummary })}
+              </div>
+            )}
+          </div>
         </div>
         <button
           type="button"

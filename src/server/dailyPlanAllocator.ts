@@ -50,7 +50,7 @@ export function computeRankedSkillCandidates(input: {
   const nowMs = Date.parse(nowIso);
   const skillMeta = new Map(SKILLS_TAXONOMY.map((s) => [s.skillId, s]));
   const eligible = input.questions.filter(
-    (q) => q.qcStatus === 'active' && q.poolType !== 'benchmark_holdout' && q.section !== 'WRIT'
+    (q) => q.qcStatus === 'active' && q.poolType === 'practice' && q.section !== 'WRIT'
   );
 
   const perSkillCounts = new Map<
@@ -216,7 +216,7 @@ export function allocateAutoCalibratedDailyPlan(input: {
 export function countAvailableBySection(questions: SelectionQuestion[]): Record<SectionCode, number> {
   const counts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
   for (const q of questions) {
-    if (q.qcStatus === 'active' && q.poolType !== 'benchmark_holdout') {
+    if (q.qcStatus === 'active' && q.poolType === 'practice') {
       counts[q.section] = (counts[q.section] || 0) + 1;
     }
   }

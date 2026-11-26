@@ -159,7 +159,8 @@ export const BankQuestionList = memo(function BankQuestionList({
             aria-label={t('bank.perPageAria')}
             value={pageSize}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
-            className="rounded-[8px] border border-[#CFC6B9] bg-white px-2 py-1 text-xs text-[#4A5955]"
+            data-select="compact"
+            className="cursor-pointer rounded-[8px] border border-[#CFC6B9] bg-white pl-2.5 py-1 text-xs text-[#4A5955]"
           >
             {[25, 50, 100].map((n) => (
               <option key={n} value={n}>{t('bank.perPage', { count: n })}</option>

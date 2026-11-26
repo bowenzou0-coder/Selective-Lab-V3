@@ -6,6 +6,7 @@ import type { QuestionSelectionItem } from '../storage/repository.ts';
 import {
   DEFAULT_AUTO_CALIBRATE,
   resolveEffectiveLearningConfig,
+  type DifficultyPreset,
   type MockTestBatch,
   type QuestionItem,
   type SectionCode,
@@ -14,6 +15,8 @@ import {
   type SessionSelectionDecision,
 } from '../../shared/contracts.ts';
 import {
+  computeOfficialPaceMinutesForItems,
+  MAX_POOL_MOCK_COUNTS,
   repairDrillTimeLimitSec,
   selectBatchMockQuestions,
   selectBenchmarkHoldoutQuestions,
@@ -27,11 +30,17 @@ import {
   getOfficialTimeLimitSec,
   buildQuestionSnapshots,
   buildBenchmarkSectionState,
+  computeBenchmarkLockStatus,
   isSessionPastGrace,
   resolveOrExpireSession,
 } from '../sessionLifecycle.ts';
 
 const MAX_REPAIR_TARGET_IDS = 200;
+
+function parseDifficultyPreset(raw: unknown): DifficultyPreset | undefined {
+  if (raw === 'easy' || raw === 'medium' || raw === 'hard') return raw;
+  return undefined;
+}
 
 /** Accepts an optional array of question ids; `undefined` when absent or malformed. */
 function parseRepairTargetIds(raw: unknown): string[] | undefined {
@@ -55,6 +64,7 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
       const mockBatch = req.body?.mockBatch as MockTestBatch | undefined;
       const batchId = typeof req.body?.batchId === 'string' ? req.body.batchId : undefined;
       const mockSource = req.body?.mockSource as 'pool' | 'batch' | undefined;
+      const difficulty = parseDifficultyPreset(req.body?.difficulty);
       const questionCount =
         req.body?.questionCount !== undefined && Number(req.body.questionCount) > 0
           ? Math.round(Number(req.body.questionCount))
@@ -77,18 +87,24 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
 
       const selectionFilter =
         mode === 'repair_drill'
-          ? { qcStatus: 'active', section: sectionFilter }
+          ? { qcStatus: 'active', poolType: 'practice', section: sectionFilter }
           : mode === 'benchmark_exam'
-          ? batchId
-            ? { qcStatus: 'active', poolType: 'benchmark_holdout', batchId, section: sectionFilter }
-            : { qcStatus: 'active', section: sectionFilter }
-          : mockSource === 'pool'
-            ? { qcStatus: 'active', section: sectionFilter }
-            : batchId
+            ? batchId
               ? { qcStatus: 'active', batchId, section: sectionFilter }
-              : mockBatch
-                ? { qcStatus: 'active', batchTag: mockBatch, section: sectionFilter }
-                : { qcStatus: 'active', section: mode === 'writing_sprint' ? ('WRIT' as SectionCode) : sectionFilter };
+              : { qcStatus: 'active', section: sectionFilter }
+            : mode === 'diagnostic'
+              ? { qcStatus: 'active', section: sectionFilter }
+              : mockSource === 'pool'
+                ? { qcStatus: 'active', poolType: 'practice', section: sectionFilter }
+                : batchId
+                  ? { qcStatus: 'active', poolType: 'practice', batchId, section: sectionFilter }
+                  : mockBatch
+                    ? { qcStatus: 'active', batchTag: mockBatch, section: sectionFilter }
+                    : {
+                        qcStatus: 'active',
+                        poolType: 'practice',
+                        section: mode === 'writing_sprint' ? ('WRIT' as SectionCode) : sectionFilter,
+                      };
 
       const [existingSessions, configData, learnerPrefs, candidateQuestions, skillStates, questionMemory, evidenceMap] =
         await Promise.all([
@@ -142,6 +158,20 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
         title = `Repair drill (${selectedMeta.length} Qs)`;
       } else if (mode === 'benchmark_exam') {
         effectiveMode = 'benchmark_exam';
+        const benchmarkLock = await computeBenchmarkLockStatus({
+          repo,
+          studentId,
+          config: configData.config,
+          learnerPrefs,
+        });
+        if (benchmarkLock.isLocked) {
+          res.status(403).json({
+            error: `Earn ${benchmarkLock.remainingCorrect} more correct practice answers (${benchmarkLock.earnedCorrect}/${benchmarkLock.requiredCorrect}) to unlock your next benchmark.`,
+            code: 'benchmark_locked',
+            benchmarkLock,
+          });
+          return;
+        }
         // Official Benchmark Exams are strictly locked to full 4-section 1.0x NSW timing (155 min)
         selectedMeta = selectBenchmarkHoldoutQuestions({
           batchId,
@@ -158,23 +188,28 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
         title = `Benchmark: ${label} (Full Exam)`;
       } else if (mockSource === 'pool') {
         effectiveMode = 'section_drill';
+        const maxPoolCap = MAX_POOL_MOCK_COUNTS[sectionFilter ?? 'ALL'];
+        const cappedPoolCount =
+          questionCount !== undefined ? Math.min(maxPoolCap, Math.max(1, questionCount)) : undefined;
         selectedMeta = selectPoolMockQuestions({
           questions: candidateQuestions,
           sectionFilter,
-          questionCount,
+          questionCount: cappedPoolCount,
+          difficulty,
           questionMemory,
           evidenceMap,
           autoRetireMastered: Boolean(configData.config.poolPolicy?.autoRetireMastered),
           seed: Date.now() & 0xfffffff,
         });
-        const baseSec = getOfficialTimeLimitSec(sectionFilter);
+        const scaledBaseMin = computeOfficialPaceMinutesForItems(selectedMeta);
+        const baseSec = scaledBaseMin > 0 ? scaledBaseMin * 60 : getOfficialTimeLimitSec(sectionFilter);
         if (customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec) && customTimeLimitSec > 0) {
           timeLimitSec = Math.max(60, Math.round(customTimeLimitSec));
         } else {
-          // Enforce strictly timed student exams (no untimed loophole)
+          // Enforce strictly timed student exams scaled proportionally to the pulled questions
           timeLimitSec = Math.max(60, Math.round(baseSec * (timeMultiplier > 0 ? timeMultiplier : 1)));
         }
-        title = `Fresh Pool Mock${sectionFilter ? ` (${sectionFilter})` : ' (Full Exam)'}`;
+        title = `Fresh Pool Mock${sectionFilter ? ` (${sectionFilter})` : ` (${selectedMeta.length} Qs)`}`;
       } else if (batchId) {
         effectiveMode = 'section_drill';
         selectedMeta = selectBatchMockQuestions({
@@ -182,7 +217,8 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
           sectionFilter,
           questions: candidateQuestions,
         });
-        const baseSec = getOfficialTimeLimitSec(sectionFilter);
+        const scaledBaseMin = computeOfficialPaceMinutesForItems(selectedMeta);
+        const baseSec = scaledBaseMin > 0 ? scaledBaseMin * 60 : getOfficialTimeLimitSec(sectionFilter);
         timeLimitSec =
           customTimeLimitSec !== undefined && !Number.isNaN(customTimeLimitSec) && customTimeLimitSec > 0
             ? Math.max(60, Math.round(customTimeLimitSec))
@@ -254,7 +290,7 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
                 questionMemory,
                 questions: () =>
                   effectiveSection
-                    ? repo.listSelectionQuestions({ qcStatus: 'active' })
+                    ? repo.listSelectionQuestions({ qcStatus: 'active', poolType: 'practice' })
                     : Promise.resolve(candidateQuestions),
                 config: effectiveConfig,
                 nowIso,
@@ -275,15 +311,18 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
             seed,
           }).slice(0, 1);
         } else {
+          const cappedDrillCount =
+            questionCount !== undefined ? Math.min(50, Math.max(1, questionCount)) : undefined;
           const ordered = await decidePracticeQuestionOrderWithGemini({
             mode: normalizedMode,
             sectionFilter: effectiveSection,
+            difficulty: effectiveSection ? difficulty : undefined,
             questions: candidateQuestions,
             skillStates,
             questionMemory,
             evidenceMap,
             dailyPlan,
-            questionCountOverride: questionCount,
+            questionCountOverride: cappedDrillCount,
             config: effectiveConfig,
             nowIso,
             seed,
@@ -353,6 +392,12 @@ export function registerSessionCreateRoute(app: Express, ctx: AppContext): void 
         title,
         isSandbox: false,
         mockBatch,
+        ...(batchId || (effectiveMode === 'benchmark_exam' && selectedMeta[0]?.batchId)
+          ? { batchId: batchId || selectedMeta[0]?.batchId }
+          : {}),
+        ...(difficulty && (mockSource === 'pool' || (effectiveMode === 'section_drill' && Boolean(sectionFilter)))
+          ? { difficultyPreset: difficulty }
+          : {}),
         timeMultiplier,
         status: 'in_progress',
         plannedQuestionIds: snapshots.map((s) => s.questionId),

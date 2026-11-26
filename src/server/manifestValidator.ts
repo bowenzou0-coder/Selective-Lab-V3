@@ -14,6 +14,7 @@ import type {
 import { computeEvidenceRevision } from '../shared/mastery.ts';
 import { VALID_SKILL_IDS } from '../shared/skills.ts';
 import { normalizeSvgFonts } from '../shared/svgFonts.ts';
+import { lintQuestionTypography } from '../shared/mathTypography.ts';
 
 export interface ManifestDryRunReport {
   valid: boolean;
@@ -446,6 +447,16 @@ export function validateAndDryRunManifest(
         evidenceRefs: validatedEvidenceRefs,
       });
     }
+
+    warnings.push(
+      ...lintQuestionTypography({
+        label: `Question ${rq.questionId}`,
+        promptTexts: [rq.stemPrefix ?? '', ...normalizedParts.map((p) => p.promptText)],
+        otherTexts: normalizedParts.flatMap((p) => [p.workedExplanation, ...p.options.map((o) => o.text)]),
+        visual: normalizeVisual(rq.visual),
+        optionVisuals: normalizedParts.flatMap((p) => p.options.map((o) => o.visual).filter((v) => v !== undefined)),
+      })
+    );
 
     const derivedSharedPool =
       rq.sharedPoolConfig ||

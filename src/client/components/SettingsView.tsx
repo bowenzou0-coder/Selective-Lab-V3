@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Compass,
-  Download,
   Flag,
   Lock,
   RefreshCw,
@@ -701,26 +700,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => api.downloadFile('/api/student/export?format=json', 'selective-lab-progress.json')}
-              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t('settings.exportJson')}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => api.downloadFile('/api/student/export?format=csv', 'selective-lab-progress.csv')}
-              className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 cursor-pointer transition-[background-color,transform,translate,scale] duration-150 ease-out active:scale-[0.98]"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t('settings.exportCsv')}</span>
-            </button>
-          </div>
-
+        <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
           <button
             type="button"
             onClick={() => setResetOpen(true)}

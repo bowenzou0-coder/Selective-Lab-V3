@@ -300,6 +300,44 @@ function checkSvgTextGeometry(svg, vbMatch, location, warnings) {
   }
 }
 
+// ---- Math typography (mirror of src/shared/mathTypography.ts; keep both in step) ----
+// Prompt/option/explanation text is typeset by the app (`cm2` → cm², `x^2` → superscript),
+// but SVG <text> is drawn verbatim, so plain powers there show up raw.
+const PLAIN_UNIT_POWER_RE = /(?<=(?:\d|\()\s?)(?:mm|cm|m|km)[23](?![0-9A-Za-z])/g;
+const CARET_EXPONENT_RE = /[A-Za-z0-9)\]]\^(?:\{[^{}\n]{1,12}\}|[-−]?\d{1,3}|[a-z])/g;
+const NOT_TO_SCALE_RE = /diagram\s+(?:is\s+)?not\s+(?:drawn\s+)?to\s+scale/gi;
+const findPlainUnitPowers = (t) => (typeof t === 'string' ? t.match(PLAIN_UNIT_POWER_RE) ?? [] : []);
+const findCaretExponents = (t) => (typeof t === 'string' ? t.match(CARET_EXPONENT_RE) ?? [] : []);
+const countNotToScale = (t) => (typeof t === 'string' ? (t.match(NOT_TO_SCALE_RE) ?? []).length : 0);
+function svgVisibleText(svg) {
+  if (typeof svg !== 'string') return '';
+  return [...svg.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/g)]
+    .map((m) => m[1].replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))
+    .join('\n');
+}
+function lintQuestionTypography({ label, promptTexts, otherTexts, visual, optionVisuals = [] }) {
+  const warnings = [];
+  const plain = [...promptTexts, ...otherTexts, visual?.caption ?? ''].flatMap(findPlainUnitPowers);
+  if (plain.length) {
+    warnings.push(`${label}: write unit powers with Unicode superscripts (${[...new Set(plain)].join(', ')} → cm², m³ …).`);
+  }
+  const svgText = [visual, ...optionVisuals].filter((v) => v?.visualType === 'inline_svg').map((v) => svgVisibleText(v.svgMarkup)).join('\n');
+  const svgPowers = [...findPlainUnitPowers(svgText), ...findCaretExponents(svgText)];
+  if (svgPowers.length) {
+    warnings.push(`${label}: SVG labels draw powers verbatim (${[...new Set(svgPowers)].join(', ')}); use ² / ³ or a <tspan baseline-shift="super">.`);
+  }
+  // image_asset shows `caption || altText` under the figure; inline_svg shows the caption.
+  const shownCaption = visual?.caption || (visual?.visualType === 'image_asset' ? visual?.altText : '');
+  const notToScale =
+    [...new Set(promptTexts)].reduce((n, t) => n + countNotToScale(t), 0) +
+    countNotToScale(shownCaption) +
+    countNotToScale(visual?.visualType === 'inline_svg' ? svgVisibleText(visual.svgMarkup) : '');
+  if (notToScale > 1) {
+    warnings.push(`${label}: "[diagram not to scale]" appears ${notToScale} times on screen; keep it once (visual caption preferred).`);
+  }
+  return warnings;
+}
+
 const normalizeOptionText = (text) => String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 function median(values) {
@@ -414,8 +452,14 @@ export function validateManifestObject(raw) {
     errors.push(`manifestVersion must be "1.0" (got ${JSON.stringify(raw.manifestVersion)}).`);
   }
   const questions = Array.isArray(raw.questions) ? raw.questions : [];
+  // Official past-paper batches (official_pt1..3) hold real items; unpublished parts may be filled by
+  // clearly labelled stand-ins: provenance.sourceType ai_generated/human_authored + sourceReference "Stand-in for …".
+  const isStandIn = (q) =>
+    ['ai_generated', 'human_authored'].includes(q?.provenance?.sourceType) &&
+    /^Stand-in for /.test(String(q?.provenance?.sourceReference || ''));
   const isAllOfficial =
-    questions.length > 0 && questions.every((q) => q?.provenance?.sourceType === 'official_doe');
+    questions.some((q) => q?.provenance?.sourceType === 'official_doe') &&
+    questions.every((q) => q?.provenance?.sourceType === 'official_doe' || isStandIn(q));
   const batchLabel = typeof raw.batchLabel === 'string' ? raw.batchLabel.trim() : '';
   const hasStandardBatch =
     BATCH_LABEL_RE.test(batchLabel) || (isAllOfficial && OFFICIAL_BATCH_RE.test(batchLabel));
@@ -960,6 +1004,21 @@ export function validateManifestObject(raw) {
     }
 
     if (hasOptionVisualGrid) stats.visualOptionGridQuestions++;
+
+    // Math typography (mirror of src/shared/mathTypography.ts lintQuestionTypography)
+    {
+      const parts = Array.isArray(q.parts) ? q.parts.filter((p) => p && typeof p === 'object') : [];
+      const options = parts.flatMap((p) => (Array.isArray(p.options) ? p.options : []));
+      warnings.push(
+        ...lintQuestionTypography({
+          label: qLoc,
+          promptTexts: [q.stemPrefix ?? '', ...parts.map((p) => p.promptText ?? '')],
+          otherTexts: [...parts.map((p) => p.workedExplanation ?? ''), ...options.map((o) => o?.text ?? '')],
+          visual: q.visual,
+          optionVisuals: options.map((o) => o?.visual).filter(Boolean),
+        })
+      );
+    }
 
     // Gapped text decoy verification
     if (q.formatType === 'READ_GAPPED_TEXT' && stim?.extracts) {

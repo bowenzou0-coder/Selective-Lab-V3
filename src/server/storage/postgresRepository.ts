@@ -46,6 +46,7 @@ import { exportPostgresBackup, restorePostgresBackup } from './postgresBackup.ts
 import {
   queryAdminBankStatusSummary,
   queryBatchSummaries,
+  queryBenchmarkUnlockProgress,
   queryFilteredSelection,
   queryPoolHealthByLearner,
   queryQuestionsPaginatedSql,
@@ -1019,6 +1020,14 @@ export class PostgresRepository implements AppRepository {
   async getTodayAttemptCounts(studentId: string, datePrefix: string): Promise<TodayAttemptCounts> {
     await this.ensureSchema();
     return queryTodayAttemptCounts(this.pool, studentId, datePrefix);
+  }
+
+  async getBenchmarkUnlockProgress(
+    studentId: string,
+    sinceIso: string
+  ): Promise<{ correctPracticeAnswers: number }> {
+    await this.ensureSchema();
+    return queryBenchmarkUnlockProgress(this.pool, studentId, sinceIso);
   }
 
   async getStudentProgressStats(input: {

@@ -223,7 +223,7 @@ export function filterAndPaginateQuestions(input: {
         dailyQuestionTarget: progress.dailyQuestionTarget,
       }),
       masteredLiveQuestionIds: latest
-        .filter((q) => q.qcStatus === 'active' && q.poolType !== 'benchmark_holdout' &&
+        .filter((q) => q.qcStatus === 'active' && q.poolType === 'practice' &&
           progressByQid.get(q.questionId)?.completionStatus === 'done')
         .map((q) => q.questionId),
       batchSummaries: summarizeBatches(latest, batches, progressByQid),

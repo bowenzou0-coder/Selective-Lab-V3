@@ -881,7 +881,7 @@ export function buildParentVerdict(report: NswBenchmarkReport): ParentVerdictSum
  */
 export function buildBenchmarkReportRecord(input: {
   session: SessionRecord;
-  questions: Pick<QuestionItem, 'questionId' | 'section' | 'formatType' | 'batchLabel' | 'parts'>[];
+  questions: Pick<QuestionItem, 'questionId' | 'section' | 'formatType' | 'batchId' | 'batchLabel' | 'parts'>[];
   reviewResults: Record<string, MarkingResult[]>;
   writingReview?: { submissionId: string; evaluations: WritingEvaluationRecord[] }[];
   existingAiCoaching?: BenchmarkReportRecord['aiCoaching'];
@@ -897,10 +897,12 @@ export function buildBenchmarkReportRecord(input: {
     { skillId: string; section: SectionCode; missed: number; total: number; unanswered: number }
   >();
 
+  let detectedBatchId = '';
   let detectedBatchLabel = '';
   let hasWritingTask = false;
 
   for (const q of questions) {
+    if (!detectedBatchId && q.batchId) detectedBatchId = q.batchId;
     if (!detectedBatchLabel && q.batchLabel) detectedBatchLabel = q.batchLabel;
     if (q.section === 'WRIT' || q.formatType === 'WRIT_TYPED_TASK') {
       hasWritingTask = true;
@@ -1022,6 +1024,7 @@ export function buildBenchmarkReportRecord(input: {
     reportId: `brep_${session.sessionId}`,
     sessionId: session.sessionId,
     studentId: session.studentId || 'default-student',
+    ...(detectedBatchId || session.batchId ? { batchId: detectedBatchId || session.batchId } : {}),
     batchLabel: detectedBatchLabel || session.title || 'Benchmark Exam',
     title: session.title || `Benchmark: ${detectedBatchLabel || 'Official Holdout'}`,
     completedAtIso: session.completedAt || new Date().toISOString(),

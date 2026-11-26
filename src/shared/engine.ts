@@ -1,8 +1,11 @@
 import type {
   AlgorithmAdjustments,
+  DifficultyPreset,
   LearningConfig,
   MarkingResult,
   MasteryCertificationStatus,
+  PoolType,
+  QuestionFormatType,
   QuestionItem,
   QuestionMasteryEvidence,
   QuestionMemoryState,
@@ -14,6 +17,67 @@ import type {
   WritingDeterministicMetrics,
   WritingTaskSpec,
 } from './contracts';
+
+/** Benchmark-isolated pools (never mixed into everyday practice, daily plans, or fresh-pool mocks). */
+export function isBenchmarkPoolType(poolType: PoolType): boolean {
+  return poolType === 'benchmark_holdout' || poolType === 'official_calibration';
+}
+
+/** Everyday practice pool (strictly isolated from official calibration and holdout benchmarks). */
+export function isEverydayPracticePoolType(poolType: PoolType): boolean {
+  return poolType === 'practice';
+}
+
+/**
+ * Blended difficulty split across the practice pool:
+ * - Lower band: d <= 4.35 (d4.0–4.3, ~1.2x)
+ * - Upper band: d > 4.35 (d4.4–5.0, ~1.5x)
+ */
+export const DIFFICULTY_BLEND_LOW_CEILING = 4.35;
+
+export const DIFFICULTY_LOW_SHARE: Record<DifficultyPreset, number> = {
+  easy: 0.8,
+  medium: 0.5,
+  hard: 0.2,
+};
+
+const READ_FORMAT_ORDER: Partial<Record<QuestionFormatType, number>> = {
+  READ_FICTION_MCQ: 0,
+  READ_VOCAB_CLOZE: 1,
+  READ_POETRY_MCQ: 2,
+  READ_GAPPED_TEXT: 3,
+  READ_MULTIPLE_MATCH: 4,
+};
+
+function compareExamQuestions(a: SelectionQuestion, b: SelectionQuestion): number {
+  const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
+  const secDiff = sectionOrder[a.section] - sectionOrder[b.section];
+  if (secDiff !== 0) return secDiff;
+  if (a.section === 'READ' && b.section === 'READ') {
+    const fmtDiff = (READ_FORMAT_ORDER[a.formatType] ?? 99) - (READ_FORMAT_ORDER[b.formatType] ?? 99);
+    if (fmtDiff !== 0) return fmtDiff;
+  }
+  return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
+}
+
+export function questionAvgDifficulty(q: Pick<SelectionQuestion, 'parts'>): number {
+  if (!q.parts || q.parts.length === 0) return 4.2;
+  const sum = q.parts.reduce((acc, p) => acc + (p.difficultyCalibrated ?? p.difficultyInitial), 0);
+  return Number((sum / q.parts.length).toFixed(2));
+}
+
+export function shuffleSeeded<T>(items: readonly T[], seed: number): T[] {
+  const arr = [...items];
+  let s = (seed >>> 0) || 1;
+  for (let i = arr.length - 1; i > 0; i--) {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    const j = s % (i + 1);
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
 
 export function clampAlgorithmAdjustments(
   raw?: AlgorithmAdjustments
@@ -337,6 +401,7 @@ function pickWithDiversity<Q extends SelectionQuestion, T extends { q: Q; priori
 export interface PracticeSelectionInput<T extends SelectionQuestion = QuestionItem> {
   mode: SessionMode;
   sectionFilter?: SectionCode;
+  difficulty?: DifficultyPreset;
   questions: T[];
   skillStates: Record<string, SkillState>;
   questionMemory: Record<string, QuestionMemoryState>;
@@ -361,6 +426,92 @@ export interface PracticeCandidateInfo<T extends SelectionQuestion = QuestionIte
   avgDifficulty: number;
 }
 
+function pickBlendedWithDiversity<
+  Q extends SelectionQuestion,
+  T extends { q: Q; priority: number; avgDifficulty: number },
+>(candidates: T[], limit: number, difficulty: DifficultyPreset, seed: number): T[] {
+  if (limit <= 0 || candidates.length === 0) return [];
+  const lowBand = candidates.filter((c) => c.avgDifficulty <= DIFFICULTY_BLEND_LOW_CEILING);
+  const highBand = candidates.filter((c) => c.avgDifficulty > DIFFICULTY_BLEND_LOW_CEILING);
+  const lowTarget = Math.round(limit * DIFFICULTY_LOW_SHARE[difficulty]);
+  const highTarget = Math.max(0, limit - lowTarget);
+
+  const lowPicked = pickWithDiversity(lowBand, lowTarget);
+  const highPicked = pickWithDiversity(highBand, highTarget);
+  const chosen: T[] = [...lowPicked, ...highPicked];
+
+  if (chosen.length < limit) {
+    const chosenIds = new Set(chosen.map((c) => c.q.questionId));
+    const chosenFamilies = new Set(chosen.map((c) => c.q.questionFamilyId));
+    const remaining = candidates.filter(
+      (c) => !chosenIds.has(c.q.questionId) && !chosenFamilies.has(c.q.questionFamilyId)
+    );
+    chosen.push(...pickWithDiversity(remaining, limit - chosen.length));
+  }
+
+  return shuffleSeeded(chosen, seed ^ 0x9e3779b9);
+}
+
+function shuffleReadingPassageBlocks<Q extends SelectionQuestion, T extends { q: Q }>(
+  items: T[],
+  seed: number
+): T[] {
+  const blocks: T[][] = [];
+  for (const item of items) {
+    const prev = blocks[blocks.length - 1];
+    if (prev && item.q.stimulusId && prev[0]?.q.stimulusId === item.q.stimulusId) {
+      prev.push(item);
+    } else {
+      blocks.push([item]);
+    }
+  }
+  return shuffleSeeded(blocks, seed ^ 0x85ebca6b).flat();
+}
+
+function pickReadingBlendedCohesive<
+  Q extends SelectionQuestion,
+  T extends { q: Q; priority: number; avgDifficulty: number },
+>(candidates: T[], limit: number, difficulty: DifficultyPreset, seed: number): T[] {
+  if (limit <= 0 || candidates.length === 0) return [];
+
+  // Classify each passage group (stimulusId) by its mean difficulty so passages stay whole.
+  const stimDiffSums = new Map<string, { sum: number; count: number }>();
+  for (const c of candidates) {
+    const key = c.q.stimulusId ? `stim::${c.q.stimulusId}` : `solo::${c.q.questionId}`;
+    const cur = stimDiffSums.get(key) || { sum: 0, count: 0 };
+    cur.sum += c.avgDifficulty;
+    cur.count += 1;
+    stimDiffSums.set(key, cur);
+  }
+
+  const isLowGroup = (c: T): boolean => {
+    const key = c.q.stimulusId ? `stim::${c.q.stimulusId}` : `solo::${c.q.questionId}`;
+    const agg = stimDiffSums.get(key);
+    const mean = agg && agg.count > 0 ? agg.sum / agg.count : c.avgDifficulty;
+    return mean <= DIFFICULTY_BLEND_LOW_CEILING;
+  };
+
+  const lowBand = candidates.filter(isLowGroup);
+  const highBand = candidates.filter((c) => !isLowGroup(c));
+  const lowTarget = Math.round(limit * DIFFICULTY_LOW_SHARE[difficulty]);
+  const highTarget = Math.max(0, limit - lowTarget);
+
+  const lowPicked = lowTarget > 0 ? pickReadingCohesive(lowBand, lowTarget) : [];
+  const highPicked = highTarget > 0 ? pickReadingCohesive(highBand, highTarget) : [];
+  const chosen: T[] = [...lowPicked, ...highPicked];
+
+  if (chosen.length < limit) {
+    const chosenIds = new Set(chosen.map((c) => c.q.questionId));
+    const chosenFamilies = new Set(chosen.map((c) => c.q.questionFamilyId));
+    const remaining = candidates.filter(
+      (c) => !chosenIds.has(c.q.questionId) && !chosenFamilies.has(c.q.questionFamilyId)
+    );
+    chosen.push(...pickReadingCohesive(remaining, limit - chosen.length));
+  }
+
+  return shuffleReadingPassageBlocks(chosen, seed);
+}
+
 function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(input: PracticeSelectionInput<T>): {
   scored: PracticeCandidateInfo<T>[];
   sectionLimit?: number;
@@ -369,6 +520,7 @@ function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(inp
   const {
     mode,
     sectionFilter,
+    difficulty,
     questions,
     skillStates,
     questionMemory,
@@ -389,11 +541,31 @@ function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(inp
   const effectiveNoveltyWeight = config.scheduling.noveltyCoverageWeight * adj.noveltyCoverageWeightMultiplier;
   const autoRetireMastered = Boolean(config.poolPolicy?.autoRetireMastered);
 
-  // HARD INVARIANT: benchmark_holdout NEVER leaks into non-benchmark modes
+  const hasOfficialCalibration =
+    mode === 'diagnostic' &&
+    questions.some(
+      (q) =>
+        q.qcStatus === 'active' &&
+        q.poolType === 'official_calibration' &&
+        (!sectionFilter || q.section === sectionFilter)
+    );
+
+  // HARD INVARIANT:
+  // - benchmark_holdout & official_calibration NEVER leak into everyday practice/drills/daily plans
+  // - diagnostic (Starter Calibration) draws from official_calibration (falling back to practice if absent)
+  // - benchmark_exam draws from benchmark_holdout or official_calibration
   const eligible = questions.filter((q) => {
     if (q.qcStatus !== 'active') return false;
-    if (mode === 'benchmark_exam') return q.poolType === 'benchmark_holdout';
-    if (q.poolType === 'benchmark_holdout') return false;
+    if (mode === 'benchmark_exam') return isBenchmarkPoolType(q.poolType);
+    if (mode === 'diagnostic') {
+      if (hasOfficialCalibration) {
+        if (q.poolType !== 'official_calibration') return false;
+      } else if (q.poolType !== 'practice') {
+        return false;
+      }
+    } else if (!isEverydayPracticePoolType(q.poolType)) {
+      return false;
+    }
     if (sectionFilter && q.section !== sectionFilter) return false;
     if (autoRetireMastered && mode !== 'spaced_review') {
       const ev = findFamilyEvidence(q, evidenceMap);
@@ -416,6 +588,7 @@ function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(inp
       );
       const isNeedsRepair = ev?.status === 'needs_repair';
       const isRetained = ev?.status === 'retained';
+      const isUnseen = !mem && (!ev || ev.status === 'unseen');
 
       const meanSkillMastery =
         q.parts.reduce((acc, p) => acc + (skillStates[p.skillId]?.masteryScore ?? 0.5), 0) /
@@ -430,17 +603,16 @@ function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(inp
             return acc + clamped;
           }, 0) / Math.max(1, q.parts.length)
         : 1.0;
-      const avgDifficulty =
-        q.parts.reduce((acc, p) => acc + p.difficultyInitial, 0) / Math.max(1, q.parts.length);
+      const avgDifficulty = questionAvgDifficulty(q);
       const targetDiff = 1.5 + meanSkillMastery * 3.0 + adj.zpdDifficultyOffset;
-      const zpdPenalty = Math.abs(avgDifficulty - targetDiff) * 0.25;
+      const zpdPenalty = difficulty ? 0 : Math.abs(avgDifficulty - targetDiff) * 0.25;
 
       let priority = 0;
       if (isDue) priority += effectiveSpacedWeight;
       if (isConfirmationDue) priority += effectiveSpacedWeight * 1.15;
       if (isNeedsRepair) priority += effectiveWeakestWeight * 1.1;
-      if (!mem && (!ev || ev.status === 'unseen')) {
-        priority += effectiveNoveltyWeight;
+      if (isUnseen) {
+        priority += difficulty ? effectiveNoveltyWeight + 10.0 : effectiveNoveltyWeight;
       }
       if (isRetained && !isDue) priority -= 0.8;
       priority += (1 - meanSkillMastery) * effectiveWeakestWeight;
@@ -456,7 +628,7 @@ function scorePracticeCandidates<T extends SelectionQuestion = QuestionItem>(inp
         isNeedsRepair,
         isOnCooldown,
         meanSkillMastery: Number(meanSkillMastery.toFixed(3)),
-        avgDifficulty: Number(avgDifficulty.toFixed(2)),
+        avgDifficulty,
       };
     })
     .sort((a, b) => b.priority - a.priority);
@@ -605,6 +777,22 @@ export function selectPracticeSession<T extends SelectionQuestion = QuestionItem
   const { scored, sectionLimit, effectiveCaps } = scorePracticeCandidates(input);
 
   if (sectionLimit !== undefined) {
+    if (input.difficulty && input.sectionFilter !== 'WRIT') {
+      if (input.sectionFilter === 'READ') {
+        return pickReadingBlendedCohesive<T, PracticeCandidateInfo<T>>(
+          scored,
+          sectionLimit,
+          input.difficulty,
+          input.seed
+        ).map((item) => item.q);
+      }
+      return pickBlendedWithDiversity<T, PracticeCandidateInfo<T>>(
+        scored,
+        sectionLimit,
+        input.difficulty,
+        input.seed
+      ).map((item) => item.q);
+    }
     if (input.sectionFilter === 'READ') {
       return pickReadingCohesive<T, PracticeCandidateInfo<T>>(scored, sectionLimit).map((item) => item.q);
     }
@@ -617,7 +805,27 @@ export function selectPracticeSession<T extends SelectionQuestion = QuestionItem
     const cap = Math.max(0, Number(caps[sec] ?? 0));
     if (cap <= 0) continue;
     const secScored = scored.filter((x) => x.q.section === sec);
-    if (sec === 'READ') {
+    if (input.difficulty && sec !== 'WRIT') {
+      if (sec === 'READ') {
+        picked.push(
+          ...pickReadingBlendedCohesive<T, PracticeCandidateInfo<T>>(
+            secScored,
+            cap,
+            input.difficulty,
+            input.seed
+          ).map((item) => item.q)
+        );
+      } else {
+        picked.push(
+          ...pickBlendedWithDiversity<T, PracticeCandidateInfo<T>>(
+            secScored,
+            cap,
+            input.difficulty,
+            input.seed
+          ).map((item) => item.q)
+        );
+      }
+    } else if (sec === 'READ') {
       picked.push(...pickReadingCohesive<T, PracticeCandidateInfo<T>>(secScored, cap).map((item) => item.q));
     } else {
       picked.push(...pickWithDiversity<T, PracticeCandidateInfo<T>>(secScored, cap).map((item) => item.q));
@@ -675,7 +883,6 @@ export function selectMockTestQuestions<T extends SelectionQuestion = QuestionIt
   allowHoldout?: boolean;
 }): T[] {
   const { batch, sectionFilter, questions, allowHoldout = batch === 'PT3' } = input;
-  const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
   return questions
     .filter((q) => {
       if (q.qcStatus !== 'active') return false;
@@ -684,11 +891,7 @@ export function selectMockTestQuestions<T extends SelectionQuestion = QuestionIt
       if (sectionFilter && q.section !== sectionFilter) return false;
       return true;
     })
-    .sort((a, b) => {
-      const secDiff = sectionOrder[a.section] - sectionOrder[b.section];
-      if (secDiff !== 0) return secDiff;
-      return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
-    });
+    .sort(compareExamQuestions);
 }
 
 export function selectBatchMockQuestions<T extends SelectionQuestion = QuestionItem>(input: {
@@ -697,20 +900,15 @@ export function selectBatchMockQuestions<T extends SelectionQuestion = QuestionI
   questions: T[];
 }): T[] {
   const { batchId, sectionFilter, questions } = input;
-  const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
   return questions
     .filter((q) => {
       if (q.qcStatus !== 'active') return false;
-      if (q.poolType === 'benchmark_holdout') return false;
+      if (!isEverydayPracticePoolType(q.poolType)) return false;
       if (q.batchId !== batchId) return false;
       if (sectionFilter && q.section !== sectionFilter) return false;
       return true;
     })
-    .sort((a, b) => {
-      const secDiff = sectionOrder[a.section] - sectionOrder[b.section];
-      if (secDiff !== 0) return secDiff;
-      return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
-    });
+    .sort(compareExamQuestions);
 }
 
 export function selectBenchmarkHoldoutQuestions<T extends SelectionQuestion = QuestionItem>(input: {
@@ -719,22 +917,23 @@ export function selectBenchmarkHoldoutQuestions<T extends SelectionQuestion = Qu
   questions: T[];
 }): T[] {
   const { batchId, sectionFilter, questions } = input;
-  const sectionOrder: Record<SectionCode, number> = { READ: 0, MATH: 1, THINK: 2, WRIT: 3 };
-  const holdouts = questions.filter((q) => {
+  const benchmarkItems = questions.filter((q) => {
     if (q.qcStatus !== 'active') return false;
-    if (q.poolType !== 'benchmark_holdout') return false;
+    if (!isBenchmarkPoolType(q.poolType)) return false;
     if (sectionFilter && q.section !== sectionFilter) return false;
     return true;
   });
-  if (holdouts.length === 0) return [];
+  if (benchmarkItems.length === 0) return [];
 
-  let scoped = holdouts;
+  let scoped = benchmarkItems;
   if (batchId) {
-    scoped = holdouts.filter((q) => q.batchId === batchId);
+    scoped = benchmarkItems.filter((q) => q.batchId === batchId);
   } else {
-    // If multiple holdout batches exist, select one cohesive batch (latest batchLabel first)
+    // Prefer benchmark_holdout batches first, then fall back to official_calibration batches.
+    const holdoutsOnly = benchmarkItems.filter((q) => q.poolType === 'benchmark_holdout');
+    const poolToPick = holdoutsOnly.length > 0 ? holdoutsOnly : benchmarkItems;
     const batchLabels = new Map<string, string>();
-    for (const q of holdouts) {
+    for (const q of poolToPick) {
       if (q.batchId && !batchLabels.has(q.batchId)) {
         batchLabels.set(q.batchId, q.batchLabel || q.batchId);
       }
@@ -743,15 +942,13 @@ export function selectBenchmarkHoldoutQuestions<T extends SelectionQuestion = Qu
       const [chosenBatchId] = Array.from(batchLabels.entries()).sort((a, b) =>
         b[1].localeCompare(a[1])
       )[0];
-      scoped = holdouts.filter((q) => q.batchId === chosenBatchId);
+      scoped = poolToPick.filter((q) => q.batchId === chosenBatchId);
+    } else {
+      scoped = poolToPick;
     }
   }
 
-  return scoped.sort((a, b) => {
-    const secDiff = sectionOrder[a.section] - sectionOrder[b.section];
-    if (secDiff !== 0) return secDiff;
-    return a.questionId.localeCompare(b.questionId, undefined, { numeric: true });
-  });
+  return scoped.sort(compareExamQuestions);
 }
 
 export const CANONICAL_POOL_MOCK_COUNTS: Record<SectionCode, number> = {
@@ -761,15 +958,168 @@ export const CANONICAL_POOL_MOCK_COUNTS: Record<SectionCode, number> = {
   WRIT: 1,
 };
 
+export const MAX_POOL_MOCK_COUNTS: Record<'ALL' | SectionCode, number> = {
+  READ: 34,
+  MATH: 50,
+  THINK: 50,
+  WRIT: 1,
+  ALL: 93,
+};
+
+export const OFFICIAL_SECTION_MINUTES: Record<'ALL' | SectionCode, number> = {
+  READ: 45,
+  MATH: 40,
+  THINK: 40,
+  WRIT: 30,
+  ALL: 155,
+};
+
 /**
- * Dynamically assembles a fresh mock exam directly from the live active Question Bank
- * (no hardcoded test batches required). Strictly excludes benchmark_holdout items,
- * prioritizes unseen questions first, then least-recently-seen, and maintains section order.
+ * Allocates a requested total question count across READ / MATH / THINK / WRIT
+ * following the canonical NSW Selective 17 : 35 : 40 (+1 Writing) proportions.
+ */
+export function allocateFullPoolMockCaps(
+  totalLimit: number,
+  availableBySection?: Partial<Record<SectionCode, number>>
+): Record<SectionCode, number> {
+  const safeAvail = (sec: SectionCode) =>
+    availableBySection?.[sec] !== undefined ? Math.max(0, availableBySection[sec]!) : Number.POSITIVE_INFINITY;
+
+  const clampedTotal = Math.max(1, Math.min(MAX_POOL_MOCK_COUNTS.ALL, Math.round(totalLimit)));
+  const canonicalTotal =
+    CANONICAL_POOL_MOCK_COUNTS.READ +
+    CANONICAL_POOL_MOCK_COUNTS.MATH +
+    CANONICAL_POOL_MOCK_COUNTS.THINK +
+    CANONICAL_POOL_MOCK_COUNTS.WRIT;
+
+  if (clampedTotal >= canonicalTotal) {
+    return {
+      READ: Math.min(CANONICAL_POOL_MOCK_COUNTS.READ, safeAvail('READ')),
+      MATH: Math.min(CANONICAL_POOL_MOCK_COUNTS.MATH, safeAvail('MATH')),
+      THINK: Math.min(CANONICAL_POOL_MOCK_COUNTS.THINK, safeAvail('THINK')),
+      WRIT: Math.min(CANONICAL_POOL_MOCK_COUNTS.WRIT, safeAvail('WRIT')),
+    };
+  }
+
+  const includeWrit = clampedTotal >= 12 && safeAvail('WRIT') > 0;
+  const objectiveBudget = Math.max(1, clampedTotal - (includeWrit ? 1 : 0));
+  const objTotalCanonical =
+    CANONICAL_POOL_MOCK_COUNTS.READ + CANONICAL_POOL_MOCK_COUNTS.MATH + CANONICAL_POOL_MOCK_COUNTS.THINK;
+  const objSecs: SectionCode[] = ['READ', 'MATH', 'THINK'];
+
+  const raw = objSecs.map((sec) => {
+    const exact = (objectiveBudget * CANONICAL_POOL_MOCK_COUNTS[sec]) / objTotalCanonical;
+    const base = Math.min(safeAvail(sec), Math.floor(exact));
+    return { sec, base, frac: exact - Math.floor(exact) };
+  });
+
+  const caps: Record<SectionCode, number> = {
+    READ: raw[0].base,
+    MATH: raw[1].base,
+    THINK: raw[2].base,
+    WRIT: includeWrit ? 1 : 0,
+  };
+
+  // Guarantee at least 1 item per available objective section when budget >= 3
+  if (objectiveBudget >= 3) {
+    for (const sec of objSecs) {
+      if (caps[sec] === 0 && safeAvail(sec) > 0) {
+        caps[sec] = 1;
+      }
+    }
+  }
+
+  let assigned = caps.READ + caps.MATH + caps.THINK;
+  // Distribute remaining slots by largest fractional remainder, respecting availability
+  const byRemainder = [...raw].sort((a, b) => b.frac - a.frac);
+  while (assigned < objectiveBudget) {
+    let added = false;
+    for (const entry of byRemainder) {
+      if (assigned >= objectiveBudget) break;
+      if (caps[entry.sec] < safeAvail(entry.sec)) {
+        caps[entry.sec] += 1;
+        assigned += 1;
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+  // Trim if minimum-1 guarantee overshot objectiveBudget
+  while (assigned > objectiveBudget) {
+    const largest = objSecs.reduce((best, sec) => (caps[sec] > caps[best] ? sec : best), objSecs[0]);
+    if (caps[largest] <= 0) break;
+    caps[largest] -= 1;
+    assigned -= 1;
+  }
+
+  return caps;
+}
+
+/** Computes official 1.0x pace minutes for a set of per-section item counts. */
+export function computeOfficialPaceMinutesFromCounts(counts: Partial<Record<SectionCode, number>>): number {
+  const read = Math.max(0, counts.READ ?? 0);
+  const math = Math.max(0, counts.MATH ?? 0);
+  const think = Math.max(0, counts.THINK ?? 0);
+  const writ = Math.max(0, counts.WRIT ?? 0);
+  if (read + math + think + writ === 0) return 0;
+
+  if (
+    read === CANONICAL_POOL_MOCK_COUNTS.READ &&
+    math === CANONICAL_POOL_MOCK_COUNTS.MATH &&
+    think === CANONICAL_POOL_MOCK_COUNTS.THINK &&
+    writ === CANONICAL_POOL_MOCK_COUNTS.WRIT
+  ) {
+    return OFFICIAL_SECTION_MINUTES.ALL;
+  }
+
+  const exactMinutes =
+    (read / CANONICAL_POOL_MOCK_COUNTS.READ) * OFFICIAL_SECTION_MINUTES.READ +
+    (math / CANONICAL_POOL_MOCK_COUNTS.MATH) * OFFICIAL_SECTION_MINUTES.MATH +
+    (think / CANONICAL_POOL_MOCK_COUNTS.THINK) * OFFICIAL_SECTION_MINUTES.THINK +
+    writ * OFFICIAL_SECTION_MINUTES.WRIT;
+
+  const isMultiSection = [read, math, think, writ].filter((n) => n > 0).length > 1;
+  const minFloor = writ > 0 && read + math + think === 0 ? OFFICIAL_SECTION_MINUTES.WRIT : isMultiSection ? 10 : 5;
+  return Math.max(minFloor, Math.round(exactMinutes));
+}
+
+/** Computes official 1.0x pace minutes for a planned pool mock scope & question count. */
+export function computePoolMockBaseMinutes(
+  scope: 'ALL' | SectionCode,
+  questionCount: number,
+  availableBySection?: Partial<Record<SectionCode, number>>
+): number {
+  if (scope === 'WRIT') return OFFICIAL_SECTION_MINUTES.WRIT;
+  const count = Math.max(0, Math.round(questionCount));
+  if (count === 0) return 0;
+  if (scope === 'ALL') {
+    const caps = allocateFullPoolMockCaps(count, availableBySection);
+    return computeOfficialPaceMinutesFromCounts(caps);
+  }
+  if (count === CANONICAL_POOL_MOCK_COUNTS[scope]) return OFFICIAL_SECTION_MINUTES[scope];
+  return computeOfficialPaceMinutesFromCounts({ [scope]: count });
+}
+
+/** Computes official 1.0x pace minutes from actual selected questions. */
+export function computeOfficialPaceMinutesForItems(items: Pick<SelectionQuestion, 'section'>[]): number {
+  const counts: Record<SectionCode, number> = { READ: 0, MATH: 0, THINK: 0, WRIT: 0 };
+  for (const item of items) {
+    counts[item.section] = (counts[item.section] ?? 0) + 1;
+  }
+  return computeOfficialPaceMinutesFromCounts(counts);
+}
+
+/**
+ * Dynamically assembles a fresh mock exam directly from the live active practice pool
+ * (`poolType === 'practice'`). Strictly excludes benchmark_holdout and official_calibration items,
+ * prioritizes unseen questions first, applies soft blended difficulty quotas when requested,
+ * and shuffles items within each section so timing bottlenecks don't skew accuracy.
  */
 export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionItem>(input: {
   questions: T[];
   sectionFilter?: SectionCode;
   questionCount?: number;
+  difficulty?: DifficultyPreset;
   questionMemory?: Record<string, QuestionMemoryState>;
   evidenceMap?: Record<string, QuestionMasteryEvidence>;
   autoRetireMastered?: boolean;
@@ -779,6 +1129,7 @@ export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionIt
     questions,
     sectionFilter,
     questionCount,
+    difficulty,
     questionMemory = {},
     evidenceMap,
     autoRetireMastered = false,
@@ -787,7 +1138,7 @@ export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionIt
 
   const eligible = questions.filter((q) => {
     if (q.qcStatus !== 'active') return false;
-    if (q.poolType === 'benchmark_holdout') return false;
+    if (!isEverydayPracticePoolType(q.poolType)) return false;
     if (sectionFilter && q.section !== sectionFilter) return false;
     if (autoRetireMastered) {
       const ev = findFamilyEvidence(q, evidenceMap);
@@ -812,70 +1163,65 @@ export function selectPoolMockQuestions<T extends SelectionQuestion = QuestionIt
     return score;
   };
 
+  type MockScored = { q: T; priority: number; avgDifficulty: number };
+  const pickSection = (sec: SectionCode, secItems: T[], cap: number, secSeed: number): T[] => {
+    if (cap <= 0 || secItems.length === 0) return [];
+    const scored: MockScored[] = secItems
+      .map((q) => ({ q, priority: scoreForFreshMock(q), avgDifficulty: questionAvgDifficulty(q) }))
+      .sort((a, b) => b.priority - a.priority);
+    if (sec === 'READ') {
+      if (difficulty) {
+        return pickReadingBlendedCohesive<T, MockScored>(scored, cap, difficulty, secSeed).map((x) => x.q);
+      }
+      return shuffleReadingPassageBlocks(
+        pickReadingCohesive<T, MockScored>(scored, cap),
+        secSeed
+      ).map((x) => x.q);
+    }
+    if (sec === 'WRIT') {
+      return pickWithDiversity<T, MockScored>(scored, cap).map((x) => x.q);
+    }
+    if (difficulty) {
+      return pickBlendedWithDiversity<T, MockScored>(scored, cap, difficulty, secSeed).map((x) => x.q);
+    }
+    return shuffleSeeded(pickWithDiversity<T, MockScored>(scored, cap), secSeed ^ 0x9e3779b9).map((x) => x.q);
+  };
+
   if (sectionFilter) {
+    const maxCap = MAX_POOL_MOCK_COUNTS[sectionFilter];
     const cap =
       typeof questionCount === 'number' && questionCount > 0
-        ? Math.round(questionCount)
+        ? Math.min(maxCap, Math.round(questionCount))
         : CANONICAL_POOL_MOCK_COUNTS[sectionFilter];
-    const scored = eligible
-      .map((q) => ({ q, priority: scoreForFreshMock(q) }))
-      .sort((a, b) => b.priority - a.priority);
-    if (sectionFilter === 'READ') {
-      return pickReadingCohesive<T, { q: T; priority: number }>(scored, cap).map((x) => x.q);
-    }
-    return pickWithDiversity<T, { q: T; priority: number }>(scored, cap).map((x) => x.q);
+    return pickSection(sectionFilter, eligible, cap, seed);
   }
 
   const picked: T[] = [];
   const totalLimit =
-    typeof questionCount === 'number' && questionCount > 0 ? Math.round(questionCount) : null;
+    typeof questionCount === 'number' && questionCount > 0
+      ? Math.min(MAX_POOL_MOCK_COUNTS.ALL, Math.round(questionCount))
+      : null;
   const sections: SectionCode[] = ['READ', 'MATH', 'THINK', 'WRIT'];
 
   if (totalLimit !== null) {
-    // Proportional distribution across READ / MATH / THINK (plus 1 WRIT if totalLimit >= 12 and WRIT available)
-    const hasWrit = eligible.some((q) => q.section === 'WRIT') && totalLimit >= 12;
-    const objectiveBudget = hasWrit ? totalLimit - 1 : totalLimit;
-    const perObj = Math.max(1, Math.floor(objectiveBudget / 3));
-    let remainder = Math.max(0, objectiveBudget - perObj * 3);
-    const caps: Record<SectionCode, number> = {
-      READ: perObj + (remainder-- > 0 ? 1 : 0),
-      MATH: perObj + (remainder-- > 0 ? 1 : 0),
-      THINK: perObj + (remainder-- > 0 ? 1 : 0),
-      WRIT: hasWrit ? 1 : 0,
+    const availBySec: Record<SectionCode, number> = {
+      READ: eligible.filter((q) => q.section === 'READ').length,
+      MATH: eligible.filter((q) => q.section === 'MATH').length,
+      THINK: eligible.filter((q) => q.section === 'THINK').length,
+      WRIT: eligible.filter((q) => q.section === 'WRIT').length,
     };
-    for (const sec of sections) {
-      const secScored = eligible
-        .filter((q) => q.section === sec)
-        .map((q) => ({ q, priority: scoreForFreshMock(q) }))
-        .sort((a, b) => b.priority - a.priority);
-      if (sec === 'READ') {
-        picked.push(...pickReadingCohesive<T, { q: T; priority: number }>(secScored, caps[sec]).map((x) => x.q));
-      } else {
-        picked.push(...pickWithDiversity<T, { q: T; priority: number }>(secScored, caps[sec]).map((x) => x.q));
-      }
-    }
+    const caps = allocateFullPoolMockCaps(totalLimit, availBySec);
+    sections.forEach((sec, idx) => {
+      picked.push(...pickSection(sec, eligible.filter((q) => q.section === sec), caps[sec], seed + idx * 131));
+    });
     return picked;
   }
 
-  for (const sec of sections) {
-    const secScored = eligible
-      .filter((q) => q.section === sec)
-      .map((q) => ({ q, priority: scoreForFreshMock(q) }))
-      .sort((a, b) => b.priority - a.priority);
-    if (sec === 'READ') {
-      picked.push(
-        ...pickReadingCohesive<T, { q: T; priority: number }>(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map(
-          (x) => x.q
-        )
-      );
-    } else {
-      picked.push(
-        ...pickWithDiversity<T, { q: T; priority: number }>(secScored, CANONICAL_POOL_MOCK_COUNTS[sec]).map(
-          (x) => x.q
-        )
-      );
-    }
-  }
+  sections.forEach((sec, idx) => {
+    picked.push(
+      ...pickSection(sec, eligible.filter((q) => q.section === sec), CANONICAL_POOL_MOCK_COUNTS[sec], seed + idx * 131)
+    );
+  });
   return picked;
 }
 
@@ -929,7 +1275,7 @@ const REPAIR_SECTION_ORDER: Record<SectionCode, number> = { READ: 0, MATH: 1, TH
 export function isRepairEligible(q: Pick<SelectionQuestion, 'qcStatus' | 'poolType' | 'formatType' | 'section'>): boolean {
   return (
     q.qcStatus === 'active' &&
-    q.poolType !== 'benchmark_holdout' &&
+    isEverydayPracticePoolType(q.poolType) &&
     q.formatType !== 'WRIT_TYPED_TASK' &&
     q.section !== 'WRIT'
   );

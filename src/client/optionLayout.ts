@@ -21,8 +21,23 @@ export function shouldUseVisualOptionGrid(options: readonly OptionLike[]): boole
   const allShortLabels = options.every(
     (opt) => !opt.text || opt.text.trim().length <= 48
   );
-  return allShortLabels;
+  // Wide strip figures (e.g. a row of shapes from a past paper) shrink to a sliver in a 2×2 tile
+  const hasWideStrip = options.some((opt) => (svgAspectRatio(opt.visual) ?? 0) > WIDE_OPTION_ASPECT);
+  return allShortLabels && !hasWideStrip;
 }
+
+/** Width ÷ height of an inline SVG's viewBox, or null when unknown. */
+export function svgAspectRatio(visual?: VisualSpec): number | null {
+  if (!visual || visual.visualType !== 'inline_svg' || !visual.svgMarkup) return null;
+  const m = visual.svgMarkup.match(/viewBox\s*=\s*["']\s*-?[\d.]+[\s,]+-?[\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/);
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return w > 0 && h > 0 ? w / h : null;
+}
+
+/** Option figures wider than this (w:h) render stacked at full width instead of in the tile grid. */
+export const WIDE_OPTION_ASPECT = 2.6;
 
 export function getVisualOptionTileHeightClass(optionCount: number): string {
   // 4-option 2x2 grid fits comfortably at 136px stage height (~520px total right pane);

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { Express } from 'express';
-import { requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
+import { requireAdmin, requireStudentOrAdmin, type AuthenticatedRequest } from '../auth.ts';
 import { GeminiServiceError } from '../geminiClient.ts';
 import { evaluateWritingWithGemini } from '../geminiWriting.ts';
 import type { QuestionFlagRecord, WritingDeterministicMetrics } from '../../shared/contracts.ts';
@@ -225,10 +225,12 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
     }
   });
 
-  app.get('/api/student/export', requireStudentOrAdmin, async (req: AuthenticatedRequest, res) => {
+  // Admin-only learner progress export (CSV/JSON) — restricted to prevent question scraping via student accounts
+  app.get(['/api/admin/export/progress', '/api/student/export'], requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       await ctx.ensureSeeded();
-      const studentId = req.auth!.studentId;
+      const requestedId = typeof req.query.studentId === 'string' ? req.query.studentId.trim() : '';
+      const studentId = requestedId && requestedId !== 'none' ? requestedId : req.auth!.studentId;
       const format = String(req.query.format || 'json');
       const [attempts, skillStates, sessions, writingSubmissions, evidenceMap] = await Promise.all([
         repo.listPartAttempts(5000, studentId, false),
@@ -295,7 +297,7 @@ export function registerStudentProgressRoutes(app: Express, ctx: AppContext): vo
         )
       );
     } catch (err) {
-      console.error('GET /api/student/export error:', err);
+      console.error('GET /api/admin/export/progress error:', err);
       res.status(500).json({ error: 'Failed to export progress.' });
     }
   });

@@ -16,6 +16,10 @@ export interface NumericInputProps {
   showRange?: boolean;
   /** Show `−` / `+` buttons that move by `step` within `min`/`max`. */
   stepper?: boolean;
+  /** Short inline unit suffix shown inside the field (e.g. "q" or "min"). */
+  suffix?: string;
+  /** Compact height/padding variant for inline rows. */
+  compact?: boolean;
   /** Field name used in the stepper buttons' accessible labels ("Increase Daily goal"). */
   label?: string;
   className?: string;
@@ -45,6 +49,8 @@ export function NumericInput({
   integer = false,
   showRange = false,
   stepper = false,
+  suffix,
+  compact = false,
   label,
   className = '',
   onCommit,
@@ -114,20 +120,23 @@ export function NumericInput({
         setFocused(false);
         commitClamped(draft);
       }}
-      data-focus-ring={showRange || stepper ? 'parent' : undefined}
+      data-focus-ring={showRange || stepper || suffix ? 'parent' : undefined}
       className={
-        showRange || stepper
-          ? 'min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-[#113C36] tabular-nums focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
+        showRange || stepper || suffix
+          ? `min-w-0 flex-1 bg-transparent ${
+              compact ? 'px-2 py-1 text-xs text-center font-semibold' : 'px-3 py-2 text-sm'
+            } text-[#113C36] tabular-nums focus:outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`
           : `${BARE_INPUT_CLASS} ${className}`
       }
     />
   );
 
-  if (!showRange && !stepper) return input;
+  if (!showRange && !stepper && !suffix) return input;
 
   const fieldName = label || t('common.valueFallback');
-  const stepButtonClass =
-    'grid w-8 shrink-0 cursor-pointer place-items-center text-[#4A5955] transition-[background-color,color] duration-150 hover:bg-[#F3EFE8] hover:text-[#113C36] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#113C36] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
+  const stepButtonClass = compact
+    ? 'grid w-7 shrink-0 cursor-pointer place-items-center text-[#4A5955] transition-[background-color,color] duration-150 hover:bg-[#F3EFE8] hover:text-[#113C36] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#113C36] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent'
+    : 'grid w-8 shrink-0 cursor-pointer place-items-center text-[#4A5955] transition-[background-color,color] duration-150 hover:bg-[#F3EFE8] hover:text-[#113C36] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#113C36] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
 
   return (
     <div
@@ -145,10 +154,18 @@ export function NumericInput({
           data-focus-ring="inset"
           className={`${stepButtonClass} border-r border-[#E5DFD5]`}
         >
-          <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+          <Minus className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} aria-hidden="true" />
         </button>
       )}
       {input}
+      {suffix && (
+        <span
+          className={`self-center whitespace-nowrap ${compact ? 'pr-2 text-[11px]' : 'pr-2.5 text-xs'} text-[#615E57] font-medium select-none`}
+          aria-hidden="true"
+        >
+          {suffix}
+        </span>
+      )}
       {showRange && (
         <span
           id={rangeId}
@@ -170,7 +187,7 @@ export function NumericInput({
           data-focus-ring="inset"
           className={`${stepButtonClass} border-l border-[#E5DFD5]`}
         >
-          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          <Plus className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} aria-hidden="true" />
         </button>
       )}
     </div>

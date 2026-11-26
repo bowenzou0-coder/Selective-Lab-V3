@@ -453,6 +453,7 @@ export default function App() {
           ) : effectivePath.startsWith('/benchmarks') ? (
             <Suspense fallback={<RouteFallback label={t('app.loading')} />}>
               <BenchmarksView
+                isAdmin={auth.role === 'admin'}
                 onOpenSession={(id, isLocked = true) => {
                   if (isLocked) {
                     setAuth((prev) => (prev?.authenticated ? { ...prev, activeSessionId: id } : prev));

@@ -11,7 +11,8 @@ import type {
   VisualSpec,
 } from '../../shared/contracts';
 import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from '../optionLayout';
-import { FormattedText } from './FormattedText';
+import { FormattedText, MathText } from './FormattedText';
+import { MAX_SHORTCUT_OPTIONS } from './session/examShortcuts';
 import { ReadingRightAnswerPane, ReadingStimulusPane } from './ReadingRenderers';
 import { VisualRenderer } from './VisualRenderer';
 import { Collapsible, DisclosureChevron } from './ui/Collapsible';
@@ -553,7 +554,11 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                   </span>
                   {!readOnly && (
                     <span className="text-[#615E57]">
-                      {t('ws.shortcutsHint', { count: activePart.options.length })}
+                      {t('ws.shortcutsHint', {
+                        first: activePart.options[0]?.key || 'A',
+                        last: activePart.options[Math.min(activePart.options.length, MAX_SHORTCUT_OPTIONS) - 1]?.key || 'D',
+                        count: Math.min(activePart.options.length, MAX_SHORTCUT_OPTIONS),
+                      })}
                     </span>
                   )}
                 </div>
@@ -620,7 +625,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                                       elim ? 'line-through text-[#615E57]' : ''
                                     }`}
                                   >
-                                    {opt.text}
+                                    <MathText text={opt.text} />
                                   </span>
                                 )}
                               </div>
@@ -737,7 +742,7 @@ export const QuestionWorkspace = memo(function QuestionWorkspace({
                                     elim ? 'line-through text-[#615E57]' : ''
                                   }`}
                                 >
-                                  {opt.text}
+                                  <MathText text={opt.text} />
                                 </div>
                               )}
                               {opt.visual && <VisualRenderer visual={opt.visual} compact />}

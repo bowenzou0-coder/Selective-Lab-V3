@@ -237,9 +237,9 @@ export async function queryStudentDashboardBankSummary(
        ORDER BY (e.evidence_key = q.question_family_id || '__' || coalesce(q.data->>'evidenceRevision', '')) DESC,
                 e.evidence_key ASC
        LIMIT 1
-     ) ev ON q.pool_type <> 'benchmark_holdout'
+     ) ev ON q.pool_type = 'practice'
      LEFT JOIN question_memory mem
-       ON q.pool_type <> 'benchmark_holdout'
+       ON q.pool_type = 'practice'
       AND mem.student_id = $1
       AND mem.question_family_id = q.question_family_id
      GROUP BY 1, 2, 3, 4, 5, 6, 7`,
@@ -263,18 +263,25 @@ export async function queryStudentDashboardBankSummary(
   >();
   const benchmarkBatchMap = new Map<
     string,
-    { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }
+    {
+      batchId: string;
+      batchLabel: string;
+      poolType: 'benchmark_holdout' | 'official_calibration';
+      counts: Record<SectionCode, number>;
+      total: number;
+    }
   >();
 
   for (const r of rows) {
     if (r.tag === 'PT1' || r.tag === 'PT2' || r.tag === 'PT3') {
       batchCounts[r.tag][r.section] += r.n;
     }
-    if (r.poolType === 'benchmark_holdout') {
+    if (r.poolType === 'benchmark_holdout' || r.poolType === 'official_calibration') {
       if (r.batchId) {
         const entry = benchmarkBatchMap.get(r.batchId) || {
           batchId: r.batchId,
           batchLabel: r.batchLabel || r.batchId,
+          poolType: r.poolType as 'benchmark_holdout' | 'official_calibration',
           counts: { READ: 0, MATH: 0, THINK: 0, WRIT: 0 },
           total: 0,
         };
@@ -282,6 +289,9 @@ export async function queryStudentDashboardBankSummary(
         entry.total += r.n;
         benchmarkBatchMap.set(r.batchId, entry);
       }
+      continue;
+    }
+    if (r.poolType !== 'practice') {
       continue;
     }
     if (!(autoRetireMastered && r.completionStatus === 'done')) {
@@ -307,8 +317,31 @@ export async function queryStudentDashboardBankSummary(
     batchCounts,
     poolCounts,
     customBatches: Array.from(customBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
-    benchmarkBatches: Array.from(benchmarkBatchMap.values()).sort((a, b) => b.batchLabel.localeCompare(a.batchLabel)),
+    benchmarkBatches: Array.from(benchmarkBatchMap.values()).sort((a, b) => {
+      if (a.poolType !== b.poolType) return a.poolType === 'official_calibration' ? -1 : 1;
+      if (a.poolType === 'official_calibration') return a.batchLabel.localeCompare(b.batchLabel);
+      return b.batchLabel.localeCompare(a.batchLabel);
+    }),
   };
+}
+
+export async function queryBenchmarkUnlockProgress(
+  pool: Pool,
+  studentId: string,
+  sinceIso: string
+): Promise<{ correctPracticeAnswers: number }> {
+  const { rows } = await pool.query<{ correctPracticeAnswers: number }>(
+    `SELECT count(*)::int AS "correctPracticeAnswers"
+     FROM part_attempts pa
+     LEFT JOIN sessions s ON s.session_id = pa.session_id
+     WHERE pa.student_id = $1
+       AND NOT pa.is_sandbox
+       AND pa.is_correct = TRUE
+       AND (s.session_id IS NULL OR (NOT s.is_sandbox AND s.mode NOT IN ('benchmark_exam', 'admin_calibration')))
+       AND pa.created_at > $2::timestamptz`,
+    [studentId, sinceIso]
+  );
+  return rows[0] || { correctPracticeAnswers: 0 };
 }
 
 export async function queryTodayAttemptCounts(
@@ -420,7 +453,7 @@ export async function queryStudentProgressStats(
        LEFT JOIN question_evidence e
          ON e.student_id = $1
         AND q.qc_status = 'active'
-        AND q.pool_type <> 'benchmark_holdout'
+        AND q.pool_type = 'practice'
         AND q.format_type <> 'WRIT_TYPED_TASK'
         AND e.evidence_key = q.question_family_id || '__' || coalesce(q.ev_rev, '')
        GROUP BY 1, 2, 3, 4, 5, 6`,
@@ -508,7 +541,7 @@ export async function queryStudentProgressStats(
       excludedInactiveCount += r.n;
       continue;
     }
-    if (r.poolType === 'benchmark_holdout') {
+    if (r.poolType === 'benchmark_holdout' || r.poolType === 'official_calibration') {
       excludedHoldoutCount += r.n;
       continue;
     }
@@ -635,14 +668,14 @@ export async function queryPoolHealthByLearner(
       FROM questions ORDER BY question_family_id, version DESC
     ),
     live_rows AS (
-      SELECT section FROM latest WHERE qc_status = 'active' AND pool_type <> 'benchmark_holdout'
+      SELECT section FROM latest WHERE qc_status = 'active' AND pool_type = 'practice'
     )
     SELECT
       (SELECT count(*)::int FROM latest) AS "totalLatest",
       (SELECT count(*)::int FROM live_rows) AS "liveCount",
       (SELECT count(*)::int FROM latest WHERE qc_status NOT IN ('active', 'retired')) AS "pausedCount",
       (SELECT count(*)::int FROM latest WHERE qc_status = 'retired') AS "archivedCount",
-      (SELECT count(*)::int FROM latest WHERE qc_status = 'active' AND pool_type = 'benchmark_holdout') AS "holdoutCount",
+      (SELECT count(*)::int FROM latest WHERE qc_status = 'active' AND pool_type IN ('benchmark_holdout', 'official_calibration')) AS "holdoutCount",
       coalesce((SELECT jsonb_object_agg(section, n) FROM (SELECT section, count(*)::int AS n FROM live_rows GROUP BY section) s), '{}'::jsonb) AS "bySectionLive"
   `);
   const base = baseRows[0];
@@ -666,7 +699,7 @@ export async function queryPoolHealthByLearner(
      live_only AS (
        SELECT question_family_id, section, ev_rev
        FROM latest_live
-       WHERE qc_status = 'active' AND pool_type <> 'benchmark_holdout'
+       WHERE qc_status = 'active' AND pool_type = 'practice'
      ),
      ev_tagged AS (
        SELECT student_id, evidence_key, ${EVIDENCE_FAMILY_EXPR} AS fam_id, data
@@ -1197,7 +1230,7 @@ async function queryPoolHealthAndMastered(
          LIMIT 1
        ) ev ON TRUE
        LEFT JOIN question_memory mem ON mem.student_id = $1 AND mem.question_family_id = q.question_family_id
-       WHERE q.qc_status = 'active' AND q.pool_type <> 'benchmark_holdout'
+       WHERE q.qc_status = 'active' AND q.pool_type = 'practice'
          AND (${COMPLETION_STATUS_EXPR}) = 'done'`,
       [studentId]
     ),
@@ -1270,7 +1303,7 @@ async function queryMetaForMemorySummary(
     .filter(
       (q) =>
         q.qcStatus === 'active' &&
-        q.poolType !== 'benchmark_holdout' &&
+        q.poolType === 'practice' &&
         progressByQid.get(q.questionId)?.completionStatus === 'done'
     )
     .map((q) => q.questionId);

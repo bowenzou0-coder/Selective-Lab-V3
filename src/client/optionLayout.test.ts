@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { QuestionItem } from '../shared/contracts';
-import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid } from './optionLayout';
+import { getVisualOptionTileHeightClass, shouldUseVisualOptionGrid, svgAspectRatio } from './optionLayout';
 
 test('shouldUseVisualOptionGrid returns true for visual-only and short-label visual options', () => {
   assert.equal(
@@ -75,4 +75,13 @@ test('all bundled fixture questions with visual options qualify for the compact 
   }
   assert.ok(visualQuestionParts >= 15, `Expected at least 15 visual-option parts, got ${visualQuestionParts}`);
   assert.notEqual(getVisualOptionTileHeightClass(4), getVisualOptionTileHeightClass(5));
+});
+
+test('shouldUseVisualOptionGrid stacks options whose figures are wide strips', () => {
+  const svg = (w: number, h: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}"></svg>`;
+  const opts = (w: number, h: number) =>
+    ['A', 'B', 'C', 'D'].map((key) => ({ key, text: '', visual: { visualType: 'inline_svg' as const, svgMarkup: svg(w, h), altText: key } }));
+  assert.equal(svgAspectRatio(opts(378, 54)[0].visual), 7);
+  assert.equal(shouldUseVisualOptionGrid(opts(378, 54)), false);
+  assert.equal(shouldUseVisualOptionGrid(opts(220, 140)), true);
 });

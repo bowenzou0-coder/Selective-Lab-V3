@@ -307,13 +307,14 @@ export const ReadingStimulusPane = memo(function ReadingStimulusPane({
                         aria-label={t('read.gapLabel', { num: gapNum })}
                         disabled={readOnly}
                         value={picked}
+                        data-select="compact"
                         onFocus={() => onSelectGapIndex(gapNum - 1)}
                         onClick={() => onSelectGapIndex(gapNum - 1)}
                         onChange={(e) => {
                           onSelectGapIndex(gapNum - 1);
                           if (!readOnly) onSelectAnswer(part.partId, e.target.value || null);
                         }}
-                        className={`px-2 py-0.5 text-sm rounded-[var(--radius-sm)] border font-medium transition-colors ${
+                        className={`pl-2.5 py-0.5 text-sm rounded-[var(--radius-sm)] border font-medium transition-colors ${
                           readOnly ? 'cursor-default' : 'cursor-pointer'
                         } ${
                           picked

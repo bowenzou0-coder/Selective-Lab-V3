@@ -11,6 +11,7 @@ export type QuestionFormatType =
   | 'WRIT_TYPED_TASK';
 
 export type PoolType = 'diagnostic' | 'practice' | 'benchmark_holdout' | 'official_calibration';
+export type DifficultyPreset = 'easy' | 'medium' | 'hard';
 export type QcStatus = 'draft' | 'verified' | 'active' | 'quarantined' | 'retired';
 export type CognitiveDemand = 'recall_locate' | 'apply_procedural' | 'analyze_infer' | 'evaluate_transfer';
 export type SessionMode =
@@ -203,6 +204,21 @@ export interface PoolPolicyConfig {
   autoRetireMastered: boolean;
 }
 
+export interface BenchmarkPolicyConfig {
+  /** Number of live non-sandbox correct practice answers required between completed benchmarks (0 disables lockout). */
+  requiredCorrectPracticeAnswers: number;
+}
+
+export interface BenchmarkLockStatus {
+  isLocked: boolean;
+  requiredCorrect: number;
+  earnedCorrect: number;
+  remainingCorrect: number;
+  lastBenchmarkCompletedAtIso?: string | null;
+  adminUnlocked: boolean;
+  adminUnlockOverrideAtIso?: string | null;
+}
+
 export interface LearnerPreferences {
   autoCalibrate?: AutoCalibrateConfig;
   dailyQuestionLimitBySection?: Record<SectionCode, number>;
@@ -210,6 +226,8 @@ export interface LearnerPreferences {
   sectionDrillQuestionCount?: number;
   sectionDrillTimeMinutes?: number;
   adminOverrideLocked?: boolean;
+  /** Admin bypass timestamp: unlocks the next benchmark when >= latest completed benchmark timestamp. */
+  benchmarkUnlockOverrideAtIso?: string | null;
   onboardingCompletedAtIso?: string | null;
   updatedBy?: 'student' | 'admin';
   updatedAtIso?: string;
@@ -224,6 +242,10 @@ export const DEFAULT_AUTO_CALIBRATE: AutoCalibrateConfig = {
 
 export const DEFAULT_POOL_POLICY: PoolPolicyConfig = {
   autoRetireMastered: false,
+};
+
+export const DEFAULT_BENCHMARK_POLICY: BenchmarkPolicyConfig = {
+  requiredCorrectPracticeAnswers: 100,
 };
 
 /**
@@ -318,6 +340,7 @@ export interface LearningConfig {
   masteryPolicy?: MasteryPolicyConfig;
   autoCalibrate?: AutoCalibrateConfig;
   poolPolicy?: PoolPolicyConfig;
+  benchmarkPolicy?: BenchmarkPolicyConfig;
   primaryMonitoredStudentId?: string;
 }
 
@@ -630,6 +653,7 @@ export interface BenchmarkReportRecord {
   reportId: string;
   sessionId: string;
   studentId: string;
+  batchId?: string;
   batchLabel: string;
   title: string;
   completedAtIso: string;
@@ -734,6 +758,8 @@ export interface SessionRecord {
   title?: string;
   isSandbox?: boolean;
   mockBatch?: MockTestBatch;
+  batchId?: string;
+  difficultyPreset?: DifficultyPreset;
   timeMultiplier?: number;
   status: 'in_progress' | 'submitted' | 'abandoned';
   plannedQuestionIds: string[];
@@ -804,4 +830,5 @@ export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
   masteryPolicy: DEFAULT_MASTERY_POLICY,
   autoCalibrate: DEFAULT_AUTO_CALIBRATE,
   poolPolicy: DEFAULT_POOL_POLICY,
+  benchmarkPolicy: DEFAULT_BENCHMARK_POLICY,
 };

@@ -2,6 +2,7 @@ import { memo, Fragment } from 'react';
 import {
   parseFormattedBlocks,
   parseInlineSpans,
+  parseMathSpans,
   splitSpeakerPrefix,
 } from '../promptFormatting';
 
@@ -11,6 +12,21 @@ interface FormattedTextProps {
   text: string;
   variant?: FormattedTextVariant;
   className?: string;
+}
+
+/** Plain single-line text (e.g. option labels) with unit powers and `^` exponents typeset. */
+export const MathText = memo(function MathText({ text }: { text: string }) {
+  return (
+    <>
+      {parseMathSpans(text).map((span, idx) =>
+        span.type === 'sup' ? <Superscript key={idx} text={span.text} /> : <Fragment key={idx}>{span.text}</Fragment>
+      )}
+    </>
+  );
+});
+
+function Superscript({ text }: { text: string }) {
+  return <sup className="text-[0.72em] leading-none align-[0.45em]">{text}</sup>;
 }
 
 function InlineSpans({ text }: { text: string }) {
@@ -24,6 +40,9 @@ function InlineSpans({ text }: { text: string }) {
               {span.text}
             </strong>
           );
+        }
+        if (span.type === 'sup') {
+          return <Superscript key={idx} text={span.text} />;
         }
         if (span.type === 'italic') {
           return (

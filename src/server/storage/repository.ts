@@ -152,7 +152,13 @@ export interface StudentDashboardBankSummary {
   batchCounts: Record<'PT1' | 'PT2' | 'PT3', Record<SectionCode, number>>;
   poolCounts: Record<SectionCode, { live: number; unseen: number }>;
   customBatches: { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }[];
-  benchmarkBatches: { batchId: string; batchLabel: string; counts: Record<SectionCode, number>; total: number }[];
+  benchmarkBatches: {
+    batchId: string;
+    batchLabel: string;
+    poolType?: 'benchmark_holdout' | 'official_calibration';
+    counts: Record<SectionCode, number>;
+    total: number;
+  }[];
 }
 
 export interface TodayAttemptCounts {
@@ -454,6 +460,8 @@ export interface AppRepository {
   getStudentDashboardBankSummary(studentId: string, autoRetireMastered: boolean): Promise<StudentDashboardBankSummary>;
   /** SQL-aggregated attempt counts for a single UTC date prefix (YYYY-MM-DD). */
   getTodayAttemptCounts(studentId: string, datePrefix: string): Promise<TodayAttemptCounts>;
+  /** Counts live non-sandbox correct practice/drill/mock answers earned strictly after sinceIso. */
+  getBenchmarkUnlockProgress(studentId: string, sinceIso: string): Promise<{ correctPracticeAnswers: number }>;
   /** SQL-aggregated section accuracy/timing stats and bank-wide mastery summary. */
   getStudentProgressStats(input: {
     studentId: string;

@@ -2,6 +2,7 @@ import {
   type AlgorithmAdjustments,
   type AutoCalibrateConfig,
   type DailyFocusPlan,
+  type DifficultyPreset,
   type LearningConfig,
   type QuestionItem,
   type QuestionMasteryEvidence,
@@ -609,6 +610,7 @@ export async function decidePracticeQuestionOrderWithGemini<
 >(input: {
   mode: SessionMode;
   sectionFilter?: SectionCode;
+  difficulty?: DifficultyPreset;
   questions: T[];
   skillStates: Record<string, SkillState>;
   questionMemory: Record<string, QuestionMemoryState>;
@@ -628,6 +630,7 @@ export async function decidePracticeQuestionOrderWithGemini<
   const deterministicQuestions = selectPracticeSession({
     mode: input.mode,
     sectionFilter: input.sectionFilter,
+    difficulty: input.difficulty,
     questions: input.questions,
     skillStates: input.skillStates,
     questionMemory: input.questionMemory,
@@ -656,10 +659,12 @@ export async function decidePracticeQuestionOrderWithGemini<
     },
   });
 
-  // Never alter canonical fixed benchmark/writing sessions or invoke Gemini when unconfigured
+  // Never alter canonical fixed benchmark/writing sessions, blended difficulty drills (which enforce
+  // soft band quotas + shuffled ordering), or invoke Gemini when unconfigured.
   if (
     input.mode === 'benchmark_exam' ||
     input.mode === 'writing_sprint' ||
+    Boolean(input.difficulty) ||
     deterministicQuestions.length <= 1 ||
     (!input.decideFn && !isGeminiConfigured())
   ) {
@@ -763,7 +768,7 @@ export async function decidePracticeQuestionOrderWithGemini<
     .filter(
       (row) =>
         row.cand.q.qcStatus === 'active' &&
-        row.cand.q.poolType !== 'benchmark_holdout' &&
+        row.cand.q.poolType === 'practice' &&
         (!input.sectionFilter || row.cand.q.section === input.sectionFilter)
     )
     .sort((a, b) => b.combinedRank - a.combinedRank);

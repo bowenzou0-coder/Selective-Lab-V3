@@ -1,5 +1,27 @@
 import { RevisionConflictError, type AppRepository } from './storage/repository.ts';
-import type { BenchmarkReportRecord, ExamSectionBlock, MarkingResult, PartAttemptRecord, QuestionItem, QuestionMasteryEvidence, QuestionMemoryState, SectionCode, SessionCheckpoint, SessionQuestionSnapshot, SessionRecord, SessionSectionState, SessionSubmissionPayload, SkillState, StimulusGroup, WritingDeterministicMetrics, WritingEvaluationRecord } from '../shared/contracts.ts';
+import {
+  DEFAULT_BENCHMARK_POLICY,
+  type BenchmarkLockStatus,
+  type BenchmarkReportRecord,
+  type ExamSectionBlock,
+  type LearnerPreferences,
+  type LearningConfig,
+  type MarkingResult,
+  type PartAttemptRecord,
+  type QuestionItem,
+  type QuestionMasteryEvidence,
+  type QuestionMemoryState,
+  type SectionCode,
+  type SessionCheckpoint,
+  type SessionQuestionSnapshot,
+  type SessionRecord,
+  type SessionSectionState,
+  type SessionSubmissionPayload,
+  type SkillState,
+  type StimulusGroup,
+  type WritingDeterministicMetrics,
+  type WritingEvaluationRecord,
+} from '../shared/contracts.ts';
 import { computeWritingMetrics, detectPlateauStatus, gradeSubmission, updateFamilyMemoryOnce, updateSkillState } from '../shared/engine.ts';
 import { advanceQuestionEvidence, buildEvidenceKey, computeEvidenceRevision } from '../shared/mastery.ts';
 import { buildBenchmarkReportRecord } from '../shared/nswBenchmark.ts';
@@ -558,7 +580,11 @@ export async function finalizeSessionRecord(input: {
         createdAt: completedAtIso,
       });
 
-      if (!session.isSandbox && question.poolType !== 'benchmark_holdout') {
+      const isIsolatedBenchmarkItem =
+        question.poolType === 'benchmark_holdout' ||
+        (session.mode === 'benchmark_exam' && question.poolType === 'official_calibration');
+
+      if (!session.isSandbox && !isIsolatedBenchmarkItem) {
         const prevSkill = updatedSkillsMap.get(part.skillId) || skillStates[part.skillId];
         const nextSkillState = updateSkillState({
           prevSkillState: prevSkill,
@@ -582,7 +608,11 @@ export async function finalizeSessionRecord(input: {
       }
     }
 
-    if (!session.isSandbox && question.poolType !== 'benchmark_holdout') {
+    const skipPracticeMastery =
+      question.poolType === 'benchmark_holdout' ||
+      question.poolType === 'official_calibration';
+
+    if (!session.isSandbox && !skipPracticeMastery) {
       let nextEv: QuestionMasteryEvidence | undefined;
       if (question.qcStatus === 'active') {
         const evKey = buildEvidenceKey(question.questionFamilyId, evidenceRevision);
@@ -713,6 +743,89 @@ export async function ensureBenchmarkReportForSession(
   });
   await repo.saveBenchmarkReport(built);
   return built;
+}
+
+/**
+ * Computes whether a learner is currently locked out from starting another benchmark exam.
+ * - First benchmark (no completed benchmarks yet) is always unlocked.
+ * - After completing a benchmark, requires `requiredCorrectPracticeAnswers` (default 100) live
+ *   non-sandbox correct practice/drill/mock answers earned strictly after the latest benchmark.
+ * - Admin unlock override (`learnerPrefs.benchmarkUnlockOverrideAtIso >= latestCompletedIso`)
+ *   bypasses the lockout for the next benchmark and automatically re-arms once that benchmark completes.
+ */
+export async function computeBenchmarkLockStatus(input: {
+  repo: AppRepository;
+  studentId: string;
+  config: LearningConfig;
+  learnerPrefs?: LearnerPreferences | null;
+  reports?: BenchmarkReportRecord[];
+}): Promise<BenchmarkLockStatus> {
+  const { repo, studentId, config } = input;
+  const requiredCorrect = Math.max(
+    0,
+    Math.round(
+      config.benchmarkPolicy?.requiredCorrectPracticeAnswers ??
+        DEFAULT_BENCHMARK_POLICY.requiredCorrectPracticeAnswers
+    )
+  );
+  const prefs =
+    input.learnerPrefs !== undefined
+      ? input.learnerPrefs
+      : await repo.getLearnerPreferences(studentId);
+  const reports = input.reports ?? (await repo.listBenchmarkReports(studentId, 50));
+
+  let latestCompletedMs = 0;
+  let latestCompletedIso: string | null = null;
+  for (const r of reports) {
+    const ms = Date.parse(r.completedAtIso);
+    if (Number.isFinite(ms) && ms > latestCompletedMs) {
+      latestCompletedMs = ms;
+      latestCompletedIso = r.completedAtIso;
+    }
+  }
+  if (!latestCompletedIso) {
+    const summaries = await repo.listSessionSummaries(50, studentId, false);
+    for (const s of summaries) {
+      if (s.mode === 'benchmark_exam' && s.status === 'submitted' && !s.isSandbox && s.completedAt) {
+        const ms = Date.parse(s.completedAt);
+        if (Number.isFinite(ms) && ms > latestCompletedMs) {
+          latestCompletedMs = ms;
+          latestCompletedIso = s.completedAt;
+        }
+      }
+    }
+  }
+
+  const overrideIso = prefs?.benchmarkUnlockOverrideAtIso ?? null;
+  const overrideMs = overrideIso ? Date.parse(overrideIso) : NaN;
+
+  if (!latestCompletedIso || requiredCorrect === 0) {
+    return {
+      isLocked: false,
+      requiredCorrect,
+      earnedCorrect: 0,
+      remainingCorrect: 0,
+      lastBenchmarkCompletedAtIso: latestCompletedIso,
+      adminUnlocked: false,
+      adminUnlockOverrideAtIso: overrideIso,
+    };
+  }
+
+  const { correctPracticeAnswers } = await repo.getBenchmarkUnlockProgress(studentId, latestCompletedIso);
+  const earnedCorrect = Math.max(0, correctPracticeAnswers);
+  const remainingCorrect = Math.max(0, requiredCorrect - earnedCorrect);
+  const adminUnlocked = Number.isFinite(overrideMs) && overrideMs >= latestCompletedMs;
+  const isLocked = !adminUnlocked && remainingCorrect > 0;
+
+  return {
+    isLocked,
+    requiredCorrect,
+    earnedCorrect,
+    remainingCorrect,
+    lastBenchmarkCompletedAtIso: latestCompletedIso,
+    adminUnlocked,
+    adminUnlockOverrideAtIso: overrideIso,
+  };
 }
 
 export async function resolveOrExpireSession(

@@ -187,7 +187,7 @@ export function computePoolHealth(input: {
       archivedCount++;
       continue;
     }
-    if (q.poolType === 'benchmark_holdout') {
+    if (q.poolType === 'benchmark_holdout' || q.poolType === 'official_calibration') {
       holdoutCount++;
       continue;
     }

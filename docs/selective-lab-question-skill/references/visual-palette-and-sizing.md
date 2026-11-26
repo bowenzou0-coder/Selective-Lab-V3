@@ -24,4 +24,4 @@ All Anthropic WOFF2 faces (`AnthropicSansText`, `AnthropicSansDisplay`, `Anthrop
 2. Zero `<script>`, `on*=` handlers, `javascript:`, `<foreignObject>`, external URLs, `@import`, or animations.
 3. Compute geometry/bar heights/intersections programmatically — never eyeball coordinates.
 4. Cross-check every number/tick/shade against the stem, options, and `workedExplanation`.
-5. Include `[diagram not to scale]` on schematic figures; zero answer leakage in `altText`, `caption`, `<title>`, or IDs.
+5. Include `[diagram not to scale]` once on schematic figures (as `visual.caption`, not repeated in `promptText` or SVG text); label unit powers in SVG with `²`/`³`; zero answer leakage in `altText`, `caption`, `<title>`, or IDs.

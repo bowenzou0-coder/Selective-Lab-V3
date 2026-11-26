@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { SegmentedControl } from './ui/SegmentedControl';
-import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
-import { api } from '../api';
+import { Award, BookOpen, PenTool, ShieldCheck } from 'lucide-react';
 import { useCachedResource } from '../useCachedResource';
 import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { BenchmarkReportSummaryCard } from './BenchmarkReportSummaryCard';
@@ -30,10 +29,6 @@ function ProgressSkeleton({ title, label }: { title: string; label: string }) {
               <Skeleton className="h-[26px] w-20 rounded-full" />
               <Skeleton className="h-[26px] w-28 rounded-full" />
             </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Skeleton className="h-[34px] w-28 rounded-[10px]" />
-            <Skeleton className="h-[34px] w-28 rounded-[10px]" />
           </div>
         </header>
 
@@ -151,31 +146,6 @@ export function ProgressView({ onOpenSession, onLaunchSession, onNavigate }: Pro
               {data.writingSubmissions.length === 1 ? t('prog.writingOne') : t('prog.writingMany')}
             </span>
           </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <a
-            href="/api/student/export?format=csv"
-            onClick={(e) => {
-              e.preventDefault();
-              api.downloadFile('/api/student/export?format=csv', 'selective-lab-progress.csv');
-            }}
-            className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
-          >
-            <Download className="w-3.5 h-3.5 shrink-0" />
-            <span>{t('prog.exportCsv')}</span>
-          </a>
-          <a
-            href="/api/student/export?format=json"
-            onClick={(e) => {
-              e.preventDefault();
-              api.downloadFile('/api/student/export?format=json', 'selective-lab-progress.json');
-            }}
-            className="px-3.5 py-2 rounded-[10px] border border-[#CFC6B9] bg-white hover:bg-[#FAF8F5] text-xs font-sans-display font-semibold text-[#113C36] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
-          >
-            <Download className="w-3.5 h-3.5 shrink-0" />
-            <span>{t('prog.exportJson')}</span>
-          </a>
         </div>
       </header>
 
