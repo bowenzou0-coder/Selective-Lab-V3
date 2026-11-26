@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   EXAM_SHORTCUT_LEGEND,
   hasOpenModal,
+  isTextInputTarget,
   isTypingTarget,
   resolveExamShortcut,
   singleChoiceOptionKeysFor,
@@ -53,11 +54,24 @@ test('navigation, flag, navigator and help keys', () => {
   assert.equal(resolveExamShortcut({ key: 'p' }, cloze), null);
 });
 
-test('modifiers, blocking states and Writing questions disable every shortcut', () => {
+test('modifiers, blocking states and Writing questions disable every shortcut except Ctrl/Cmd+Z undo/redo', () => {
   for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
     assert.equal(resolveExamShortcut({ key: 'a', ...mod }, mcq5), null);
     assert.equal(resolveExamShortcut({ key: 'ArrowRight', ...mod }, mcq5), null);
   }
+  assert.deepEqual(resolveExamShortcut({ key: 'z', ctrlKey: true }, mcq5), { type: 'undo' });
+  assert.deepEqual(resolveExamShortcut({ key: 'Z', metaKey: true }, mcq5), { type: 'undo' });
+  assert.deepEqual(resolveExamShortcut({ key: 'z', ctrlKey: true, shiftKey: true }, mcq5), { type: 'redo' });
+  assert.deepEqual(resolveExamShortcut({ key: 'z', metaKey: true, shiftKey: true }, mcq5), { type: 'redo' });
+  assert.deepEqual(resolveExamShortcut({ key: 'y', ctrlKey: true }, mcq5), { type: 'redo' });
+  assert.equal(resolveExamShortcut({ key: 'z', ctrlKey: true, altKey: true }, mcq5), null);
+  assert.equal(resolveExamShortcut({ key: 'z', ctrlKey: true }, { ...mcq5, blocked: true }), null);
+  assert.equal(resolveExamShortcut({ key: 'z', ctrlKey: true }, { ...mcq5, isWritingQuestion: true }), null);
+  assert.equal(resolveExamShortcut({ key: 'z', ctrlKey: true }, { ...mcq5, inspectorOpen: true }), null);
+  // Undo also works on multi-part cloze/gapped-text questions where singleChoiceOptionKeys is null.
+  assert.deepEqual(resolveExamShortcut({ key: 'z', ctrlKey: true }, { ...mcq5, singleChoiceOptionKeys: null }), {
+    type: 'undo',
+  });
   for (const key of ['a', '1', 'ArrowLeft', 'f', 'n', '?']) {
     assert.equal(resolveExamShortcut({ key }, { ...mcq5, blocked: true }), null, `blocked ${key}`);
     assert.equal(resolveExamShortcut({ key }, { ...mcq5, isWritingQuestion: true }), null, `writing ${key}`);
@@ -95,6 +109,9 @@ test('typing targets and open modals are detected', () => {
   assert.equal(isTypingTarget({ tagName: 'INPUT' }), true);
   assert.equal(isTypingTarget({ tagName: 'textarea' }), true);
   assert.equal(isTypingTarget({ tagName: 'SELECT' }), true);
+  assert.equal(isTextInputTarget({ tagName: 'INPUT' }), true);
+  assert.equal(isTextInputTarget({ tagName: 'textarea' }), true);
+  assert.equal(isTextInputTarget({ tagName: 'SELECT' }), false);
   assert.equal(isTypingTarget({ tagName: 'DIV', isContentEditable: true }), true);
   assert.equal(isTypingTarget({ tagName: 'SPAN', closest: (sel: string) => (sel.includes('contenteditable') ? {} : null) }), true);
   assert.equal(isTypingTarget({ tagName: 'BUTTON', closest: () => null }), false);

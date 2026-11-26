@@ -1001,6 +1001,7 @@ export const MESSAGES_EN = {
   'shortcuts.selectOption': 'Choose an answer',
   'shortcuts.prevNext': 'Previous or next question',
   'shortcuts.flag': 'Flag for review',
+  'shortcuts.undo': 'Undo last change (Shift to redo)',
   'shortcuts.navigator': 'Open or close the navigator',
   'shortcuts.help': 'Show or hide this list',
   'shortcuts.close': 'Close this list',

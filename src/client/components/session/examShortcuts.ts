@@ -8,13 +8,16 @@ export type ExamShortcutAction =
   | { type: 'flag' }
   | { type: 'toggleNav' }
   | { type: 'toggleHelp' }
-  | { type: 'toggleInspector' };
+  | { type: 'toggleInspector' }
+  | { type: 'undo' }
+  | { type: 'redo' };
 
 export interface ExamShortcutKeyEvent {
   key: string;
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
+  shiftKey?: boolean;
 }
 
 export interface ExamShortcutContext {
@@ -42,6 +45,7 @@ export const EXAM_SHORTCUT_LEGEND = [
   { keys: ['A–E', '1–5'], labelKey: 'shortcuts.selectOption' },
   { keys: ['←', '→'], labelKey: 'shortcuts.prevNext' },
   { keys: ['F'], labelKey: 'shortcuts.flag' },
+  { keys: ['Ctrl/⌘+Z'], labelKey: 'shortcuts.undo' },
   { keys: ['N'], labelKey: 'shortcuts.navigator' },
   { keys: ['?'], labelKey: 'shortcuts.help' },
   { keys: ['Esc'], labelKey: 'shortcuts.close' },
@@ -64,11 +68,21 @@ export function resolveExamShortcut(
   event: ExamShortcutKeyEvent,
   ctx: ExamShortcutContext
 ): ExamShortcutAction | null {
-  if (event.ctrlKey || event.metaKey || event.altKey) return null;
   if (ctx.blocked || ctx.isWritingQuestion) return null;
 
   const key = event.key;
   const upper = key.length === 1 ? key.toUpperCase() : key;
+
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    if (ctx.inspectorOpen || event.altKey) return null;
+    if ((event.ctrlKey || event.metaKey) && upper === 'Z') {
+      return event.shiftKey ? { type: 'redo' } : { type: 'undo' };
+    }
+    if (event.ctrlKey && !event.metaKey && !event.shiftKey && upper === 'Y') {
+      return { type: 'redo' };
+    }
+    return null;
+  }
 
   if (ctx.inspectorOpen) {
     return upper === 'I' && ctx.canToggleInspector ? { type: 'toggleInspector' } : null;
@@ -103,12 +117,12 @@ interface TargetLike {
   closest?: (selector: string) => unknown;
 }
 
-/** True when focus sits in a field that owns its keystrokes. */
-export function isTypingTarget(target: unknown): boolean {
+/** True when focus sits in a text input that owns native text undo (`Ctrl+Z`). */
+export function isTextInputTarget(target: unknown): boolean {
   if (!target || typeof target !== 'object') return false;
   const el = target as TargetLike;
   const tag = (el.tagName || '').toUpperCase();
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
   if (el.isContentEditable) return true;
   if (typeof el.closest === 'function') {
     try {
@@ -118,6 +132,14 @@ export function isTypingTarget(target: unknown): boolean {
     }
   }
   return false;
+}
+
+/** True when focus sits in a field that owns its keystrokes. */
+export function isTypingTarget(target: unknown): boolean {
+  if (isTextInputTarget(target)) return true;
+  if (!target || typeof target !== 'object') return false;
+  const tag = ((target as TargetLike).tagName || '').toUpperCase();
+  return tag === 'SELECT';
 }
 
 interface QueryRootLike {

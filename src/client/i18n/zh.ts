@@ -1005,6 +1005,7 @@ export const MESSAGES_ZH: Record<MessageKey, string> = {
   'shortcuts.selectOption': '选择答案',
   'shortcuts.prevNext': '上一题或下一题',
   'shortcuts.flag': '标记待复查',
+  'shortcuts.undo': '撤销上一步操作（加 Shift 重做）',
   'shortcuts.navigator': '打开或关闭题目导航',
   'shortcuts.help': '显示或隐藏本列表',
   'shortcuts.close': '关闭本列表',

@@ -19,7 +19,13 @@ import { clearLocalDraft, getDraftStorageKey, readLocalDraft, writeLocalDraft, t
 import { SessionHeaderBar, type SaveStatus } from './session/SessionHeaderBar';
 import { SessionNavigatorDrawer } from './session/SessionNavigatorDrawer';
 import { SubmitConfirmDialog } from './session/SubmitConfirmDialog';
-import { hasOpenModal, isTypingTarget, resolveExamShortcut, singleChoiceOptionKeysFor } from './session/examShortcuts';
+import {
+  hasOpenModal,
+  isTextInputTarget,
+  isTypingTarget,
+  resolveExamShortcut,
+  singleChoiceOptionKeysFor,
+} from './session/examShortcuts';
 import { buildPassageCues } from './session/passageCohesion';
 
 // The review screen only renders after submission, so it ships as its own chunk
@@ -28,6 +34,14 @@ const loadPostSubmissionReview = () => import('./PostSubmissionReview');
 const PostSubmissionReview = lazy(() =>
   loadPostSubmissionReview().then((m) => ({ default: m.PostSubmissionReview }))
 );
+
+type ExamUndoEntry =
+  | { kind: 'answer'; partId: string; prev: string | null; next: string | null; questionIndex: number }
+  | { kind: 'eliminate'; partId: string; prev: string[]; next: string[]; questionIndex: number }
+  | { kind: 'flag'; questionId: string; prev: boolean; next: boolean; questionIndex: number }
+  | { kind: 'highlight'; stimulusId: string; prev: string[]; next: string[]; questionIndex: number };
+
+const MAX_UNDO_HISTORY = 60;
 
 interface SessionPlayerViewProps {
   sessionId: string;
@@ -124,6 +138,19 @@ export function SessionPlayerView({
   const [inspectorBusy, setInspectorBusy] = useState(false);
 
   const dirtyRef = useRef(false);
+  const undoStackRef = useRef<ExamUndoEntry[]>([]);
+  const redoStackRef = useRef<ExamUndoEntry[]>([]);
+  const clearUndoHistory = useCallback(() => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+  }, []);
+  const pushUndoEntry = useCallback((entry: ExamUndoEntry) => {
+    undoStackRef.current.push(entry);
+    if (undoStackRef.current.length > MAX_UNDO_HISTORY) {
+      undoStackRef.current.shift();
+    }
+    redoStackRef.current = [];
+  }, []);
   const draftStorageKey = getDraftStorageKey(studentId, sessionId);
 
   const checkpointRef = useRef<SessionCheckpoint>({
@@ -139,6 +166,7 @@ export function SessionPlayerView({
 
   const applyCheckpointToState = useCallback(
     (cp: SessionCheckpoint, maxLen: number) => {
+      clearUndoHistory();
       setCurrentIndex(Math.min(cp.currentIndex || 0, Math.max(0, maxLen - 1)));
       clock.setElapsed(cp.elapsedSec || 0);
       setAnswersByPartId(cp.answersByPartId || {});
@@ -442,40 +470,123 @@ export function SessionPlayerView({
 
   const handleSelectAnswer = useCallback(
     (partId: string, key: string | null) => {
-      setAnswersByPartId((prev) => {
-        const next = { ...prev, [partId]: key };
-        persistDraftPatch({ answersByPartId: next });
-        return next;
+      const prevAnswers = checkpointRef.current.answersByPartId || {};
+      const prevVal = prevAnswers[partId] ?? null;
+      if (prevVal === key) return;
+      pushUndoEntry({
+        kind: 'answer',
+        partId,
+        prev: prevVal,
+        next: key,
+        questionIndex: checkpointRef.current.currentIndex ?? 0,
       });
+      const next = { ...prevAnswers, [partId]: key };
+      setAnswersByPartId(next);
+      persistDraftPatch({ answersByPartId: next });
     },
-    [persistDraftPatch]
+    [persistDraftPatch, pushUndoEntry]
   );
 
   const handleToggleEliminate = useCallback(
     (partId: string, key: string) => {
-      setEliminatedByPartId((prev) => {
-        const list = prev[partId] || [];
-        const nextList = list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
-        const next = { ...prev, [partId]: nextList };
-        persistDraftPatch({ eliminatedOptionsByPartId: next });
-        return next;
+      const prevMap = checkpointRef.current.eliminatedOptionsByPartId || {};
+      const prevList = prevMap[partId] || [];
+      const nextList = prevList.includes(key) ? prevList.filter((k) => k !== key) : [...prevList, key];
+      pushUndoEntry({
+        kind: 'eliminate',
+        partId,
+        prev: prevList,
+        next: nextList,
+        questionIndex: checkpointRef.current.currentIndex ?? 0,
       });
+      const next = { ...prevMap, [partId]: nextList };
+      setEliminatedByPartId(next);
+      persistDraftPatch({ eliminatedOptionsByPartId: next });
     },
-    [persistDraftPatch]
+    [persistDraftPatch, pushUndoEntry]
   );
 
   const handleToggleFlag = useCallback(
     (questionId: string) => {
-      setFlaggedQuestionIds((prev) => {
-        const next = prev.includes(questionId)
-          ? prev.filter((id) => id !== questionId)
-          : [...prev, questionId];
-        persistDraftPatch({ flaggedQuestionIds: next });
-        return next;
+      const prevFlags = checkpointRef.current.flaggedQuestionIds || [];
+      const wasFlagged = prevFlags.includes(questionId);
+      const next = wasFlagged ? prevFlags.filter((id) => id !== questionId) : [...prevFlags, questionId];
+      pushUndoEntry({
+        kind: 'flag',
+        questionId,
+        prev: wasFlagged,
+        next: !wasFlagged,
+        questionIndex: checkpointRef.current.currentIndex ?? 0,
       });
+      setFlaggedQuestionIds(next);
+      persistDraftPatch({ flaggedQuestionIds: next });
     },
-    [persistDraftPatch]
+    [persistDraftPatch, pushUndoEntry]
   );
+
+  const applyUndoRedoEntry = useCallback(
+    (entry: ExamUndoEntry, direction: 'undo' | 'redo') => {
+      const minIdx = activeSection ? activeSection.startIndex : 0;
+      const maxIdx = activeSection
+        ? Math.max(minIdx, activeSection.endIndex - 1)
+        : Math.max(0, questions.length - 1);
+      const targetIndex = Math.max(minIdx, Math.min(maxIdx, entry.questionIndex));
+      const patch: Partial<SessionCheckpoint> = {};
+      if (targetIndex !== (checkpointRef.current.currentIndex ?? 0)) {
+        patch.currentIndex = targetIndex;
+        setCurrentIndex(targetIndex);
+        setActiveGapIndex(0);
+      }
+
+      if (entry.kind === 'answer') {
+        const val = direction === 'undo' ? entry.prev : entry.next;
+        const nextAnswers = { ...(checkpointRef.current.answersByPartId || {}), [entry.partId]: val };
+        setAnswersByPartId(nextAnswers);
+        patch.answersByPartId = nextAnswers;
+      } else if (entry.kind === 'eliminate') {
+        const list = direction === 'undo' ? entry.prev : entry.next;
+        const nextElim = {
+          ...(checkpointRef.current.eliminatedOptionsByPartId || {}),
+          [entry.partId]: list,
+        };
+        setEliminatedByPartId(nextElim);
+        patch.eliminatedOptionsByPartId = nextElim;
+      } else if (entry.kind === 'flag') {
+        const shouldFlag = direction === 'undo' ? entry.prev : entry.next;
+        const prevFlags = checkpointRef.current.flaggedQuestionIds || [];
+        const nextFlags = shouldFlag
+          ? Array.from(new Set([...prevFlags, entry.questionId]))
+          : prevFlags.filter((id) => id !== entry.questionId);
+        setFlaggedQuestionIds(nextFlags);
+        patch.flaggedQuestionIds = nextFlags;
+      } else if (entry.kind === 'highlight') {
+        const list = direction === 'undo' ? entry.prev : entry.next;
+        const nextHl = {
+          ...(checkpointRef.current.passageHighlightsByStimulusId || {}),
+          [entry.stimulusId]: list,
+        };
+        setHighlightsByStimulusId(nextHl);
+        patch.passageHighlightsByStimulusId = nextHl;
+      }
+
+      persistDraftPatch(patch);
+    },
+    [activeSection, questions.length, persistDraftPatch]
+  );
+
+  const handleUndo = useCallback(() => {
+    const entry = undoStackRef.current.pop();
+    if (!entry) return;
+    redoStackRef.current.push(entry);
+    applyUndoRedoEntry(entry, 'undo');
+  }, [applyUndoRedoEntry]);
+
+  const handleRedo = useCallback(() => {
+    const entry = redoStackRef.current.pop();
+    if (!entry) return;
+    undoStackRef.current.push(entry);
+    applyUndoRedoEntry(entry, 'redo');
+  }, [applyUndoRedoEntry]);
 
   const handleGoIndex = useCallback(
     (nextIdx: number) => {
@@ -506,7 +617,7 @@ export function SessionPlayerView({
   const isTimeUp = isLockedStudentSession && !isOnSectionBreak && clockSaysTimeUp;
   const isAdminRun = Boolean(session && session.mode === 'admin_calibration' && isAdmin);
 
-  // Exam Room keyboard shortcuts (A–E / 1–5, ←/→, F, N, ?). Rules live in examShortcuts.ts.
+  // Exam Room keyboard shortcuts (A–E / 1–5, ←/→, F, Ctrl/⌘+Z, N, ?). Rules live in examShortcuts.ts.
   const singleChoiceOptionKeys = useMemo(
     () => (currentQuestion ? singleChoiceOptionKeysFor(currentQuestion) : null),
     [currentQuestion]
@@ -514,7 +625,7 @@ export function SessionPlayerView({
   useEffect(() => {
     if (!session || session.status !== 'in_progress' || !currentQuestion) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || isTypingTarget(e.target)) return;
+      if (e.defaultPrevented || isTextInputTarget(e.target)) return;
       const action = resolveExamShortcut(e, {
         blocked:
           isOnSectionBreak || isTimeUp || submitting || submitConfirmOpen || hasOpenModal(document),
@@ -524,7 +635,9 @@ export function SessionPlayerView({
         inspectorOpen: isAdminRun && inspectorOpen,
       });
       if (!action) return;
-      // Holding a key may repeat navigation, never toggles or answers.
+      // Keep non-undo shortcuts paused on <select> so typing/arrows operate the dropdown cleanly.
+      if (action.type !== 'undo' && action.type !== 'redo' && isTypingTarget(e.target)) return;
+      // Holding a key may repeat navigation, never toggles, answers, or undo bursts.
       if (e.repeat && action.type !== 'prev' && action.type !== 'next') {
         e.preventDefault();
         return;
@@ -545,6 +658,12 @@ export function SessionPlayerView({
           break;
         case 'flag':
           handleToggleFlag(currentQuestion.questionId);
+          break;
+        case 'undo':
+          handleUndo();
+          break;
+        case 'redo':
+          handleRedo();
           break;
         case 'toggleNav':
           setNavOpen((open) => !open);
@@ -571,6 +690,8 @@ export function SessionPlayerView({
     handleGoIndex,
     handleToggleFlag,
     handleSelectAnswer,
+    handleUndo,
+    handleRedo,
     isAdminRun,
     inspectorOpen,
     isOnSectionBreak,
@@ -772,6 +893,7 @@ export function SessionPlayerView({
       const nextActive =
         res.session.sectionState?.sections[res.session.sectionState.currentSectionIndex];
       if (nextActive) {
+        clearUndoHistory();
         setCurrentIndex(nextActive.startIndex);
         setActiveGapIndex(0);
       }
@@ -1099,21 +1221,35 @@ export function SessionPlayerView({
         onSelectAnswer={handleSelectAnswer}
         onToggleEliminate={handleToggleEliminate}
         onAddHighlight={(text) => {
-          setHighlightsByStimulusId((prev) => {
-            const next = {
-              ...prev,
-              [currentStimId]: Array.from(new Set([...(prev[currentStimId] || []), text])),
-            };
-            persistDraftPatch({ passageHighlightsByStimulusId: next });
-            return next;
+          const prevMap = checkpointRef.current.passageHighlightsByStimulusId || {};
+          const prevList = prevMap[currentStimId] || [];
+          const nextList = Array.from(new Set([...prevList, text]));
+          if (nextList.length === prevList.length) return;
+          pushUndoEntry({
+            kind: 'highlight',
+            stimulusId: currentStimId,
+            prev: prevList,
+            next: nextList,
+            questionIndex: checkpointRef.current.currentIndex ?? 0,
           });
+          const next = { ...prevMap, [currentStimId]: nextList };
+          setHighlightsByStimulusId(next);
+          persistDraftPatch({ passageHighlightsByStimulusId: next });
         }}
         onClearHighlights={() => {
-          setHighlightsByStimulusId((prev) => {
-            const next = { ...prev, [currentStimId]: [] };
-            persistDraftPatch({ passageHighlightsByStimulusId: next });
-            return next;
+          const prevMap = checkpointRef.current.passageHighlightsByStimulusId || {};
+          const prevList = prevMap[currentStimId] || [];
+          if (prevList.length === 0) return;
+          pushUndoEntry({
+            kind: 'highlight',
+            stimulusId: currentStimId,
+            prev: prevList,
+            next: [],
+            questionIndex: checkpointRef.current.currentIndex ?? 0,
           });
+          const next = { ...prevMap, [currentStimId]: [] };
+          setHighlightsByStimulusId(next);
+          persistDraftPatch({ passageHighlightsByStimulusId: next });
         }}
         writingDraft={
           writingDraftsByQuestionId[currentQuestion.questionId] ?? writingDraft
