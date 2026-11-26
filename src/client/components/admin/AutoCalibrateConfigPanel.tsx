@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { api, type AdminLearnerSummary } from '../../api';
 import { useI18n } from '../../i18n';
+import { createUndoStack, useUndoRedoShortcuts, type UndoStack } from '../../undoHistory';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_LEARNING_CONFIG,
@@ -9,6 +10,11 @@ import {
 } from '../../../shared/contracts';
 import { LearnerOverrideCard } from './LearnerOverrideCard';
 import { PlatformDefaultsSection, type ConfigVersionSummary } from './PlatformDefaultsSection';
+
+export interface UndoableActionEntry {
+  undo: () => void;
+  redo: () => void;
+}
 
 interface AutoCalibrateConfigPanelProps {
   onNotice: (msg: string) => void;
@@ -26,11 +32,64 @@ export function AutoCalibrateConfigPanel({
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [savingGlobal, setSavingGlobal] = useState(false);
-  const [config, setConfig] = useState<LearningConfig>(DEFAULT_LEARNING_CONFIG);
+  const [config, setConfigRaw] = useState<LearningConfig>(DEFAULT_LEARNING_CONFIG);
+  const configRef = useRef<LearningConfig>(DEFAULT_LEARNING_CONFIG);
+  configRef.current = config;
   const [savedConfig, setSavedConfig] = useState<LearningConfig>(DEFAULT_LEARNING_CONFIG);
   const [versionNumber, setVersionNumber] = useState(1);
   const [notes, setNotes] = useState('');
   const [history, setHistory] = useState<ConfigVersionSummary[]>([]);
+  const undoStackRef = useRef<UndoStack<UndoableActionEntry> | null>(null);
+  if (!undoStackRef.current) {
+    undoStackRef.current = createUndoStack<UndoableActionEntry>(60);
+  }
+
+  const recordUndo = useCallback((entry: UndoableActionEntry) => {
+    undoStackRef.current!.push(entry);
+  }, []);
+
+  const clearUndo = useCallback(() => {
+    undoStackRef.current!.clear();
+  }, []);
+
+  const setConfig = useCallback(
+    (action: SetStateAction<LearningConfig>) => {
+      const prev = configRef.current;
+      const next = typeof action === 'function' ? (action as (cur: LearningConfig) => LearningConfig)(prev) : action;
+      if (Object.is(prev, next) || JSON.stringify(prev) === JSON.stringify(next)) return;
+      recordUndo({
+        undo: () => {
+          configRef.current = prev;
+          setConfigRaw(prev);
+        },
+        redo: () => {
+          configRef.current = next;
+          setConfigRaw(next);
+        },
+      });
+      configRef.current = next;
+      setConfigRaw(next);
+    },
+    [recordUndo]
+  );
+
+  useUndoRedoShortcuts({
+    enabled: !loading && !savingGlobal,
+    onUndo: () => {
+      const entry = undoStackRef.current!.undo();
+      if (!entry) return false;
+      entry.undo();
+      onNotice(t('common.undidSetting'));
+      return true;
+    },
+    onRedo: () => {
+      const entry = undoStackRef.current!.redo();
+      if (!entry) return false;
+      entry.redo();
+      onNotice(t('common.redidSetting'));
+      return true;
+    },
+  });
 
   useEffect(() => {
     let active = true;
@@ -52,8 +111,10 @@ export function AutoCalibrateConfigPanel({
             ...(loaded.poolPolicy || {}),
           },
         };
-        setConfig(normalized);
+        configRef.current = normalized;
+        setConfigRaw(normalized);
         setSavedConfig(normalized);
+        clearUndo();
         setVersionNumber(cfgRes.active.versionNumber);
         setHistory(cfgRes.history || []);
       })
@@ -94,7 +155,14 @@ export function AutoCalibrateConfigPanel({
     <div className="space-y-8">
       {/* 1. Per-Learner Daily Plan Override */}
       {monitoredLearner ? (
-        <LearnerOverrideCard learner={monitoredLearner} config={config} onNotice={onNotice} onError={onError} />
+        <LearnerOverrideCard
+          learner={monitoredLearner}
+          config={config}
+          onNotice={onNotice}
+          onError={onError}
+          onRecordUndo={recordUndo}
+          onClearUndo={clearUndo}
+        />
       ) : (
         <div className="rounded-[14px] bg-[#FAF8F5] border border-[#E5DFD5] px-5 py-4 space-y-1">
           <div className="text-xs font-sans-display font-semibold text-[#113C36]">

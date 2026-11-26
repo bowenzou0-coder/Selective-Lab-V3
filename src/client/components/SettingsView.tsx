@@ -26,6 +26,7 @@ import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { StatusBanner } from './ui/StatusBanner';
 import { Toast } from './ui/Toast';
 import { useI18n } from '../i18n';
+import { useUndoableState, useUndoRedoShortcuts } from '../undoHistory';
 import { SegmentedControl } from './ui/SegmentedControl';
 import {
   DEFAULT_AUTO_CALIBRATE,
@@ -97,7 +98,13 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
   // Paint the cached settings at once; the mount request revalidates in the background.
   const [initialSettings] = useState<StudentSettingsResponse | null>(() => peekCachedResource('settings') ?? null);
   const [data, setData] = useState<StudentSettingsResponse | null>(initialSettings);
-  const [form, setForm] = useState<LearnerDailySettingsView>(initialSettings?.effectiveConfig ?? FALLBACK_DAILY);
+  const {
+    value: form,
+    setValue: setForm,
+    reset: resetFormHistory,
+    undo: undoForm,
+    redo: redoForm,
+  } = useUndoableState<LearnerDailySettingsView>(initialSettings?.effectiveConfig ?? FALLBACK_DAILY);
   const [savedForm, setSavedForm] = useState<LearnerDailySettingsView>(
     initialSettings?.effectiveConfig ?? FALLBACK_DAILY
   );
@@ -139,7 +146,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
       const dirty = JSON.stringify(formRef.current) !== JSON.stringify(savedFormRef.current);
       hasDataRef.current = true;
       setData(res);
-      if (!dirty) setForm(res.effectiveConfig);
+      if (!dirty) resetFormHistory(res.effectiveConfig);
       setSavedForm(res.effectiveConfig);
       setTodayPlan(res.dailyFocusPlan);
       setFlags(res.flags || []);
@@ -155,6 +162,20 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
   }, [loadSettings]);
 
   const isLocked = Boolean(data?.adminOverrideLocked && data.role !== 'admin');
+
+  useUndoRedoShortcuts({
+    enabled: !loading && !isLocked && !saving,
+    onUndo: () => {
+      if (!undoForm()) return false;
+      setNotice(t('common.undidSetting'));
+      return true;
+    },
+    onRedo: () => {
+      if (!redoForm()) return false;
+      setNotice(t('common.redidSetting'));
+      return true;
+    },
+  });
   const hasPersonalPrefs = Boolean(
     data?.preferences?.autoCalibrate ||
       data?.preferences?.dailyQuestionLimitBySection ||

@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { api, type AdminLearnerSummary, type PaginatedQuestionsResponse } from '../../api';
 import { poolStatusToQcStatus, qcStatusToPoolStatus, type BankPoolStatus } from '../../../shared/bankStatus';
-import type { QuestionItem } from '../../../shared/contracts';
+import type { QcStatus, QuestionItem } from '../../../shared/contracts';
 import { useI18n } from '../../i18n';
+import { createUndoStack, useUndoRedoShortcuts, type UndoStack } from '../../undoHistory';
 import { BankFilterBar } from './bank/BankFilterBar';
 import { BankMetricsBar } from './bank/BankMetricsBar';
 import { BankQuestionList } from './bank/BankQuestionList';
 import { QuestionInspectorPane } from './bank/QuestionInspectorPane';
 import { SimulatorDialog, type SimulatorLaunchOptions } from './bank/SimulatorDialog';
 import { useBankQuery } from './bank/useBankQuery';
+
+interface BankStatusUndoEntry {
+  changes: { qid: string; prevQcStatus: QcStatus; nextQcStatus: QcStatus }[];
+}
 
 interface QuestionBankStudioProps {
   /** Question to select from a deep link or flag jump, even when it is off the current page. */
@@ -64,7 +69,12 @@ export function QuestionBankStudio({
   const [updatingStatusQid, setUpdatingStatusQid] = useState<string | null>(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [uploadingQid, setUploadingQid] = useState<string | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
   const inspectorRef = useRef<HTMLElement>(null);
+  const statusUndoStackRef = useRef<UndoStack<BankStatusUndoEntry> | null>(null);
+  if (!statusUndoStackRef.current) {
+    statusUndoStackRef.current = createUndoStack<BankStatusUndoEntry>(40);
+  }
 
   const onLoaded = useCallback((res: PaginatedQuestionsResponse) => {
     setSelectedQid((prev) => {
@@ -178,6 +188,7 @@ export function QuestionBankStudio({
       questions.find((q) => q.questionId === qid) ??
       (focused?.question?.questionId === qid ? focused.question : undefined);
     if (!current || updatingStatusQid === qid || qcStatusToPoolStatus(current.qcStatus) === nextStatus) return;
+    const prevQcStatus = current.qcStatus;
     const nextQcStatus = poolStatusToQcStatus(nextStatus);
     setUpdatingStatusQid(qid);
     // Optimistic: reflect the new status immediately, revert on failure.
@@ -185,11 +196,14 @@ export function QuestionBankStudio({
     patchFocusedQuestion(qid, { qcStatus: nextQcStatus });
     try {
       await api.updateQuestionStatus(qid, nextQcStatus);
+      statusUndoStackRef.current!.push({
+        changes: [{ qid, prevQcStatus, nextQcStatus }],
+      });
       onNotice(isZh ? `已将 ${qid} 状态设为“${poolStatusLabel(nextStatus)}”。` : `Set ${qid} to ${poolStatusLabel(nextStatus)}.`);
       afterMutation();
     } catch (err) {
-      setQuestions((prev) => prev.map((q) => (q.questionId === qid ? { ...q, qcStatus: current.qcStatus } : q)));
-      patchFocusedQuestion(qid, { qcStatus: current.qcStatus });
+      setQuestions((prev) => prev.map((q) => (q.questionId === qid ? { ...q, qcStatus: prevQcStatus } : q)));
+      patchFocusedQuestion(qid, { qcStatus: prevQcStatus });
       onError(err instanceof Error ? err.message : isZh ? '无法更新题目状态。' : 'Unable to update question status.');
     } finally {
       setUpdatingStatusQid(null);
@@ -198,9 +212,18 @@ export function QuestionBankStudio({
 
   const handleBulkStatus = async (ids: string[], nextStatus: BankPoolStatus, label?: string) => {
     if (ids.length === 0) return;
+    const nextQcStatus = poolStatusToQcStatus(nextStatus);
+    const byId = new Map(questions.map((q) => [q.questionId, q]));
+    if (focused?.question) byId.set(focused.question.questionId, focused.question);
+    const recordedChanges = ids.map((qid) => ({
+      qid,
+      prevQcStatus: (byId.get(qid)?.qcStatus ?? 'active') as QcStatus,
+      nextQcStatus,
+    }));
     setBulkBusy(true);
     try {
-      const res = await api.bulkUpdateQuestionStatus(ids, poolStatusToQcStatus(nextStatus));
+      const res = await api.bulkUpdateQuestionStatus(ids, nextQcStatus);
+      statusUndoStackRef.current!.push({ changes: recordedChanges });
       setCheckedQids([]);
       onNotice(
         label ||
@@ -215,6 +238,63 @@ export function QuestionBankStudio({
       setBulkBusy(false);
     }
   };
+
+  const applyStatusUndoEntry = useCallback(
+    async (entry: BankStatusUndoEntry, direction: 'undo' | 'redo'): Promise<boolean> => {
+      if (undoBusy || bulkBusy || updatingStatusQid !== null) return false;
+      setUndoBusy(true);
+      try {
+        const grouped = new Map<QcStatus, string[]>();
+        for (const ch of entry.changes) {
+          const targetQc = direction === 'undo' ? ch.prevQcStatus : ch.nextQcStatus;
+          const arr = grouped.get(targetQc) || [];
+          arr.push(ch.qid);
+          grouped.set(targetQc, arr);
+        }
+        for (const [qcStatus, qids] of grouped.entries()) {
+          if (qids.length === 1) {
+            await api.updateQuestionStatus(qids[0], qcStatus);
+          } else {
+            await api.bulkUpdateQuestionStatus(qids, qcStatus);
+          }
+          const qidSet = new Set(qids);
+          setQuestions((prev) => prev.map((q) => (qidSet.has(q.questionId) ? { ...q, qcStatus } : q)));
+          for (const qid of qids) {
+            patchFocusedQuestion(qid, { qcStatus });
+          }
+        }
+        onNotice(
+          t(direction === 'undo' ? 'common.undidBankStatus' : 'common.redidBankStatus', {
+            count: entry.changes.length,
+          })
+        );
+        afterMutation();
+        return true;
+      } catch (err) {
+        onError(err instanceof Error ? err.message : isZh ? '撤销状态更改失败。' : 'Unable to undo status change.');
+        return false;
+      } finally {
+        setUndoBusy(false);
+      }
+    },
+    [undoBusy, bulkBusy, updatingStatusQid, setQuestions, patchFocusedQuestion, onNotice, onError, afterMutation, t, isZh]
+  );
+
+  useUndoRedoShortcuts({
+    enabled: !simOpen && !undoBusy && !bulkBusy && !deletingBusy,
+    onUndo: () => {
+      const entry = statusUndoStackRef.current!.undo();
+      if (!entry) return false;
+      void applyStatusUndoEntry(entry, 'undo');
+      return true;
+    },
+    onRedo: () => {
+      const entry = statusUndoStackRef.current!.redo();
+      if (!entry) return false;
+      void applyStatusUndoEntry(entry, 'redo');
+      return true;
+    },
+  });
 
   const handleDeleteQuestions = async (ids: string[]) => {
     if (ids.length === 0 || deletingBusy) return;

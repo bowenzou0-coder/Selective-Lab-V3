@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { Lock, RefreshCw, RotateCcw, Save, Unlock, UserCog } from 'lucide-react';
 import { api, type AdminLearnerSummary, type LearnerDailySettingsView } from '../../api';
 import { useI18n } from '../../i18n';
 import { SegmentedControl } from '../ui/SegmentedControl';
+import type { UndoableActionEntry } from './AutoCalibrateConfigPanel';
 import {
   DEFAULT_AUTO_CALIBRATE,
   DEFAULT_LEARNING_CONFIG,
@@ -28,17 +29,74 @@ interface LearnerOverrideCardProps {
   config: LearningConfig;
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
+  onRecordUndo?: (entry: UndoableActionEntry) => void;
+  onClearUndo?: () => void;
 }
 
 /** Per-learner daily plan override: auto/manual limits, drills, admin lock and today's decided mix. */
-export function LearnerOverrideCard({ learner, config, onNotice, onError }: LearnerOverrideCardProps) {
+export function LearnerOverrideCard({
+  learner,
+  config,
+  onNotice,
+  onError,
+  onRecordUndo,
+  onClearUndo,
+}: LearnerOverrideCardProps) {
   const { t, sectionShortLabel, skillName } = useI18n();
   const monitoredStudentId = learner.uid;
-  const [learnerForm, setLearnerForm] = useState<LearnerDailySettingsView>(DEFAULT_LEARNER_VIEW);
+  const [learnerForm, setLearnerFormRaw] = useState<LearnerDailySettingsView>(DEFAULT_LEARNER_VIEW);
+  const learnerFormRef = useRef<LearnerDailySettingsView>(DEFAULT_LEARNER_VIEW);
+  learnerFormRef.current = learnerForm;
   const [savedLearnerForm, setSavedLearnerForm] = useState<LearnerDailySettingsView>(DEFAULT_LEARNER_VIEW);
   const [learnerPrefs, setLearnerPrefs] = useState<LearnerPreferences | null>(null);
-  const [learnerLocked, setLearnerLocked] = useState(false);
+  const [learnerLocked, setLearnerLockedRaw] = useState(false);
+  const learnerLockedRef = useRef(false);
+  learnerLockedRef.current = learnerLocked;
   const [savedLearnerLocked, setSavedLearnerLocked] = useState(false);
+
+  const setLearnerForm = useCallback(
+    (action: SetStateAction<LearnerDailySettingsView>) => {
+      const prev = learnerFormRef.current;
+      const next =
+        typeof action === 'function'
+          ? (action as (cur: LearnerDailySettingsView) => LearnerDailySettingsView)(prev)
+          : action;
+      if (Object.is(prev, next) || JSON.stringify(prev) === JSON.stringify(next)) return;
+      onRecordUndo?.({
+        undo: () => {
+          learnerFormRef.current = prev;
+          setLearnerFormRaw(prev);
+        },
+        redo: () => {
+          learnerFormRef.current = next;
+          setLearnerFormRaw(next);
+        },
+      });
+      learnerFormRef.current = next;
+      setLearnerFormRaw(next);
+    },
+    [onRecordUndo]
+  );
+
+  const setLearnerLocked = useCallback(
+    (next: boolean) => {
+      const prev = learnerLockedRef.current;
+      if (prev === next) return;
+      onRecordUndo?.({
+        undo: () => {
+          learnerLockedRef.current = prev;
+          setLearnerLockedRaw(prev);
+        },
+        redo: () => {
+          learnerLockedRef.current = next;
+          setLearnerLockedRaw(next);
+        },
+      });
+      learnerLockedRef.current = next;
+      setLearnerLockedRaw(next);
+    },
+    [onRecordUndo]
+  );
   const [benchmarkLock, setBenchmarkLock] = useState<BenchmarkLockStatus | null>(null);
   const [togglingBmUnlock, setTogglingBmUnlock] = useState(false);
   const [todayPlan, setTodayPlan] = useState<DailyFocusPlan | null>(null);
@@ -55,13 +113,16 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
     ])
       .then(([prefRes, planRes]) => {
         if (cancelled) return;
-        setLearnerForm(prefRes.effectiveConfig);
+        learnerFormRef.current = prefRes.effectiveConfig;
+        setLearnerFormRaw(prefRes.effectiveConfig);
         setSavedLearnerForm(prefRes.effectiveConfig);
         setLearnerPrefs(prefRes.preferences);
-        setLearnerLocked(prefRes.adminOverrideLocked);
+        learnerLockedRef.current = prefRes.adminOverrideLocked;
+        setLearnerLockedRaw(prefRes.adminOverrideLocked);
         setSavedLearnerLocked(prefRes.adminOverrideLocked);
         setBenchmarkLock(prefRes.benchmarkLock ?? null);
         setTodayPlan(planRes.plan);
+        onClearUndo?.();
       })
       .catch((err) => {
         if (!cancelled) {
@@ -106,10 +167,12 @@ export function LearnerOverrideCard({ learner, config, onNotice, onError }: Lear
         ...learnerForm,
         adminOverrideLocked: learnerLocked,
       });
-      setLearnerForm(res.effectiveConfig);
+      learnerFormRef.current = res.effectiveConfig;
+      setLearnerFormRaw(res.effectiveConfig);
       setSavedLearnerForm(res.effectiveConfig);
       setLearnerPrefs(res.preferences);
-      setLearnerLocked(res.adminOverrideLocked);
+      learnerLockedRef.current = res.adminOverrideLocked;
+      setLearnerLockedRaw(res.adminOverrideLocked);
       setSavedLearnerLocked(res.adminOverrideLocked);
       onNotice(t('admin.overrideSavedNotice', { name: learnerName || learner.uid }));
     } catch (err) {
