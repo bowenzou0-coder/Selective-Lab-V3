@@ -89,5 +89,6 @@ Always pair the design constitution above with Selective Lab's established studi
   - `AnthropicSansDisplay`: headings, card titles, primary buttons
   - `AnthropicSansText`: body copy, options, labels
   - `AnthropicMono`: exam countdown clock and Admin IDs/JSON only
+- **Loading states**: layout-matched `Skeleton` blocks (`components/ui/Skeleton.tsx`, `.skeleton` in `tokens.css`, static under reduced motion) instead of bare "Loading..." text; paint cached data immediately when it exists.
 - **Quiet Exam Room rule**: Drop the oat sidebar, hero cards, and illustrations during locked exam sessions.
 - **Anti-slop discipline**: Sentence case labels, zero ALL-CAPS eyebrows, zero middle-dot (`·`) chains in student views, zero `→` arrows on button labels, and zero single-word italic headline tricks.

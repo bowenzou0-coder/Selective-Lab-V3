@@ -15,7 +15,9 @@ import {
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
-import { api, type BenchmarkHubResponse, type CustomBatchOption } from '../api';
+import { api, type CustomBatchOption } from '../api';
+import { useCachedResource } from '../useCachedResource';
+import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { useI18n } from '../i18n';
 import type { BenchmarkReportRecord, SectionCode } from '../../shared/contracts';
 import {
@@ -57,38 +59,28 @@ function verdictHeroClass(tier: ReturnType<typeof buildParentVerdict>['tier']): 
 
 export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
   const { t, isZh, sectionLabel, formatDate } = useI18n();
-  const [hub, setHub] = useState<BenchmarkHubResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const {
+    data: hub,
+    setData: setHub,
+    loading,
+    error: loadError,
+  } = useCachedResource('benchmarks', {
+    fallbackError: 'Unable to load benchmark hub.',
+    onData: (res) => {
+      if (res.reports.length > 0) {
+        setSelectedSessionId((prev) => prev || res.reports[0].sessionId);
+      }
+    },
+  });
+  const [launchError, setLaunchError] = useState('');
+  const error = launchError || (hub ? '' : loadError);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => hub?.reports[0]?.sessionId ?? null);
   const [genderFilter, setGenderFilter] = useState<ApplicantGenderFilter>('all');
   const [showAllAboveCutoff, setShowAllAboveCutoff] = useState(false);
   const [pendingBatch, setPendingBatch] = useState<CustomBatchOption | null>(null);
   const [launching, setLaunching] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [analyzeError, setAnalyzeError] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    api
-      .getBenchmarks()
-      .then((res) => {
-        if (!active) return;
-        setHub(res);
-        if (res.reports.length > 0) {
-          setSelectedSessionId((prev) => prev || res.reports[0].sessionId);
-        }
-      })
-      .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'Unable to load benchmark hub.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!pendingBatch) return;
@@ -177,7 +169,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
   const handleConfirmStart = async () => {
     if (!pendingBatch || launching) return;
     setLaunching(true);
-    setError('');
+    setLaunchError('');
     try {
       const res = await api.createSession({
         mode: 'benchmark_exam',
@@ -193,7 +185,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
         onOpenSession(activeId, true);
         return;
       }
-      setError(err instanceof Error ? err.message : t('home.unableStartSession'));
+      setLaunchError(err instanceof Error ? err.message : t('home.unableStartSession'));
       setLaunching(false);
       setPendingBatch(null);
     }
@@ -206,10 +198,64 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
     return t('bench.bandLowest50');
   };
 
-  if (loading) {
+  const header = (
+    <header className="space-y-1.5">
+      <div className="inline-flex items-center gap-1.5 text-xs font-sans-display font-semibold text-[#1D6346]">
+        <ShieldCheck className="w-4 h-4 shrink-0" />
+        <span>{t('bm.eyebrow')}</span>
+      </div>
+      <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
+        {t('bm.title')}
+      </h1>
+      <p className="text-[14px] text-[#4A5955] max-w-2xl leading-relaxed">
+        {t('bm.subtitle')}
+      </p>
+    </header>
+  );
+
+  if (loading && !hub) {
     return (
-      <main className="px-6 sm:px-9 py-12 max-w-[1160px] mx-auto text-sm text-[#4A5955]">
-        {t('bm.loading')}
+      <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
+        {header}
+        <SkeletonRegion label={t('bm.loading')} className="space-y-10">
+          <section className="space-y-3">
+            <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
+              {t('bm.sitExamTitle')}
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[0, 1].map((card) => (
+                <div
+                  key={card}
+                  className="p-5 rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] flex flex-col justify-between gap-4"
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <Skeleton className="h-[20px] w-16 rounded-full" />
+                      <Skeleton className="h-[20px] w-20 rounded-full" />
+                    </div>
+                    <Skeleton className="h-[20px] w-2/3" />
+                    <Skeleton className="h-[12px] w-full" />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#E5DFD5]">
+                    <Skeleton className="h-[14px] w-28" />
+                    <Skeleton className="h-[32px] w-32 rounded-[10px]" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="space-y-5">
+            <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
+              {t('bm.savedReportsTitle')}
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {[0, 1, 2].map((pill) => (
+                <Skeleton key={pill} className="h-[54px] w-40 rounded-[12px]" />
+              ))}
+            </div>
+            <Skeleton className="h-[260px] w-full rounded-[16px]" />
+          </section>
+        </SkeletonRegion>
       </main>
     );
   }
@@ -312,19 +358,7 @@ export function BenchmarksView({ onOpenSession }: BenchmarksViewProps) {
           document.body
         )}
 
-      {/* Header */}
-      <header className="space-y-1.5">
-        <div className="inline-flex items-center gap-1.5 text-xs font-sans-display font-semibold text-[#1D6346]">
-          <ShieldCheck className="w-4 h-4 shrink-0" />
-          <span>{t('bm.eyebrow')}</span>
-        </div>
-        <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
-          {t('bm.title')}
-        </h1>
-        <p className="text-[14px] text-[#4A5955] max-w-2xl leading-relaxed">
-          {t('bm.subtitle')}
-        </p>
-      </header>
+      {header}
 
       {error && (
         <div role="alert" className="p-3.5 rounded-[12px] bg-[#FDECEB] text-[#B42318] text-sm font-medium">

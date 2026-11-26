@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LanguageToggle, useI18n } from '../i18n';
 import {
   ArrowLeft,
@@ -81,6 +81,57 @@ type WritingViewMode = 'critique' | 'exemplar' | 'prompt';
 type AnnotationFilter = 'all' | 'strength' | 'fix';
 
 type WritingReviewEntry = NonNullable<SessionDetailResponse['writingReview']>[number];
+
+type ItemStatus = { isCorrect: boolean; hasIncorrect: boolean; hasUnanswered: boolean };
+
+/**
+ * Up to ~90 item pills; memoized so typing in the flag form or toggling essay markers
+ * does not re-render the whole strip.
+ */
+const ReviewItemPills = memo(function ReviewItemPills({
+  items,
+  questionNumberById,
+  itemStatusMap,
+  activeQuestionId,
+  onSelect,
+}: {
+  items: StudentQuestionView[];
+  questionNumberById: Map<string, number>;
+  itemStatusMap: Map<string, ItemStatus>;
+  activeQuestionId: string | undefined;
+  onSelect: (questionId: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5 max-w-[840px] max-h-[92px] overflow-y-auto pr-1">
+      {items.map((q) => {
+        const globalNum = questionNumberById.get(q.questionId) ?? 1;
+        const st = itemStatusMap.get(q.questionId);
+        const isSelected = activeQuestionId === q.questionId;
+        return (
+          <button
+            key={q.questionId}
+            type="button"
+            onClick={() => onSelect(q.questionId)}
+            aria-label={`Review item ${globalNum}${
+              st?.hasUnanswered ? ' Unanswered' : st?.hasIncorrect ? ' Incorrect' : ' Correct'
+            }`}
+            className={`w-9 h-9 inline-flex items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums cursor-pointer transition-colors ${
+              isSelected
+                ? 'border-[#113C36] bg-[#113C36] text-white'
+                : st?.hasUnanswered
+                  ? 'border-[#A35116]/40 bg-[#FDF0E2] text-[#A35116]'
+                  : st?.hasIncorrect
+                    ? 'border-[#B42318]/40 bg-[#FDECEB] text-[#B42318]'
+                    : 'border-[#1D6346]/35 bg-[#E5F3EC] text-[#1D6346]'
+            }`}
+          >
+            {globalNum}
+          </button>
+        );
+      })}
+    </div>
+  );
+});
 
 const PENDING_EVAL_TTL_MS = 90_000;
 
@@ -196,10 +247,7 @@ export function PostSubmissionReview({
   const secs = elapsedSec % 60;
 
   const itemStatusMap = useMemo(() => {
-    const map = new Map<
-      string,
-      { isCorrect: boolean; hasIncorrect: boolean; hasUnanswered: boolean }
-    >();
+    const map = new Map<string, ItemStatus>();
     for (const q of questions) {
       if (q.formatType === 'WRIT_TYPED_TASK') {
         map.set(q.questionId, { isCorrect: true, hasIncorrect: false, hasUnanswered: false });
@@ -278,9 +326,9 @@ export function PostSubmissionReview({
     return t('bench.bandLowest50');
   };
 
-  const activeIndex = Math.max(
-    0,
-    filteredQuestions.findIndex((q) => q.questionId === selectedQuestionId)
+  const activeIndex = useMemo(
+    () => Math.max(0, filteredQuestions.findIndex((q) => q.questionId === selectedQuestionId)),
+    [filteredQuestions, selectedQuestionId]
   );
   const activeQuestion = filteredQuestions[activeIndex] || filteredQuestions[0] || null;
 
@@ -294,10 +342,10 @@ export function PostSubmissionReview({
     return out;
   }, [activeQuestion, reviewResults]);
 
-  const handleSelectQuestion = (qid: string) => {
+  const handleSelectQuestion = useCallback((qid: string) => {
     setSelectedQuestionId(qid);
     setActiveEvidenceRef(null);
-  };
+  }, []);
 
   const handleFilterChange = (next: ReviewFilter) => {
     setFilter(next);
@@ -459,6 +507,42 @@ export function PostSubmissionReview({
     return { items: legacy, isLegacy: true };
   };
 
+  // Writing review derivations: computed once per evaluation/filter change, not on every render.
+  const isActiveWriting = activeQuestion?.formatType === 'WRIT_TYPED_TASK';
+  const activeWritingReview = useMemo(
+    () =>
+      isActiveWriting && activeQuestion
+        ? writingReview.find((w) => w.questionId === activeQuestion.questionId) || writingReview[0] || null
+        : null,
+    [isActiveWriting, activeQuestion, writingReview]
+  );
+  const latestEval = activeWritingReview?.evaluations[0];
+  const effectiveAnnotations = useMemo(
+    () => getEffectiveAnnotations(latestEval),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [latestEval, skillName]
+  );
+  const visibleEssayAnnotations = useMemo(
+    () =>
+      effectiveAnnotations.items.filter((a) => {
+        if (annotationFilter === 'strength') return a.kind === 'strength';
+        if (annotationFilter === 'fix') return a.kind !== 'strength';
+        return true;
+      }),
+    [effectiveAnnotations, annotationFilter]
+  );
+  const essayParagraphs = useMemo(
+    () => buildAnnotatedParagraphs(activeWritingReview?.responseText ?? '', visibleEssayAnnotations).paragraphs,
+    [activeWritingReview?.responseText, visibleEssayAnnotations]
+  );
+  const exemplarParagraphs = useMemo(
+    () =>
+      latestEval?.exemplar
+        ? buildAnnotatedParagraphs(latestEval.exemplar.text, latestEval.exemplar.annotations).paragraphs
+        : [],
+    [latestEval]
+  );
+
   const shortCriterionLabel = (skillId: string): string => {
     if (skillId === 'WRIT.CRIT.TOPIC_PROMPT_ADHERENCE') return t('rev.critShortPrompt');
     if (skillId === 'WRIT.CRIT.IDEAS_CREATIVITY') return t('rev.critShortIdeas');
@@ -485,13 +569,9 @@ export function PostSubmissionReview({
 
     const strengthCount = annotations.filter((a) => a.kind === 'strength').length;
     const fixCount = annotations.filter((a) => a.kind !== 'strength').length;
-    const visibleAnnotations = annotations.filter((a) => {
-      if (annotationFilter === 'strength') return a.kind === 'strength';
-      if (annotationFilter === 'fix') return a.kind !== 'strength';
-      return true;
-    });
+    const visibleAnnotations = visibleEssayAnnotations;
     const annById = new Map(visibleAnnotations.map((a) => [a.id, a]));
-    const { paragraphs } = buildAnnotatedParagraphs(responseText, visibleAnnotations);
+    const paragraphs = essayParagraphs;
 
     const handleSelectFromEssay = (id: string) => {
       setSelectedAnnotationId(id);
@@ -983,7 +1063,7 @@ export function PostSubmissionReview({
     const annById = new Map<string, WritingExemplarAnnotation>(
       exemplar.annotations.map((a) => [a.id, a])
     );
-    const { paragraphs } = buildAnnotatedParagraphs(exemplar.text, exemplar.annotations);
+    const paragraphs = exemplarParagraphs;
 
     const handleSelectExemplar = (id: string, targetSide: 'essay' | 'card') => {
       setSelectedExemplarAnnId(id);
@@ -1125,10 +1205,6 @@ export function PostSubmissionReview({
   };
 
   const activeStatus = activeQuestion ? itemStatusMap.get(activeQuestion.questionId) : undefined;
-  const isActiveWriting = activeQuestion?.formatType === 'WRIT_TYPED_TASK';
-  const activeWritingReview = isActiveWriting && activeQuestion
-    ? writingReview.find((w) => w.questionId === activeQuestion.questionId) || writingReview[0] || null
-    : null;
   const writingFooterNav =
     filteredQuestions.length > 1 ? (
       <div className="pt-4 mt-6 border-t border-[#E5DFD5] flex items-center justify-between gap-3">
@@ -1231,34 +1307,13 @@ export function PostSubmissionReview({
         {/* Item Selector Pills (hidden for single-task writing sprints) */}
         {filteredQuestions.length > 0 && !(isWritingOnly && filteredQuestions.length <= 1) && (
           <div className="max-w-[1440px] mx-auto mt-2.5">
-            <div className="flex flex-wrap gap-1.5 max-w-[840px] max-h-[92px] overflow-y-auto pr-1">
-              {filteredQuestions.map((q) => {
-                const globalNum = questionNumberById.get(q.questionId) ?? 1;
-                const st = itemStatusMap.get(q.questionId);
-                const isSelected = activeQuestion?.questionId === q.questionId;
-                return (
-                  <button
-                    key={q.questionId}
-                    type="button"
-                    onClick={() => handleSelectQuestion(q.questionId)}
-                    aria-label={`Review item ${globalNum}${
-                      st?.hasUnanswered ? ' Unanswered' : st?.hasIncorrect ? ' Incorrect' : ' Correct'
-                    }`}
-                    className={`w-9 h-9 inline-flex items-center justify-center rounded-[8px] border text-xs font-sans-display font-semibold tabular-nums cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'border-[#113C36] bg-[#113C36] text-white'
-                        : st?.hasUnanswered
-                          ? 'border-[#A35116]/40 bg-[#FDF0E2] text-[#A35116]'
-                          : st?.hasIncorrect
-                            ? 'border-[#B42318]/40 bg-[#FDECEB] text-[#B42318]'
-                            : 'border-[#1D6346]/35 bg-[#E5F3EC] text-[#1D6346]'
-                    }`}
-                  >
-                    {globalNum}
-                  </button>
-                );
-              })}
-            </div>
+            <ReviewItemPills
+              items={filteredQuestions}
+              questionNumberById={questionNumberById}
+              itemStatusMap={itemStatusMap}
+              activeQuestionId={activeQuestion?.questionId}
+              onSelect={handleSelectQuestion}
+            />
           </div>
         )}
       </header>
@@ -1330,7 +1385,7 @@ export function PostSubmissionReview({
                 {(!isActiveWriting || questions.length > 1) && (
                   <span className="font-sans-display font-semibold text-[#113C36] tabular-nums">
                     {t('session.qOfTotal', {
-                      current: questions.findIndex((q) => q.questionId === activeQuestion.questionId) + 1,
+                      current: questionNumberById.get(activeQuestion.questionId) ?? 1,
                       total: questions.length,
                     })}
                   </span>
@@ -1453,8 +1508,7 @@ export function PostSubmissionReview({
 
           {isActiveWriting ? (
             (() => {
-              const latestEval = activeWritingReview?.evaluations[0];
-              const { items: annotations, isLegacy } = getEffectiveAnnotations(latestEval);
+              const { items: annotations, isLegacy } = effectiveAnnotations;
               if (writingViewMode === 'critique') {
                 return (
                   <main className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12">

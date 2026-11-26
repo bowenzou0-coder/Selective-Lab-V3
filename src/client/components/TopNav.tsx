@@ -15,6 +15,8 @@ export interface StudioShellProps {
   studentId?: string | null;
   email?: string;
   onNavigate: (path: string) => void;
+  /** Warm a tab's chunk and data on hover/focus/touch so the switch paints instantly. */
+  onPrefetch?: (path: string) => void;
   onSignOut: () => void;
   banner?: ReactNode;
   children: ReactNode;
@@ -27,6 +29,7 @@ export function StudioShell({
   role,
   email,
   onNavigate,
+  onPrefetch,
   onSignOut,
   banner,
   children,
@@ -69,6 +72,15 @@ export function StudioShell({
       ? [{ key: 'admin' as const, label: t('nav.admin'), shortLabel: t('nav.adminShort'), href: '/admin', icon: SlidersHorizontal }]
       : []),
   ];
+
+  const prefetchHandlers = (href: string) =>
+    onPrefetch
+      ? {
+          onPointerEnter: () => onPrefetch(href),
+          onFocus: () => onPrefetch(href),
+          onTouchStart: () => onPrefetch(href),
+        }
+      : {};
 
   return (
     <div className="min-h-screen bg-[#F3EFE8] text-[#113C36] flex flex-col">
@@ -123,6 +135,7 @@ export function StudioShell({
                     key={item.key}
                     href={item.href}
                     data-tour={`nav-${item.key}`}
+                    {...prefetchHandlers(item.href)}
                     onClick={(e) => {
                       e.preventDefault();
                       handleNav(item.key);
@@ -185,6 +198,7 @@ export function StudioShell({
               key={item.key}
               href={item.href}
               data-tour={`nav-${item.key}`}
+              {...prefetchHandlers(item.href)}
               onClick={(e) => {
                 e.preventDefault();
                 handleNav(item.key);

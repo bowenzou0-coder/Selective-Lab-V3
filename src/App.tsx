@@ -1,6 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
-import { api, type AuthState } from './client/api';
+import {
+  api,
+  getApiCacheScope,
+  prefetchCachedResource,
+  setApiCacheScope,
+  type AuthState,
+  type CachedResourceKey,
+} from './client/api';
 import { AdminPasswordGate, StudentPinGate } from './client/components/AuthGates';
 import { HomeView } from './client/components/HomeView';
 import { StudioShell } from './client/components/TopNav';
@@ -19,6 +26,13 @@ const ProgressView = lazy(() => loadProgressView().then((m) => ({ default: m.Pro
 const SettingsView = lazy(() => loadSettingsView().then((m) => ({ default: m.SettingsView })));
 const OnboardingTour = lazy(() => loadOnboardingTour().then((m) => ({ default: m.OnboardingTour })));
 const SessionPlayerView = lazy(() => loadSessionPlayer().then((m) => ({ default: m.SessionPlayerView })));
+
+const PREFETCH_ROUTES: Record<string, { data?: CachedResourceKey; chunk?: () => Promise<unknown> }> = {
+  '/': { data: 'dashboard' },
+  '/benchmarks': { data: 'benchmarks', chunk: loadBenchmarksView },
+  '/progress': { data: 'progress', chunk: loadProgressView },
+  '/settings': { data: 'settings', chunk: loadSettingsView },
+};
 
 const ONBOARDING_STORAGE_PREFIX = 'selective_lab_onboarding_done:';
 
@@ -153,6 +167,23 @@ export default function App() {
     });
   }, [auth?.authenticated, auth?.role]);
 
+  // Hover/focus prefetch for sidebar + bottom-nav tabs (fetches are deduplicated in api.ts).
+  const handlePrefetchRoute = useCallback(
+    (href: string) => {
+      if (!auth?.authenticated || auth.activeSessionId) return;
+      if (href.startsWith('/admin')) {
+        if (auth.role === 'admin') void loadAdminView();
+        return;
+      }
+      const target = PREFETCH_ROUTES[href];
+      if (!target) return;
+      void target.chunk?.().catch(() => undefined);
+      // Only warm data for the account the cache is bound to (never another learner's scope).
+      if (target.data && getApiCacheScope() === auth.studentId) prefetchCachedResource(target.data);
+    },
+    [auth]
+  );
+
   const handleActiveSessionCleared = useCallback(() => {
     setAuth((prev) => (prev && prev.activeSessionId !== null ? { ...prev, activeSessionId: null } : prev));
   }, []);
@@ -199,6 +230,7 @@ export default function App() {
   }, [auth, navigate]);
 
   const handleAccountDeleted = useCallback(() => {
+    setApiCacheScope(null);
     if (auth?.authenticated && auth.studentId) {
       setLocalOnboardingDone(auth.studentId, false);
     }
@@ -352,6 +384,7 @@ export default function App() {
         studentId={auth.studentId}
         email={auth.email}
         onNavigate={navigate}
+        onPrefetch={handlePrefetchRoute}
         onSignOut={handleLogout}
         banner={banner}
       >

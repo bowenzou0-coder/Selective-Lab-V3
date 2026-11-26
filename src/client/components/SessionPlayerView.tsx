@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -21,7 +21,6 @@ import type {
   StudentQuestionView,
 } from '../../shared/contracts';
 import { LanguageToggle, useI18n } from '../i18n';
-import { PostSubmissionReview } from './PostSubmissionReview';
 import { QuestionWorkspace } from './QuestionWorkspace';
 import { createSessionClock, useClockValue } from '../sessionClock';
 import { AdminInspectorDrawer } from './session/AdminInspectorDrawer';
@@ -29,6 +28,13 @@ import { ExamTimer } from './session/ExamTimer';
 import { QuestionNavigator } from './session/QuestionNavigator';
 import { SectionBreakView } from './session/SectionBreakView';
 import { SubmitConfirmDialog } from './session/SubmitConfirmDialog';
+
+// The review screen only renders after submission, so it ships as its own chunk
+// (warmed while the exam is idle) instead of weighing down the exam player.
+const loadPostSubmissionReview = () => import('./PostSubmissionReview');
+const PostSubmissionReview = lazy(() =>
+  loadPostSubmissionReview().then((m) => ({ default: m.PostSubmissionReview }))
+);
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'unsent' | 'failed' | 'conflict';
 
@@ -88,6 +94,17 @@ export function SessionPlayerView({
   onActiveSessionCleared,
 }: SessionPlayerViewProps) {
   const { t, isZh, skillName, sectionLabel } = useI18n();
+
+  // Warm the review chunk while the learner works, so submitting shows results without a wait.
+  useEffect(() => {
+    const warm = () => void loadPostSubmissionReview().catch(() => undefined);
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(warm, { timeout: 8000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(warm, 4000);
+    return () => window.clearTimeout(id);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [session, setSession] = useState<SessionRecord | null>(null);
@@ -923,20 +940,32 @@ export function SessionPlayerView({
 
   if (session.status === 'submitted' && reviewResults) {
     return (
-      <PostSubmissionReview
-        sessionId={session.sessionId}
-        sessionTitle={session.title}
-        sessionMode={session.mode}
-        correctSlots={session.correctSlots}
-        totalSlots={session.totalSlots}
-        elapsedSec={session.checkpoint?.elapsedSec ?? clock.getElapsedSec()}
-        questions={questions}
-        reviewResults={reviewResults}
-        writingReview={writingReview}
-        onDoneHome={() => onNavigate('/')}
-        onViewProgress={() => onNavigate('/progress')}
-        onViewBenchmarks={() => onNavigate('/benchmarks')}
-      />
+      <Suspense
+        fallback={
+          <div
+            role="status"
+            aria-live="polite"
+            className="min-h-screen flex items-center justify-center text-sm text-[var(--text-secondary)]"
+          >
+            {t('session.loading')}
+          </div>
+        }
+      >
+        <PostSubmissionReview
+          sessionId={session.sessionId}
+          sessionTitle={session.title}
+          sessionMode={session.mode}
+          correctSlots={session.correctSlots}
+          totalSlots={session.totalSlots}
+          elapsedSec={session.checkpoint?.elapsedSec ?? clock.getElapsedSec()}
+          questions={questions}
+          reviewResults={reviewResults}
+          writingReview={writingReview}
+          onDoneHome={() => onNavigate('/')}
+          onViewProgress={() => onNavigate('/progress')}
+          onViewBenchmarks={() => onNavigate('/benchmarks')}
+        />
+      </Suspense>
     );
   }
 

@@ -196,7 +196,9 @@ export function computeTotalSectionedElapsedSec(
   return total;
 }
 
-export function computeSessionStreak(sessions: SessionRecord[]): number {
+export function computeSessionStreak(
+  sessions: readonly Pick<SessionRecord, 'status' | 'isSandbox' | 'completedAt'>[]
+): number {
   const completedDays = new Set<string>();
   for (const s of sessions) {
     if (s.status === 'submitted' && !s.isSandbox && s.completedAt) {

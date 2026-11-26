@@ -47,6 +47,7 @@ import {
   type ImportBatchSummary,
   type LearnerActivityStats,
   type ListSessionsOptions,
+  type SessionSummaryRow,
   type QuestionMeta,
   type QuestionQueryParams,
   type QuestionQueryResult,
@@ -1163,6 +1164,29 @@ export class MemoryRepository implements AppRepository {
         if (options.omitSubmissionSummary) delete copy.submissionSummary;
         return copy;
       });
+  }
+
+  async listSessionSummaries(
+    limit = 50,
+    studentId = DEFAULT_STUDENT_ID,
+    includeSandbox = true
+  ): Promise<SessionSummaryRow[]> {
+    return Array.from(this.sessions.values())
+      .filter((s) => (s.studentId || DEFAULT_STUDENT_ID) === studentId && (includeSandbox || !s.isSandbox))
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+      .slice(0, limit)
+      .map((s) => ({
+        sessionId: s.sessionId,
+        mode: s.mode,
+        status: s.status,
+        isSandbox: Boolean(s.isSandbox),
+        ...(s.sectionFilter ? { sectionFilter: s.sectionFilter } : {}),
+        startedAt: s.startedAt,
+        ...(s.completedAt ? { completedAt: s.completedAt } : {}),
+        correctSlots: s.correctSlots ?? 0,
+        totalSlots: s.totalSlots ?? 0,
+        elapsedSec: s.checkpoint?.elapsedSec ?? 0,
+      }));
   }
 
   async listActiveSessions(studentId: string): Promise<SessionRecord[]> {

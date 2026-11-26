@@ -34,6 +34,7 @@ import {
   queryFilteredSelection,
   queryPoolHealthByLearner,
   queryQuestionsPaginatedSql,
+  querySessionSummaries,
   queryStudentDashboardBankSummary,
   queryStudentProgressStats,
   queryTodayAttemptCounts,
@@ -54,6 +55,7 @@ import {
   type ImportBatchSummary,
   type LearnerActivityStats,
   type ListSessionsOptions,
+  type SessionSummaryRow,
   type MigrationPreflightReport,
   type ProgressCountsResponse,
   type ProgressResetResponse,
@@ -101,7 +103,12 @@ type ManifestImportResult = Awaited<ReturnType<AppRepository['importManifest']>>
 const schemaReadyByPool = new WeakMap<Pool, Promise<void>>();
 const bankCacheByPool = new WeakMap<Pool, QuestionBankCache>();
 // Bump with the newest object created by runSchemaInit so cold starts skip the DDL transaction.
-const SCHEMA_MARKER = 'learner_preferences';
+const SCHEMA_MARKER = 'question_flags_student_idx';
+
+type ActiveConfigRow = { configVersionId: string; versionNumber: number; config: LearningConfig };
+/** Process-local active config per pool; short TTL bounds cross-instance staleness, local writes clear it. */
+const ACTIVE_CONFIG_TTL_MS = 45_000;
+const activeConfigCacheByPool = new WeakMap<Pool, { value: ActiveConfigRow; expiresAtMs: number }>();
 
 function manifestBatchId(manifest: object): string {
   const canonical = JSON.stringify(manifest, (key, value: unknown) => {
@@ -139,6 +146,11 @@ export class PostgresRepository implements AppRepository {
   /** Drop the process-local bank copy after a local write (other writers are caught by the fingerprint). */
   private invalidateBank(): void {
     this.bank.invalidate();
+  }
+
+  /** Drop the cached active learning config (call after any write to admin_config_versions). */
+  invalidateConfigCache(): void {
+    activeConfigCacheByPool.delete(this.pool);
   }
 
   async ensureSchema(): Promise<void> {
@@ -320,6 +332,7 @@ export class PostgresRepository implements AppRepository {
       CREATE INDEX IF NOT EXISTS question_flags_status_idx ON question_flags (status);
       CREATE INDEX IF NOT EXISTS sessions_student_status_idx ON sessions (student_id, status, is_sandbox, started_at DESC);
       CREATE INDEX IF NOT EXISTS benchmark_reports_student_completed_idx ON benchmark_reports (student_id, completed_at DESC);
+      CREATE INDEX IF NOT EXISTS question_flags_student_idx ON question_flags ((data->>'studentId'), created_at DESC);
     `;
     try {
       const ready = await this.pool.query<{ ready: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ready', [SCHEMA_MARKER]);
@@ -542,6 +555,7 @@ export class PostgresRepository implements AppRepository {
       await this.hydrateSyncDataImpl(studentId, payload);
     } finally {
       this.invalidateBank();
+      this.invalidateConfigCache();
     }
   }
 
@@ -1163,6 +1177,14 @@ export class PostgresRepository implements AppRepository {
   }
 
   async getActiveConfig(): Promise<{ configVersionId: string; versionNumber: number; config: LearningConfig }> {
+    const cached = activeConfigCacheByPool.get(this.pool);
+    if (cached && cached.expiresAtMs > Date.now()) return structuredClone(cached.value);
+    const value = await this.loadActiveConfig();
+    activeConfigCacheByPool.set(this.pool, { value: structuredClone(value), expiresAtMs: Date.now() + ACTIVE_CONFIG_TTL_MS });
+    return value;
+  }
+
+  private async loadActiveConfig(): Promise<ActiveConfigRow> {
     await this.ensureSchema();
     const { rows } = await this.pool.query(
       'SELECT config_version_id, version_number, config FROM admin_config_versions ORDER BY version_number DESC LIMIT 1'
@@ -1218,7 +1240,7 @@ export class PostgresRepository implements AppRepository {
         [configVersionId, versionNumber, notes || null, JSON.stringify(config)]
       );
       return { configVersionId, versionNumber };
-    });
+    }).finally(() => this.invalidateConfigCache());
   }
 
   async createSession(session: SessionRecord, snapshots: SessionQuestionSnapshot[] = []): Promise<void> {
@@ -1564,6 +1586,15 @@ export class PostgresRepository implements AppRepository {
     return rows.map((r) => r.data as SessionRecord);
   }
 
+  async listSessionSummaries(
+    limit = 50,
+    studentId = DEFAULT_STUDENT_ID,
+    includeSandbox = true
+  ): Promise<SessionSummaryRow[]> {
+    await this.ensureSchema();
+    return querySessionSummaries(this.pool, studentId, includeSandbox, limit);
+  }
+
   async listActiveSessions(studentId: string): Promise<SessionRecord[]> {
     await this.ensureSchema();
     const { rows } = await this.pool.query(
@@ -1839,7 +1870,10 @@ export class PostgresRepository implements AppRepository {
     try {
       return await this.restoreFullBackupImpl(rawBundle, options);
     } finally {
-      if (!options.dryRun) this.invalidateBank();
+      if (!options.dryRun) {
+        this.invalidateBank();
+        this.invalidateConfigCache();
+      }
     }
   }
 

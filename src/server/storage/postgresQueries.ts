@@ -27,6 +27,7 @@ import type {
   QuestionQueryResult,
   QuestionSelectionItem,
   StudentDashboardBankSummary,
+  SessionSummaryRow,
   StudentProgressBankStats,
   TodayAttemptCounts,
 } from './repository.ts';
@@ -325,6 +326,60 @@ export async function queryTodayAttemptCounts(
     [studentId, `${escaped}%`]
   );
   return rows[0] || { attempted: 0, correct: 0 };
+}
+
+/**
+ * Slim session metadata projected in SQL so dashboards never ship whole session JSONB
+ * (checkpoint answers, planned ids, submission summaries) across the wire.
+ * Timestamps come from the stored JSON so they match full `SessionRecord` strings exactly.
+ */
+export async function querySessionSummaries(
+  pool: Pool,
+  studentId: string,
+  includeSandbox: boolean,
+  limit: number
+): Promise<SessionSummaryRow[]> {
+  const { rows } = await pool.query<{
+    session_id: string;
+    mode: SessionSummaryRow['mode'];
+    status: SessionSummaryRow['status'];
+    is_sandbox: boolean;
+    section_filter: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    correct_slots: string | null;
+    total_slots: string | null;
+    elapsed_sec: string | null;
+  }>(
+    `SELECT session_id, mode, status, is_sandbox,
+            data->>'sectionFilter' AS section_filter,
+            data->>'startedAt' AS started_at,
+            data->>'completedAt' AS completed_at,
+            data->>'correctSlots' AS correct_slots,
+            data->>'totalSlots' AS total_slots,
+            data#>>'{checkpoint,elapsedSec}' AS elapsed_sec
+     FROM sessions
+     WHERE student_id = $1 AND ($2::boolean OR NOT is_sandbox)
+     ORDER BY started_at DESC
+     LIMIT $3`,
+    [studentId, includeSandbox, limit]
+  );
+  const num = (value: string | null): number => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return rows.map((r) => ({
+    sessionId: r.session_id,
+    mode: r.mode,
+    status: r.status,
+    isSandbox: Boolean(r.is_sandbox),
+    ...(r.section_filter ? { sectionFilter: r.section_filter as SectionCode } : {}),
+    startedAt: r.started_at || '',
+    ...(r.completed_at ? { completedAt: r.completed_at } : {}),
+    correctSlots: num(r.correct_slots),
+    totalSlots: num(r.total_slots),
+    elapsedSec: num(r.elapsed_sec),
+  }));
 }
 
 export async function queryStudentProgressStats(

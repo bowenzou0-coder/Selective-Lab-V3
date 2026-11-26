@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Award, Clock, Play, RotateCcw } from 'lucide-react';
-import { api, type DashboardResponse } from '../api';
+import { api, peekCachedResource, type DashboardResponse } from '../api';
 import { getLocalizedSectionMixParts, useI18n, type MessageKey } from '../i18n';
 import type { MockTestBatch, SectionCode, SessionMode } from '../../shared/contracts';
 import {
@@ -10,6 +10,7 @@ import {
   IsometricPenManuscriptIllustration,
   SectionThumbnail,
 } from './StudioIllustrations';
+import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 
 interface HomeViewProps {
   onOpenSession: (sessionId: string, isLocked?: boolean) => void;
@@ -58,6 +59,17 @@ interface PendingLaunchSpec {
   payload: Parameters<typeof api.createSession>[0];
 }
 
+/** Cached dashboard safe to paint at once (an active session always redirects instead). */
+function readCachedDashboard(): DashboardResponse | null {
+  const cached = peekCachedResource('dashboard');
+  return cached && !cached.activeSession ? cached : null;
+}
+
+function drillCountsFrom(data: DashboardResponse | null): Record<'READ' | 'MATH' | 'THINK', number> {
+  const count = data?.sectionDrillQuestionCount || 10;
+  return { READ: count, MATH: count, THINK: count };
+}
+
 function getOfficialSectionMinutes(scope: 'ALL' | SectionCode): number {
   if (scope === 'WRIT') return 30;
   if (scope === 'READ') return 45;
@@ -86,18 +98,17 @@ function inferSessionThumbKind(title?: string, mode?: string): SectionCode | 'DA
 
 export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: HomeViewProps) {
   const { t, isZh, sectionLabel, sectionShortLabel, skillName, formatDate } = useI18n();
-  const [data, setData] = useState<DashboardResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [initialDashboard] = useState(readCachedDashboard);
+  const [data, setData] = useState<DashboardResponse | null>(initialDashboard);
+  const [loading, setLoading] = useState(initialDashboard === null);
   const [launching, setLaunching] = useState<string | null>(null);
   const [pendingLaunch, setPendingLaunch] = useState<PendingLaunchSpec | null>(null);
   const [error, setError] = useState('');
 
   // Flexible Practice Drill counts per section (default 10)
-  const [drillCounts, setDrillCounts] = useState<Record<'READ' | 'MATH' | 'THINK', number>>({
-    READ: 10,
-    MATH: 10,
-    THINK: 10,
-  });
+  const [drillCounts, setDrillCounts] = useState<Record<'READ' | 'MATH' | 'THINK', number>>(() =>
+    drillCountsFrom(initialDashboard)
+  );
 
   // Mock Test Simulator controls (Fresh Pool Mock is default; Official Benchmarks live on /benchmarks)
   const [mockMode, setMockMode] = useState<'pool' | 'batch'>('pool');
@@ -107,6 +118,8 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
   const [paperSearch, setPaperSearch] = useState('');
   const [timerPreset, setTimerPreset] = useState<'1.0' | '0.75' | '1.25' | '1.5' | 'custom'>('1.0');
   const [customMinutes, setCustomMinutes] = useState('40');
+
+  const drillDefaultRef = useRef(initialDashboard?.sectionDrillQuestionCount);
 
   useEffect(() => {
     let active = true;
@@ -119,19 +132,19 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
           return;
         }
         setData(res);
+        // Keep the learner's drill-count edits unless the configured default actually changed.
+        if (res.sectionDrillQuestionCount && drillDefaultRef.current !== res.sectionDrillQuestionCount) {
+          drillDefaultRef.current = res.sectionDrillQuestionCount;
+          setDrillCounts(drillCountsFrom(res));
+        }
+        setError('');
         if (res.shouldShowOnboarding) {
           onOnboardingEligible?.(true);
         }
-        if (res.sectionDrillQuestionCount) {
-          setDrillCounts({
-            READ: res.sectionDrillQuestionCount,
-            MATH: res.sectionDrillQuestionCount,
-            THINK: res.sectionDrillQuestionCount,
-          });
-        }
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'Unable to load dashboard.');
+        // A background revalidation failure keeps the cached dashboard on screen.
+        if (active && !initialDashboard) setError(err instanceof Error ? err.message : 'Unable to load dashboard.');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -139,7 +152,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
     return () => {
       active = false;
     };
-  }, [onOpenSession, onOnboardingEligible]);
+  }, [onOpenSession, onOnboardingEligible, initialDashboard]);
 
   // Dismiss Ready modal on Escape
   useEffect(() => {
@@ -528,6 +541,12 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
               <h2 className="font-sans-display font-semibold text-[18px] tracking-[-0.015em] text-[#113C36]">
                 {t('home.todaysPractice')}
               </h2>
+              {loading ? (
+                <span className="block space-y-1.5 pt-0.5" aria-hidden="true">
+                  <Skeleton className="skeleton-on-tint h-[13px] w-[26ch] max-w-full" />
+                  <Skeleton className="skeleton-on-tint h-[13px] w-[18ch] max-w-full" />
+                </span>
+              ) : (
               <p className="text-[13px] text-[#113C36]/80 leading-relaxed max-w-[28ch]">
                 {dailyTotalQuestions > 0
                   ? t('home.todayPlanLine', {
@@ -536,6 +555,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
                     })
                   : t('home.todayPlanFallback')}
               </p>
+              )}
             </div>
             <IsometricBookStarIllustration className="w-[104px] h-[86px] shrink-0 -mt-1 -mr-1" />
           </div>
@@ -544,7 +564,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
             <div className="flex items-end gap-7">
               <div>
                 <div className="font-serif-display font-extrabold text-[44px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
-                  {loading ? '—' : `${todayMinutes}m`}
+                  {loading ? <Skeleton className="skeleton-on-tint h-[44px] w-[2.6ch]" /> : `${todayMinutes}m`}
                 </div>
                 <div className="mt-1.5 text-xs font-medium text-[#113C36]/75 tabular-nums">
                   {t('home.ofDailyGoal', { min: dailyGoalMinutes })}
@@ -553,7 +573,7 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
               <div className="h-10 w-px bg-[#113C36]/15" aria-hidden="true" />
               <div>
                 <div className="font-serif-display font-extrabold text-[44px] leading-none tracking-[-0.03em] text-[#113C36] tabular-nums">
-                  {loading ? '—' : `${streakDays}d`}
+                  {loading ? <Skeleton className="skeleton-on-tint h-[44px] w-[2.2ch]" /> : `${streakDays}d`}
                 </div>
                 <div className="mt-1.5 text-xs font-medium text-[#113C36]/75">
                   {t('home.studyStreak')}
@@ -1004,6 +1024,25 @@ export function HomeView({ onOpenSession, onNavigate, onOnboardingEligible }: Ho
       </section>
 
       {/* Hairline-Divided Recent Sessions */}
+      {loading && !data && (
+        <SkeletonRegion label={t('app.loading')} className="space-y-4">
+          <Skeleton className="h-[28px] w-48" />
+          <div className="border-t border-b border-[#E5DFD5] divide-y divide-[#E5DFD5]">
+            {[0, 1, 2].map((row) => (
+              <div key={row} className="py-3.5 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                  <Skeleton className="w-9 h-9 rounded-[10px] shrink-0" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-[14px] w-1/2 max-w-[260px]" />
+                    <Skeleton className="h-[12px] w-1/3 max-w-[180px]" />
+                  </div>
+                </div>
+                <Skeleton className="h-[30px] w-20 rounded-[10px] shrink-0" />
+              </div>
+            ))}
+          </div>
+        </SkeletonRegion>
+      )}
       {data && data.recentSessions.length > 0 && (
         <section id="recent-sessions" className="space-y-4 scroll-mt-6">
           <div className="flex items-end justify-between gap-3">

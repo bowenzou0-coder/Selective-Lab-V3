@@ -323,3 +323,75 @@ test('MemoryRepository backup/restore round-trips benchmark reports and learner 
   assert.equal(bad.valid, false);
   assert.ok(bad.errors.some((e) => e.includes('benchmarkReports')));
 });
+
+test('MemoryRepository.listSessionSummaries returns slim newest-first metadata without heavy payloads', async () => {
+  const repo = new MemoryRepository();
+  const base = {
+    configVersionId: 'cfg_v1',
+    plannedQuestionIds: ['q_1', 'q_2'],
+    totalSlots: 2,
+    correctSlots: 0,
+  };
+  await repo.createSession({
+    ...base,
+    sessionId: 'sess_old',
+    studentId: 'stu_a',
+    mode: 'section_drill',
+    sectionFilter: 'MATH',
+    status: 'submitted',
+    startedAt: '2026-11-20T09:00:00.000Z',
+    completedAt: '2026-11-20T09:10:00.000Z',
+    correctSlots: 1,
+    checkpoint: { currentIndex: 1, elapsedSec: 600, answersByPartId: { p1: 'A' }, flaggedQuestionIds: [] },
+  });
+  await repo.createSession({
+    ...base,
+    sessionId: 'sess_new',
+    studentId: 'stu_a',
+    mode: 'daily_adaptive',
+    status: 'in_progress',
+    startedAt: '2026-11-21T09:00:00.000Z',
+  });
+  await repo.createSession({
+    ...base,
+    sessionId: 'sess_sandbox',
+    studentId: 'stu_a',
+    mode: 'admin_calibration',
+    isSandbox: true,
+    status: 'in_progress',
+    startedAt: '2026-11-22T09:00:00.000Z',
+  });
+  await repo.createSession({
+    ...base,
+    sessionId: 'sess_other',
+    studentId: 'stu_b',
+    mode: 'daily_adaptive',
+    status: 'submitted',
+    startedAt: '2026-11-23T09:00:00.000Z',
+  });
+
+  const rows = await repo.listSessionSummaries(10, 'stu_a', false);
+  assert.deepEqual(rows.map((r) => r.sessionId), ['sess_new', 'sess_old']);
+  assert.deepEqual(rows[1], {
+    sessionId: 'sess_old',
+    mode: 'section_drill',
+    status: 'submitted',
+    isSandbox: false,
+    sectionFilter: 'MATH',
+    startedAt: '2026-11-20T09:00:00.000Z',
+    completedAt: '2026-11-20T09:10:00.000Z',
+    correctSlots: 1,
+    totalSlots: 2,
+    elapsedSec: 600,
+  });
+  assert.equal(rows[0].elapsedSec, 0);
+  for (const row of rows) {
+    assert.equal('checkpoint' in row, false);
+    assert.equal('plannedQuestionIds' in row, false);
+    assert.equal('submissionSummary' in row, false);
+  }
+
+  const withSandbox = await repo.listSessionSummaries(10, 'stu_a', true);
+  assert.deepEqual(withSandbox.map((r) => r.sessionId), ['sess_sandbox', 'sess_new', 'sess_old']);
+  assert.equal((await repo.listSessionSummaries(1, 'stu_a', true)).length, 1);
+});

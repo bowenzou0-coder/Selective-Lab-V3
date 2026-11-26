@@ -167,6 +167,10 @@
   --status-error: #B42318;
   --status-error-bg: #FDECEB;
 
+  /* Loading skeletons: warm stone base with a soft sheet-white sweep */
+  --skeleton-base: #ECE6DC;
+  --skeleton-highlight: rgba(255, 255, 255, 0.62);
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;
@@ -229,4 +233,35 @@ body {
 /* Inline diagram SVGs inherit AnthropicSansText automatically; explicit SVG font-family attrs still override */
 .visual-svg-host {
   font-family: 'AnthropicSansText', var(--font-sans-text);
+}
+
+/* Layout-matched loading skeletons (see components/ui/Skeleton.tsx) */
+.skeleton {
+  border-radius: var(--radius-sm);
+  background-color: var(--skeleton-base);
+  background-image: linear-gradient(90deg, transparent 0%, var(--skeleton-highlight) 50%, transparent 100%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.skeleton-on-tint {
+  --skeleton-base: rgba(17, 60, 54, 0.1);
+  --skeleton-highlight: rgba(255, 255, 255, 0.35);
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background-image: none;
+  }
 }

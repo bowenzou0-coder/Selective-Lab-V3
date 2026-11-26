@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Compass,
@@ -16,9 +16,11 @@ import {
 } from 'lucide-react';
 import {
   api,
+  peekCachedResource,
   type LearnerDailySettingsView,
   type StudentSettingsResponse,
 } from '../api';
+import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { useI18n } from '../i18n';
 import {
   DEFAULT_AUTO_CALIBRATE,
@@ -114,14 +116,62 @@ const FALLBACK_DAILY: LearnerDailySettingsView = {
   sectionDrillTimeMinutes: DEFAULT_LEARNING_CONFIG.sessionDefaults.sectionDrillTimeMinutes,
 };
 
+/** Mirrors the daily-plan card and the stacked settings sections below it. */
+function SettingsSkeleton({ title, subtitle, label }: { title: string; subtitle: string; label: string }) {
+  return (
+    <main className="px-6 sm:px-9 py-8 sm:py-10 space-y-8 max-w-[980px] mx-auto text-[#113C36]">
+      <header className="space-y-1">
+        <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
+          {title}
+        </h1>
+        <p className="text-[14.5px] text-[#4A5955]">{subtitle}</p>
+      </header>
+      <SkeletonRegion label={label} className="space-y-8">
+        <section className="rounded-[16px] border border-[#E5DFD5] bg-white p-6 space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2 min-w-0">
+              <Skeleton className="h-[24px] w-56 max-w-full" />
+              <Skeleton className="h-[13px] w-72 max-w-full" />
+            </div>
+            <Skeleton className="h-[36px] w-40 rounded-[12px]" />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[0, 1, 2, 3].map((field) => (
+              <div key={field} className="space-y-1.5">
+                <Skeleton className="h-[12px] w-16" />
+                <Skeleton className="h-[38px] w-full rounded-[10px]" />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2.5">
+            <Skeleton className="h-[36px] w-28 rounded-[10px]" />
+            <Skeleton className="h-[36px] w-32 rounded-[10px]" />
+          </div>
+        </section>
+        {[0, 1].map((card) => (
+          <section key={card} className="rounded-[16px] bg-white border border-[#E5DFD5] p-6 space-y-4">
+            <Skeleton className="h-[20px] w-48" />
+            <Skeleton className="h-[13px] w-full max-w-lg" />
+            <Skeleton className="h-[13px] w-2/3 max-w-md" />
+          </section>
+        ))}
+      </SkeletonRegion>
+    </main>
+  );
+}
+
 export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewProps) {
   const { t, sectionShortLabel, skillName, formatDate } = useI18n();
-  const [data, setData] = useState<StudentSettingsResponse | null>(null);
-  const [form, setForm] = useState<LearnerDailySettingsView>(FALLBACK_DAILY);
-  const [savedForm, setSavedForm] = useState<LearnerDailySettingsView>(FALLBACK_DAILY);
-  const [todayPlan, setTodayPlan] = useState<DailyFocusPlan | null>(null);
-  const [flags, setFlags] = useState<QuestionFlagRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Paint the cached settings at once; the mount request revalidates in the background.
+  const [initialSettings] = useState<StudentSettingsResponse | null>(() => peekCachedResource('settings') ?? null);
+  const [data, setData] = useState<StudentSettingsResponse | null>(initialSettings);
+  const [form, setForm] = useState<LearnerDailySettingsView>(initialSettings?.effectiveConfig ?? FALLBACK_DAILY);
+  const [savedForm, setSavedForm] = useState<LearnerDailySettingsView>(
+    initialSettings?.effectiveConfig ?? FALLBACK_DAILY
+  );
+  const [todayPlan, setTodayPlan] = useState<DailyFocusPlan | null>(initialSettings?.dailyFocusPlan ?? null);
+  const [flags, setFlags] = useState<QuestionFlagRecord[]>(initialSettings?.flags ?? []);
+  const [loading, setLoading] = useState(initialSettings === null);
   const [saving, setSaving] = useState(false);
   const [recalibrating, setRecalibrating] = useState(false);
   const [notice, setNotice] = useState('');
@@ -137,17 +187,28 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
   const [deleteInput, setDeleteInput] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  const loadSettings = useCallback(async () => {
-    setLoading(true);
+  const formRef = useRef(form);
+  const savedFormRef = useRef(savedForm);
+  const hasDataRef = useRef(initialSettings !== null);
+  useEffect(() => {
+    formRef.current = form;
+    savedFormRef.current = savedForm;
+  }, [form, savedForm]);
+
+  const loadSettings = useCallback(async (force = false) => {
+    if (!hasDataRef.current) setLoading(true);
     try {
-      const res = await api.getStudentSettings();
+      const res = await api.getStudentSettings({ force });
+      // Never clobber unsaved edits with a background refresh.
+      const dirty = JSON.stringify(formRef.current) !== JSON.stringify(savedFormRef.current);
+      hasDataRef.current = true;
       setData(res);
-      setForm(res.effectiveConfig);
+      if (!dirty) setForm(res.effectiveConfig);
       setSavedForm(res.effectiveConfig);
       setTodayPlan(res.dailyFocusPlan);
       setFlags(res.flags || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load settings.');
+      if (!hasDataRef.current) setError(err instanceof Error ? err.message : 'Unable to load settings.');
     } finally {
       setLoading(false);
     }
@@ -271,7 +332,7 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
       setResetOpen(false);
       setResetInput('');
       setNotice(t('settings.resetSuccess'));
-      await loadSettings();
+      await loadSettings(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to reset study progress.');
     } finally {
@@ -292,12 +353,8 @@ export function SettingsView({ onAccountDeleted, onReplayTour }: SettingsViewPro
     }
   };
 
-  if (loading) {
-    return (
-      <main className="px-6 sm:px-9 py-12 max-w-[980px] mx-auto text-sm text-[#4A5955]">
-        {t('settings.loading')}
-      </main>
-    );
+  if (loading && !data) {
+    return <SettingsSkeleton title={t('settings.title')} subtitle={t('settings.subtitle')} label={t('settings.loading')} />;
   }
 
   const decidedLimits = todayPlan?.dailyQuestionLimitBySection ?? form.dailyQuestionLimitBySection;

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { Award, BookOpen, Download, PenTool, ShieldCheck } from 'lucide-react';
-import { api, type ProgressResponse } from '../api';
+import { api } from '../api';
+import { useCachedResource } from '../useCachedResource';
+import { Skeleton, SkeletonRegion } from './ui/Skeleton';
 import { BenchmarkReportSummaryCard } from './BenchmarkReportSummaryCard';
 import {
   WRITING_MAX_TOTAL_MARKS,
@@ -9,6 +11,67 @@ import {
   type WritingBandLetter,
   type WritingEvaluationRecord,
 } from '../../shared/contracts';
+
+/** Mirrors the Progress header and retained-mastery panel so nothing shifts when data lands. */
+function ProgressSkeleton({ title, label }: { title: string; label: string }) {
+  return (
+    <main className="px-6 sm:px-9 py-8 sm:py-9 space-y-10 max-w-[1160px] mx-auto text-[#113C36]">
+      <SkeletonRegion label={label} className="space-y-10">
+        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div className="space-y-2">
+            <h1 className="font-sans-display font-semibold text-[28px] sm:text-[32px] tracking-[-0.025em] text-[#113C36] leading-tight">
+              {title}
+            </h1>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Skeleton className="h-[26px] w-24 rounded-full" />
+              <Skeleton className="h-[26px] w-20 rounded-full" />
+              <Skeleton className="h-[26px] w-28 rounded-full" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Skeleton className="h-[34px] w-28 rounded-[10px]" />
+            <Skeleton className="h-[34px] w-28 rounded-[10px]" />
+          </div>
+        </header>
+
+        <section className="p-6 sm:p-7 rounded-[16px] bg-[#FAF8F5] border border-[#E5DFD5] space-y-6">
+          <div className="space-y-2">
+            <Skeleton className="h-[14px] w-32" />
+            <Skeleton className="h-[24px] w-64 max-w-full" />
+            <Skeleton className="h-[13px] w-full max-w-xl" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[0, 1, 2].map((card) => (
+              <div key={card} className="p-5 rounded-[14px] border border-[#E5DFD5] bg-white space-y-2.5">
+                <Skeleton className="h-[12px] w-28" />
+                <Skeleton className="h-[38px] w-24" />
+                <Skeleton className="h-[12px] w-36" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {[0, 1, 2, 3, 4].map((bucket) => (
+              <div key={bucket} className="p-3.5 rounded-[12px] border border-[#E5DFD5] bg-white space-y-2">
+                <Skeleton className="h-[11px] w-16" />
+                <Skeleton className="h-[24px] w-10" />
+              </div>
+            ))}
+          </div>
+          <div className="border border-[#E5DFD5] rounded-[12px] bg-white divide-y divide-[#E5DFD5]">
+            {[0, 1, 2, 3].map((row) => (
+              <div key={row} className="px-4 py-3 flex items-center gap-6">
+                <Skeleton className="h-[12px] w-28" />
+                <Skeleton className="h-[12px] w-12" />
+                <Skeleton className="h-[12px] w-20" />
+                <Skeleton className="h-[12px] w-12 hidden sm:block" />
+              </div>
+            ))}
+          </div>
+        </section>
+      </SkeletonRegion>
+    </main>
+  );
+}
 
 function legacyEstimateToBand(est: WritingEvaluationRecord['overallBandEstimate']): WritingBandLetter {
   if (est === 'top_band') return 'A';
@@ -24,29 +87,9 @@ interface ProgressViewProps {
 
 export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
   const { t, sectionLabel, sectionShortLabel, skillName, familyLabel, formatDate } = useI18n();
-  const [data, setData] = useState<ProgressResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const { data, loading, error } = useCachedResource('progress', { fallbackError: 'Unable to load progress.' });
   const [sectionFilter, setSectionFilter] = useState<'ALL' | SectionCode>('ALL');
   const [onlyPracticed, setOnlyPracticed] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    api
-      .getProgress()
-      .then((res) => {
-        if (active) setData(res);
-      })
-      .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'Unable to load progress.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const filteredSkills = useMemo(() => {
     if (!data) return [];
@@ -67,15 +110,11 @@ export function ProgressView({ onOpenSession, onNavigate }: ProgressViewProps) {
     return Array.from(map.entries());
   }, [filteredSkills]);
 
-  if (loading) {
-    return (
-      <main className="px-6 sm:px-9 py-12 max-w-[1160px] mx-auto text-sm text-[#4A5955]">
-        {t('prog.loading')}
-      </main>
-    );
+  if (loading && !data) {
+    return <ProgressSkeleton title={t('prog.title')} label={t('prog.loading')} />;
   }
 
-  if (error || !data) {
+  if (!data) {
     return (
       <main className="px-6 sm:px-9 py-12 max-w-[1160px] mx-auto">
         <p role="alert" className="p-4 rounded-[12px] bg-[#FDECEB] text-[#B42318] text-sm">

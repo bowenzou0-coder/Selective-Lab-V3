@@ -317,6 +317,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     if (res.status === 401 && !url.startsWith('/api/auth/')) {
+      setApiCacheScope(null);
       window.dispatchEvent(new CustomEvent('nsw-auth-expired'));
     }
     const payload = data as {
@@ -355,6 +356,193 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// ---------------------------------------------------------------------------
+// Stale-while-revalidate cache for the student tab views
+// (Dashboard, Benchmarks, Progress, Settings). Entries are scoped to the signed-in
+// account so switching accounts never renders another learner's data.
+// ---------------------------------------------------------------------------
+
+export type CachedResourceKey = 'dashboard' | 'benchmarks' | 'progress' | 'settings';
+
+export interface CachedResourceMap {
+  dashboard: DashboardResponse;
+  benchmarks: BenchmarkHubResponse;
+  progress: ProgressResponse;
+  settings: StudentSettingsResponse;
+}
+
+const CACHED_RESOURCE_URLS: Record<CachedResourceKey, string> = {
+  dashboard: '/api/student/dashboard',
+  benchmarks: '/api/student/benchmarks',
+  progress: '/api/student/progress',
+  settings: '/api/student/settings',
+};
+
+const ALL_CACHED_KEYS = Object.keys(CACHED_RESOURCE_URLS) as CachedResourceKey[];
+
+/** Fresh window: reads inside it reuse the cached copy without a background refetch. */
+export const API_CACHE_FRESH_MS = 15_000;
+/** Max age a cached copy may still be painted while it revalidates. */
+export const API_CACHE_MAX_STALE_MS = 10 * 60_000;
+
+interface CacheEntry {
+  data?: unknown;
+  fetchedAtMs: number;
+  inFlight?: Promise<unknown>;
+  /** Bumped on invalidation so a response that started earlier is never written back. */
+  generation: number;
+}
+
+const apiCache = new Map<CachedResourceKey, CacheEntry>();
+let apiCacheScope: string | null = null;
+let apiCacheEpoch = 0;
+const cacheListeners = new Set<(key: CachedResourceKey) => void>();
+
+function cacheEntry(key: CachedResourceKey): CacheEntry {
+  let entry = apiCache.get(key);
+  if (!entry) {
+    entry = { fetchedAtMs: 0, generation: 0 };
+    apiCache.set(key, entry);
+  }
+  return entry;
+}
+
+function notifyCache(key: CachedResourceKey): void {
+  for (const listener of cacheListeners) listener(key);
+}
+
+/** Drop every cached response and in-flight dedupe (tests, sign-in/out, account delete). */
+export function clearApiCache(): void {
+  apiCacheEpoch++;
+  apiCache.clear();
+  for (const key of ALL_CACHED_KEYS) notifyCache(key);
+}
+
+/**
+ * Bind the cache to one account. A different (or null) scope wipes everything first,
+ * so a new learner can never see the previous learner's cached dashboard.
+ */
+export function setApiCacheScope(scope: string | null): void {
+  if (scope === apiCacheScope) return;
+  clearApiCache();
+  apiCacheScope = scope;
+}
+
+export function getApiCacheScope(): string | null {
+  return apiCacheScope;
+}
+
+/** Forget cached responses after a mutation; the next read fetches fresh data. */
+export function invalidateApiCache(keys: readonly CachedResourceKey[] = ALL_CACHED_KEYS): void {
+  for (const key of keys) {
+    const entry = apiCache.get(key);
+    if (!entry) continue;
+    entry.generation++;
+    entry.data = undefined;
+    entry.fetchedAtMs = 0;
+    entry.inFlight = undefined;
+    notifyCache(key);
+  }
+}
+
+/**
+ * Apply a mutation's known result to a cached copy in place (keeps its age) so the
+ * next visit paints the updated data instantly. Older in-flight responses are discarded.
+ */
+export function patchCachedResource<K extends CachedResourceKey>(
+  key: K,
+  update: (current: CachedResourceMap[K]) => CachedResourceMap[K]
+): void {
+  const entry = apiCache.get(key);
+  if (!entry || entry.data === undefined) return;
+  entry.generation++;
+  entry.inFlight = undefined;
+  entry.data = update(entry.data as CachedResourceMap[K]);
+  notifyCache(key);
+}
+
+/** Synchronous read for first paint: returns a cached copy younger than the stale limit. */
+export function peekCachedResource<K extends CachedResourceKey>(
+  key: K,
+  nowMs = Date.now()
+): CachedResourceMap[K] | undefined {
+  const entry = apiCache.get(key);
+  if (!entry || entry.data === undefined) return undefined;
+  if (nowMs - entry.fetchedAtMs > API_CACHE_MAX_STALE_MS) return undefined;
+  return entry.data as CachedResourceMap[K];
+}
+
+/** True when a cached copy exists and is still inside the fresh window. */
+export function isCachedResourceFresh(key: CachedResourceKey, nowMs = Date.now()): boolean {
+  const entry = apiCache.get(key);
+  return Boolean(entry && entry.data !== undefined && nowMs - entry.fetchedAtMs <= API_CACHE_FRESH_MS);
+}
+
+/** Subscribe to cache writes/invalidations (used by the SWR hook). */
+export function subscribeApiCache(listener: (key: CachedResourceKey) => void): () => void {
+  cacheListeners.add(listener);
+  return () => {
+    cacheListeners.delete(listener);
+  };
+}
+
+/**
+ * Fetch a cached resource, deduplicating concurrent callers.
+ * `force` skips the fresh window but still joins an in-flight request.
+ */
+export function fetchCachedResource<K extends CachedResourceKey>(
+  key: K,
+  options: { force?: boolean } = {}
+): Promise<CachedResourceMap[K]> {
+  const entry = cacheEntry(key);
+  if (entry.inFlight) return entry.inFlight as Promise<CachedResourceMap[K]>;
+  if (!options.force && isCachedResourceFresh(key)) {
+    return Promise.resolve(entry.data as CachedResourceMap[K]);
+  }
+  const generation = entry.generation;
+  const epoch = apiCacheEpoch;
+  const promise = request<CachedResourceMap[K]>(CACHED_RESOURCE_URLS[key]).then(
+    (data) => {
+      const current = apiCache.get(key);
+      if (epoch === apiCacheEpoch && current && current.generation === generation) {
+        current.data = data;
+        current.fetchedAtMs = Date.now();
+        current.inFlight = undefined;
+        notifyCache(key);
+      }
+      return data;
+    },
+    (err: unknown) => {
+      const current = apiCache.get(key);
+      if (current && current.inFlight === promise) current.inFlight = undefined;
+      throw err;
+    }
+  );
+  entry.inFlight = promise;
+  return promise;
+}
+
+/** Warm a tab's data on hover/focus; skips work when a fresh copy or request already exists. */
+export function prefetchCachedResource(key: CachedResourceKey): void {
+  if (!apiCacheScope) return;
+  void fetchCachedResource(key).catch(() => undefined);
+}
+
+/** Run a mutation and, once it settles, drop the cached views it can change. */
+function invalidating<T>(promise: Promise<T>, keys?: readonly CachedResourceKey[]): Promise<T> {
+  return promise.finally(() => invalidateApiCache(keys));
+}
+
+function rescoping(promise: Promise<AuthState>): Promise<AuthState> {
+  return promise.then((identity) => {
+    setApiCacheScope(identity.authenticated ? identity.studentId : null);
+    return identity;
+  });
+}
+
+const SESSION_KEYS: readonly CachedResourceKey[] = ALL_CACHED_KEYS;
+const SETTINGS_KEYS: readonly CachedResourceKey[] = ['settings', 'dashboard'];
+
 async function downloadFile(url: string, fallbackFilename: string): Promise<void> {
   const res = await fetch(url, {
     credentials: 'same-origin',
@@ -375,30 +563,36 @@ async function downloadFile(url: string, fallbackFilename: string): Promise<void
 
 export const api = {
   getHealth: () => request<HealthResponse>('/api/health'),
-  getMe: () => request<AuthState>('/api/auth/me'),
+  getMe: () => rescoping(request<AuthState>('/api/auth/me')),
   getGoogleConfig: () => request<{ clientId: string; nonce: string | null }>('/api/auth/google-config'),
   studentLogin: (pin: string) =>
-    request<AuthState>('/api/auth/student-login', {
-      method: 'POST',
-      body: JSON.stringify({ pin }),
-    }),
+    rescoping(
+      request<AuthState>('/api/auth/student-login', {
+        method: 'POST',
+        body: JSON.stringify({ pin }),
+      })
+    ),
   adminLogin: (password: string) =>
-    request<AuthState>('/api/auth/admin-login', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    }),
+    rescoping(
+      request<AuthState>('/api/auth/admin-login', {
+        method: 'POST',
+        body: JSON.stringify({ password }),
+      })
+    ),
   googleLogin: (credential: string, admin: boolean) =>
-    request<AuthState>('/api/auth/google-login', {
-      method: 'POST',
-      body: JSON.stringify({ credential, admin }),
-    }),
-  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+    rescoping(
+      request<AuthState>('/api/auth/google-login', {
+        method: 'POST',
+        body: JSON.stringify({ credential, admin }),
+      })
+    ),
+  logout: () =>
+    request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }).finally(() => setApiCacheScope(null)),
   downloadFile,
 
-  getDashboard: () =>
-    request<DashboardResponse>('/api/student/dashboard'),
-  getBenchmarks: () =>
-    request<BenchmarkHubResponse>('/api/student/benchmarks'),
+  /** Cached (SWR) — pass `{ force: true }` to skip the fresh window. */
+  getDashboard: (options?: { force?: boolean }) => fetchCachedResource('dashboard', options),
+  getBenchmarks: (options?: { force?: boolean }) => fetchCachedResource('benchmarks', options),
   getBenchmarkReport: (sessionId: string) =>
     request<{ report: BenchmarkReportRecord }>(`/api/student/benchmarks/${encodeURIComponent(sessionId)}`),
   analyzeBenchmarkReport: (sessionId: string, force = false) =>
@@ -408,7 +602,14 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ force }),
       }
-    ),
+    ).then((res) => {
+      patchCachedResource('benchmarks', (hub) => ({
+        ...hub,
+        reports: hub.reports.map((r) => (r.sessionId === sessionId ? res.report : r)),
+      }));
+      invalidateApiCache(['progress']);
+      return res;
+    }),
   createSession: (payload: {
     mode: SessionMode;
     sectionFilter?: SectionCode;
@@ -419,13 +620,13 @@ export const api = {
     timeMultiplier?: number;
     customTimeLimitSec?: number;
   }) =>
-    request<{ sessionId: string; session: SessionRecord; serverNowIso?: string }>(
+    invalidating(request<{ sessionId: string; session: SessionRecord; serverNowIso?: string }>(
       '/api/student/sessions',
       {
         method: 'POST',
         body: JSON.stringify(payload),
       }
-    ),
+    ), SESSION_KEYS),
   getSession: (id: string) =>
     request<SessionDetailResponse>(`/api/student/sessions/${encodeURIComponent(id)}`),
   saveCheckpoint: (
@@ -433,7 +634,7 @@ export const api = {
     checkpoint: NonNullable<SessionRecord['checkpoint']>,
     expectedRevision?: number
   ) =>
-    request<{
+    invalidating(request<{
       ok: boolean;
       checkpointRevision: number;
       revision?: number;
@@ -442,54 +643,52 @@ export const api = {
     }>(`/api/student/sessions/${encodeURIComponent(id)}/checkpoint`, {
       method: 'PATCH',
       body: JSON.stringify({ checkpoint, expectedRevision }),
-    }),
+    }), ['dashboard', 'progress']),
   submitSession: (
     id: string,
     checkpoint?: SessionRecord['checkpoint'],
     assisted?: boolean,
     expectedRevision?: number
   ) =>
-    request<SessionSubmissionPayload & { alreadySubmitted?: boolean }>(
+    invalidating(request<SessionSubmissionPayload & { alreadySubmitted?: boolean }>(
       `/api/student/sessions/${encodeURIComponent(id)}/submit`,
       {
         method: 'POST',
         body: JSON.stringify({ checkpoint, assisted, expectedRevision }),
       }
-    ),
+    ), SESSION_KEYS),
   completeSessionSection: (
     id: string,
     checkpoint?: SessionRecord['checkpoint'],
     expectedRevision?: number
   ) =>
-    request<
+    invalidating(request<
       | ({ finishedExam: true; alreadySubmitted?: boolean; expiredAutoSubmitted?: boolean; session: SessionRecord } & SessionSubmissionPayload)
       | { finishedExam: false; session: SessionRecord; serverNowIso?: string }
     >(`/api/student/sessions/${encodeURIComponent(id)}/section/complete`, {
       method: 'POST',
       body: JSON.stringify({ checkpoint, expectedRevision }),
-    }),
+    }), SESSION_KEYS),
   startSessionSection: (id: string, expectedRevision?: number) =>
-    request<{ session: SessionRecord; serverNowIso?: string }>(
+    invalidating(request<{ session: SessionRecord; serverNowIso?: string }>(
       `/api/student/sessions/${encodeURIComponent(id)}/section/start`,
       {
         method: 'POST',
         body: JSON.stringify({ expectedRevision }),
       }
-    ),
+    ), ['dashboard', 'progress']),
   evaluateWriting: (submissionId: string) =>
-    request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
+    invalidating(request<{ evaluation: WritingEvaluationRecord; evaluations?: WritingEvaluationRecord[] }>(
       `/api/student/writing/${encodeURIComponent(submissionId)}/evaluate`,
       { method: 'POST' }
-    ),
+    ), ['progress']),
   flagQuestion: (payload: { questionId: string; sessionId: string; reason: string; notes?: string }) =>
-    request<{ flag: QuestionFlagRecord }>('/api/student/flags', {
+    invalidating(request<{ flag: QuestionFlagRecord }>('/api/student/flags', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
-  getProgress: () =>
-    request<ProgressResponse>('/api/student/progress'),
-  getStudentSettings: () =>
-    request<StudentSettingsResponse>('/api/student/settings'),
+    }), ['settings']),
+  getProgress: (options?: { force?: boolean }) => fetchCachedResource('progress', options),
+  getStudentSettings: (options?: { force?: boolean }) => fetchCachedResource('settings', options),
   saveStudentDailyPlan: (payload: {
     autoCalibrate?: AutoCalibrateConfig;
     dailyQuestionLimitBySection?: Record<SectionCode, number>;
@@ -498,24 +697,45 @@ export const api = {
     sectionDrillTimeMinutes?: number;
     resetToDefaults?: boolean;
   }) =>
-    request<{
-      ok: boolean;
-      preferences: LearnerPreferences;
-      effectiveConfig: LearnerDailySettingsView;
-      adminOverrideLocked: boolean;
-    }>('/api/student/settings/daily-plan', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
+    invalidating(
+      request<{
+        ok: boolean;
+        preferences: LearnerPreferences;
+        effectiveConfig: LearnerDailySettingsView;
+        adminOverrideLocked: boolean;
+      }>('/api/student/settings/daily-plan', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }).then((res) => {
+        patchCachedResource('settings', (current) => ({
+          ...current,
+          preferences: res.preferences,
+          effectiveConfig: res.effectiveConfig,
+          adminOverrideLocked: res.adminOverrideLocked,
+        }));
+        return res;
+      }),
+      ['dashboard']
+    ),
   recalibrateStudentDailyPlan: (payload?: { autoCalibrate?: AutoCalibrateConfig }) =>
-    request<{
-      plan: DailyFocusPlan;
-      studentId?: string;
-      effectiveConfig: LearnerDailySettingsView;
-    }>('/api/student/settings/recalibrate', {
-      method: 'POST',
-      body: JSON.stringify(payload || {}),
-    }),
+    invalidating(
+      request<{
+        plan: DailyFocusPlan;
+        studentId?: string;
+        effectiveConfig: LearnerDailySettingsView;
+      }>('/api/student/settings/recalibrate', {
+        method: 'POST',
+        body: JSON.stringify(payload || {}),
+      }).then((res) => {
+        patchCachedResource('settings', (current) => ({
+          ...current,
+          dailyFocusPlan: res.plan ?? current.dailyFocusPlan,
+          effectiveConfig: res.effectiveConfig ?? current.effectiveConfig,
+        }));
+        return res;
+      }),
+      ['dashboard']
+    ),
   setOnboardingStatus: (completed: boolean) =>
     request<{
       ok: boolean;
@@ -524,21 +744,29 @@ export const api = {
     }>('/api/student/settings/onboarding', {
       method: 'POST',
       body: JSON.stringify({ completed }),
+    }).then((res) => {
+      patchCachedResource('settings', (current) => ({ ...current, onboardingCompleted: res.onboardingCompleted }));
+      patchCachedResource('dashboard', (current) => ({
+        ...current,
+        onboardingCompleted: res.onboardingCompleted,
+        shouldShowOnboarding: res.onboardingCompleted ? false : current.shouldShowOnboarding,
+      }));
+      return res;
     }),
   getOwnProgressCounts: () =>
     request<ProgressCountsResponse & { studentId?: string }>('/api/student/study-progress'),
   resetOwnStudyProgress: (confirmation = 'RESET') =>
-    request<ProgressResetResponse & { studentId?: string }>('/api/student/study-progress/reset', {
+    invalidating(request<ProgressResetResponse & { studentId?: string }>('/api/student/study-progress/reset', {
       method: 'POST',
       body: JSON.stringify({ confirmation }),
-    }),
+    })),
   getOwnFlags: () =>
     request<{ flags: QuestionFlagRecord[] }>('/api/student/flags'),
   deleteOwnAccount: (confirmation = 'DELETE') =>
-    request<AccountDeleteResponse>('/api/student/account', {
+    invalidating(request<AccountDeleteResponse>('/api/student/account', {
       method: 'DELETE',
       body: JSON.stringify({ confirmation }),
-    }),
+    })),
 
   // Admin APIs
   getAdminStatus: () =>
@@ -593,15 +821,15 @@ export const api = {
   getAdminLearners: () =>
     request<AdminLearnersResponse>('/api/admin/learners'),
   setPrimaryMonitoredLearner: (studentId: string | null) =>
-    request<{ ok: boolean; primaryMonitoredStudentId: string | null }>('/api/admin/learners/primary', {
+    invalidating(request<{ ok: boolean; primaryMonitoredStudentId: string | null }>('/api/admin/learners/primary', {
       method: 'POST',
       body: JSON.stringify({ studentId }),
-    }),
+    })),
   deleteAdminLearner: (studentId: string, confirmation = 'DELETE') =>
-    request<AccountDeleteResponse>(`/api/admin/learners/${encodeURIComponent(studentId)}`, {
+    invalidating(request<AccountDeleteResponse>(`/api/admin/learners/${encodeURIComponent(studentId)}`, {
       method: 'DELETE',
       body: JSON.stringify({ confirmation }),
-    }),
+    })),
   getAdminDailyPlan: (studentId?: string) => {
     const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
     return request<{ studentId: string | null; plan: DailyFocusPlan | null }>(`/api/admin/daily-plan${suffix}`);
@@ -622,7 +850,7 @@ export const api = {
       resetToDefaults?: boolean;
     }
   ) =>
-    request<{
+    invalidating(request<{
       ok: boolean;
       studentId: string;
       preferences: LearnerPreferences;
@@ -631,7 +859,7 @@ export const api = {
     }>(`/api/admin/learners/${encodeURIComponent(studentId)}/preferences`, {
       method: 'PUT',
       body: JSON.stringify(payload),
-    }),
+    }), SETTINGS_KEYS),
   getQuestionVersions: (questionId: string) =>
     request<{
       questionFamilyId: string;
@@ -647,34 +875,34 @@ export const api = {
     );
   },
   updateQuestionStatus: (questionId: string, qcStatus: QuestionItem['qcStatus']) =>
-    request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
+    invalidating(request<{ ok: boolean }>(`/api/admin/questions/${encodeURIComponent(questionId)}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ qcStatus }),
-    }),
+    }), ['dashboard', 'benchmarks']),
   bulkUpdateQuestionStatus: (questionIds: string[], qcStatus: QuestionItem['qcStatus']) =>
-    request<{ ok: boolean; updatedCount: number }>('/api/admin/questions/bulk-status', {
+    invalidating(request<{ ok: boolean; updatedCount: number }>('/api/admin/questions/bulk-status', {
       method: 'POST',
       body: JSON.stringify({ questionIds, qcStatus }),
-    }),
+    }), ['dashboard', 'benchmarks']),
   deleteQuestions: (questionIds: string[]) =>
-    request<{ ok: boolean; deletedCount: number }>('/api/admin/questions/delete', {
+    invalidating(request<{ ok: boolean; deletedCount: number }>('/api/admin/questions/delete', {
       method: 'POST',
       body: JSON.stringify({ questionIds }),
-    }),
+    })),
   recalibrateDailyPlan: (configOverride?: LearningConfig, studentId?: string) =>
-    request<{ plan: DailyFocusPlan; studentId?: string; error?: string }>('/api/admin/recalibrate-daily-plan', {
+    invalidating(request<{ plan: DailyFocusPlan; studentId?: string; error?: string }>('/api/admin/recalibrate-daily-plan', {
       method: 'POST',
       body: JSON.stringify({ config: configOverride, studentId }),
-    }),
+    }), SETTINGS_KEYS),
   getProgressCounts: (studentId?: string) => {
     const suffix = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
     return request<ProgressCountsResponse & { studentId?: string }>(`/api/admin/study-progress${suffix}`);
   },
   resetStudentProgress: (studentId?: string) =>
-    request<ProgressResetResponse & { studentId?: string }>('/api/admin/study-progress/reset', {
+    invalidating(request<ProgressResetResponse & { studentId?: string }>('/api/admin/study-progress/reset', {
       method: 'POST',
       body: JSON.stringify({ studentId }),
-    }),
+    })),
   attachQuestionVisual: (
     questionId: string,
     payload: { altText: string; caption?: string; imageBase64?: string; filename?: string; visual?: VisualSpec }
@@ -709,13 +937,13 @@ export const api = {
     customTimeLimitSec?: number;
     isSandbox?: boolean;
   }) =>
-    request<{ sessionId: string; count: number; session: SessionRecord }>(
+    invalidating(request<{ sessionId: string; count: number; session: SessionRecord }>(
       '/api/admin/calibration/session',
       {
         method: 'POST',
         body: JSON.stringify(payload),
       }
-    ),
+    ), ['dashboard']),
   getCalibrationInspector: (sessionId: string) =>
     request<{ inspectorByQuestionId: Record<string, QuestionItem> }>(
       `/api/admin/calibration/session/${encodeURIComponent(sessionId)}`
@@ -738,14 +966,14 @@ export const api = {
       body: JSON.stringify({ manifest }),
     }),
   commitManifest: (manifest: BankImportManifest) =>
-    request<{
+    invalidating(request<{
       ok: boolean;
       result: { imported: number; skipped: number; versionBumped: number };
       batch?: ImportBatchRecord;
     }>('/api/admin/import/commit', {
       method: 'POST',
       body: JSON.stringify({ manifest }),
-    }),
+    })),
   getImportSchema: () =>
     request<{ schema: unknown; starterExample: unknown }>('/api/admin/import/schema'),
   getAdminConfig: () =>
@@ -760,7 +988,7 @@ export const api = {
       }[];
     }>('/api/admin/config'),
   saveAdminConfig: (config: LearningConfig, notes?: string) =>
-    request<{
+    invalidating(request<{
       ok: boolean;
       configVersionId: string;
       versionNumber: number;
@@ -770,26 +998,26 @@ export const api = {
     }>('/api/admin/config', {
       method: 'POST',
       body: JSON.stringify({ config, notes }),
-    }),
+    })),
   getAdminFlags: () =>
     request<{ flags: QuestionFlagRecord[] }>('/api/admin/flags'),
   resolveFlag: (flagId: string) =>
-    request<{ ok: boolean }>(`/api/admin/flags/${encodeURIComponent(flagId)}/resolve`, {
+    invalidating(request<{ ok: boolean }>(`/api/admin/flags/${encodeURIComponent(flagId)}/resolve`, {
       method: 'POST',
-    }),
+    }), ['settings']),
   restoreBackup: (backup: unknown, dryRun = true) =>
-    request<{ ok: boolean; report: RestoreReport }>('/api/admin/restore', {
+    invalidating(request<{ ok: boolean; report: RestoreReport }>('/api/admin/restore', {
       method: 'POST',
       body: JSON.stringify({ backup, dryRun }),
-    }),
+    })),
   getMigrationPreflight: () =>
     request<{ report: MigrationPreflightReport }>('/api/admin/migrate/preflight'),
   applyMigration: (payload: unknown, dryRun = true, studentId?: string) =>
-    request<{ ok: boolean; mode: string; report?: RestoreReport; counts?: Record<string, number> }>(
+    invalidating(request<{ ok: boolean; mode: string; report?: RestoreReport; counts?: Record<string, number> }>(
       '/api/admin/migrate/apply',
       {
         method: 'POST',
         body: JSON.stringify({ payload, dryRun, studentId }),
       }
-    ),
+    )),
 };

@@ -176,6 +176,24 @@ export interface LearnerActivityStats {
   lastActiveAtIso?: string;
 }
 
+/**
+ * Slim per-session metadata for dashboard aggregates (streaks, today's minutes, counts).
+ * Never carries checkpoint answers, planned ids, section state or submission summaries.
+ */
+export interface SessionSummaryRow {
+  sessionId: string;
+  mode: SessionRecord['mode'];
+  status: SessionRecord['status'];
+  isSandbox: boolean;
+  sectionFilter?: SessionRecord['sectionFilter'];
+  startedAt: string;
+  completedAt?: string;
+  correctSlots: number;
+  totalSlots: number;
+  /** checkpoint.elapsedSec, or 0 when the session has no checkpoint yet. */
+  elapsedSec: number;
+}
+
 export interface ListSessionsOptions {
   /** Drop the heavy stored submission summary (review results, attempts) from each row. */
   omitSubmissionSummary?: boolean;
@@ -486,6 +504,8 @@ export interface AppRepository {
     includeSandbox?: boolean,
     options?: ListSessionsOptions
   ): Promise<SessionRecord[]>;
+  /** Lightweight session metadata (newest first) without loading full session JSON payloads. */
+  listSessionSummaries(limit?: number, studentId?: string, includeSandbox?: boolean): Promise<SessionSummaryRow[]>;
   /** In-progress, non-sandbox sessions for one student (newest first). */
   listActiveSessions(studentId: string): Promise<SessionRecord[]>;
   /** Session/attempt counts and last activity per learner, computed without loading rows. */

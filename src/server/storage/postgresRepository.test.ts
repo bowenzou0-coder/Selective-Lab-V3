@@ -71,6 +71,102 @@ test('Postgres URLs enforce verified TLS remotely and allow local opt-out', () =
   assert.deepEqual(verified.ssl, {});
 });
 
+/** Minimal in-process pg stand-in: records SQL and answers the handful of statements under test. */
+function createStubPool(initialConfig: { id: string; version: number; config: unknown }) {
+  const state = { config: initialConfig, statements: [] as string[] };
+  const answer = (sql: string, params: unknown[] = []) => {
+    state.statements.push(sql);
+    if (sql.includes('to_regclass')) return { rows: [{ ready: true }], rowCount: 1 };
+    if (sql.includes('FROM admin_config_versions ORDER BY version_number DESC LIMIT 1')) {
+      return {
+        rows: [{ config_version_id: state.config.id, version_number: state.config.version, config: structuredClone(state.config.config) }],
+        rowCount: 1,
+      };
+    }
+    if (sql.includes('COALESCE(MAX(version_number), 1) + 1')) return { rows: [{ next: state.config.version + 1 }], rowCount: 1 };
+    if (sql.startsWith('INSERT INTO admin_config_versions')) {
+      state.config = { id: String(params[0]), version: Number(params[1]), config: JSON.parse(String(params[3])) };
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes("data#>>'{checkpoint,elapsedSec}'")) {
+      return {
+        rows: [
+          {
+            session_id: 'sess_1', mode: 'section_drill', status: 'submitted', is_sandbox: false, section_filter: 'READ',
+            started_at: '2026-11-20T09:00:00.000Z', completed_at: '2026-11-20T09:12:00.000Z',
+            correct_slots: '7', total_slots: '10', elapsed_sec: '720',
+          },
+          {
+            session_id: 'sess_2', mode: 'daily_adaptive', status: 'in_progress', is_sandbox: false, section_filter: null,
+            started_at: '2026-11-21T09:00:00.000Z', completed_at: null, correct_slots: null, total_slots: '4', elapsed_sec: null,
+          },
+        ],
+        rowCount: 2,
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const pool = {
+    query: async (sql: string, params?: unknown[]) => answer(sql, params),
+    connect: async () => ({ query: async (sql: string, params?: unknown[]) => answer(sql, params), release: () => {} }),
+  } as unknown as Pool;
+  return { pool, state };
+}
+
+test('PostgresRepository caches the active config, clones results, and invalidates on save/restore', async () => {
+  const { pool, state } = createStubPool({ id: 'cfg_v1', version: 1, config: structuredClone(DEFAULT_LEARNING_CONFIG) });
+  const repo = new PostgresRepository(pool);
+  const configReads = () => state.statements.filter((sql) => sql.includes('LIMIT 1') && sql.includes('admin_config_versions')).length;
+
+  const first = await repo.getActiveConfig();
+  const second = await repo.getActiveConfig();
+  assert.equal(configReads(), 1, 'second read is served from the in-memory cache');
+  assert.equal(second.configVersionId, 'cfg_v1');
+
+  first.config.sessionDefaults.dailyGoalMinutes = 999;
+  assert.notEqual((await repo.getActiveConfig()).config.sessionDefaults.dailyGoalMinutes, 999, 'callers cannot mutate cached state');
+
+  // Another repository over the same pool shares the cache.
+  await new PostgresRepository(pool).getActiveConfig();
+  assert.equal(configReads(), 1);
+
+  const nextConfig = structuredClone(DEFAULT_LEARNING_CONFIG);
+  nextConfig.sessionDefaults.dailyGoalMinutes = 45;
+  const saved = await repo.saveConfigVersion(nextConfig, 'tune');
+  const afterSave = await repo.getActiveConfig();
+  assert.equal(configReads(), 2, 'saveConfigVersion clears the cache immediately');
+  assert.equal(afterSave.configVersionId, saved.configVersionId);
+  assert.equal(afterSave.config.sessionDefaults.dailyGoalMinutes, 45);
+
+  await repo.getActiveConfig();
+  assert.equal(configReads(), 2);
+  await repo.restoreFullBackup({ not: 'a bundle' }, { dryRun: false }).catch(() => undefined);
+  await repo.getActiveConfig();
+  assert.equal(configReads(), 3, 'a non-dry-run restore clears the cache even when it fails');
+
+  await repo.restoreFullBackup({ not: 'a bundle' }, { dryRun: true }).catch(() => undefined);
+  await repo.getActiveConfig();
+  assert.equal(configReads(), 3, 'dry-run restore keeps the cache');
+});
+
+test('PostgresRepository.listSessionSummaries projects slim columns instead of full session JSON', async () => {
+  const { pool, state } = createStubPool({ id: 'cfg_v1', version: 1, config: DEFAULT_LEARNING_CONFIG });
+  const rows = await new PostgresRepository(pool).listSessionSummaries(100, 'stu_a', false);
+  const sql = state.statements.find((s) => s.includes("data#>>'{checkpoint,elapsedSec}'"))!;
+  assert.ok(sql);
+  assert.doesNotMatch(sql, /SELECT\s+data\b|data - 'submissionSummary'/, 'never selects the whole data column');
+  assert.deepEqual(rows, [
+    {
+      sessionId: 'sess_1', mode: 'section_drill', status: 'submitted', isSandbox: false, sectionFilter: 'READ',
+      startedAt: '2026-11-20T09:00:00.000Z', completedAt: '2026-11-20T09:12:00.000Z', correctSlots: 7, totalSlots: 10, elapsedSec: 720,
+    },
+    {
+      sessionId: 'sess_2', mode: 'daily_adaptive', status: 'in_progress', isSandbox: false,
+      startedAt: '2026-11-21T09:00:00.000Z', correctSlots: 0, totalSlots: 4, elapsedSec: 0,
+    },
+  ]);
+});
+
 const localTestUrl = process.env.TEST_POSTGRES_URL;
 
 test('Postgres concurrent initialization, manifest retries, rollback, and account isolation', {
